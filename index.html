@@ -1,0 +1,842 @@
+<!DOCTYPE html>
+<html lang="es-AR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Estudio Theiler</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
+<style>
+:root{color-scheme:dark;--bg:#070d1f;--tx:#e8eeff;--mut:#9aa7cc;--bd:rgba(255,255,255,.13);--card:rgba(255,255,255,.07);--card2:rgba(255,255,255,.12);--hd:rgba(255,255,255,.05);--nav:rgba(8,14,32,.62);--navh:rgba(255,255,255,.1);--pri:#2dd4bf;--prit:#031c19;
+--red:rgba(255,93,108,.2);--redt:#ffa3ab;--grn:rgba(52,211,153,.2);--grnt:#7ee8bd;--blu:rgba(91,124,255,.24);--blut:#b4c4ff;--amb:rgba(255,200,87,.2);--ambt:#ffd98a;--org:rgba(255,150,70,.2);--orgt:#ffbb85;--gry:rgba(255,255,255,.1);--gryt:#cdd6f4;--vio:rgba(167,139,250,.22);--viot:#d3c8ff;--teal:rgba(45,212,191,.2);--tealt:#8ff0e1}
+*{box-sizing:border-box}html,body{margin:0}
+body{font-family:"Instrument Sans",system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--tx);font-size:14px;line-height:1.45;font-variant-numeric:tabular-nums}
+body::before{content:"";position:fixed;inset:0;z-index:-1;background:radial-gradient(55vw 45vh at 8% 0%,rgba(66,99,255,.38),transparent 65%),radial-gradient(45vw 45vh at 100% 25%,rgba(45,212,191,.2),transparent 65%),repeating-linear-gradient(0deg,rgba(255,255,255,.035) 0 1px,transparent 1px 30px),var(--bg)}
+:focus-visible{outline:2px solid var(--pri);outline-offset:2px}
+.app{display:flex;min-height:100vh}
+nav{width:212px;flex-shrink:0;background:var(--nav);backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px);border-right:1px solid var(--bd);padding:22px 14px;position:sticky;top:0;height:100vh;overflow:auto;color:var(--mut)}
+nav h1{font:700 21px/1.1 "Bricolage Grotesque",system-ui,sans-serif;letter-spacing:-.02em;color:var(--tx);margin:0 0 24px 8px}
+nav button{display:block;width:100%;text-align:left;background:none;border:0;color:inherit;padding:10px 12px;border-radius:12px;font:inherit;font-size:14px;cursor:pointer;margin-bottom:3px}
+nav button:hover{background:var(--navh);color:var(--tx)}
+nav button.on{background:var(--card2);color:var(--tx);box-shadow:inset 3px 0 0 var(--pri)}
+.me{margin-top:22px;font-size:12px;color:var(--mut);padding:0 8px}.me button{margin-top:8px;width:auto}
+main{flex:1;min-width:0;padding:30px 34px}
+h2,h3{font-family:"Bricolage Grotesque",system-ui,sans-serif;letter-spacing:-.015em}
+h2{font-size:28px;font-weight:700;margin:0 0 18px}h3{font-size:17px;font-weight:600;margin:26px 0 10px}
+.card,.glass{background:var(--card);border:1px solid var(--bd);border-radius:18px;padding:16px;backdrop-filter:blur(18px) saturate(140%);-webkit-backdrop-filter:blur(18px) saturate(140%);box-shadow:inset 0 1px 0 rgba(255,255,255,.09),0 18px 40px rgba(0,0,0,.28)}
+.grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+.kpi b{display:block;font:700 30px/1.1 "Bricolage Grotesque",system-ui,sans-serif}.kpi span{font-size:13px;color:var(--mut)}
+label{font-size:12.5px;color:var(--mut);display:block}
+input,select,textarea{font:inherit;color:var(--tx);background:rgba(255,255,255,.06);border:1px solid var(--bd);border-radius:10px;padding:8px 10px;margin-top:4px;max-width:100%}
+input:focus,select:focus,textarea:focus{border-color:var(--pri);outline:none;box-shadow:0 0 0 3px rgba(45,212,191,.2)}
+input[type=checkbox]{accent-color:var(--pri)}option{background:#10182f;color:var(--tx)}
+textarea{width:100%;resize:vertical}
+.row{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end}
+button.b{background:var(--pri);color:var(--prit);border:0;border-radius:10px;padding:9px 16px;font:inherit;font-weight:600;cursor:pointer}
+button.b:hover{filter:brightness(1.08)}button.b:disabled{opacity:.4;cursor:not-allowed}
+button.g{background:var(--card);color:var(--tx);border:1px solid var(--bd);border-radius:10px;padding:7px 12px;font:inherit;cursor:pointer}
+button.g:hover{background:var(--card2)}button.dng{background:var(--red);color:var(--redt);border:1px solid rgba(255,93,108,.4);border-radius:10px;padding:7px 12px;font:inherit;cursor:pointer}
+.tw{overflow-x:auto;border:1px solid var(--bd);border-radius:18px;background:var(--card);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);box-shadow:0 18px 40px rgba(0,0,0,.25)}
+table{border-collapse:collapse;width:100%;min-width:720px}
+th{background:var(--hd);text-align:left;font-size:12.5px;font-weight:500;color:var(--mut);padding:11px 14px}
+td{border-top:1px solid var(--bd);padding:11px 14px;vertical-align:top}
+.s{display:block;font-size:12px;color:var(--mut)}
+.tag{display:inline-block;border-radius:999px;padding:3px 10px;font-size:12px;font-weight:500;white-space:nowrap}
+.msg{border:1px solid;border-radius:14px;padding:10px 14px;margin-bottom:12px;backdrop-filter:blur(12px)}
+.err{background:var(--red);color:var(--redt);border-color:rgba(255,93,108,.45)}.warn{background:var(--amb);color:var(--ambt);border-color:rgba(255,200,87,.45)}.ok{background:var(--grn);color:var(--grnt);border-color:rgba(52,211,153,.45)}.info{background:var(--blu);color:var(--blut);border-color:rgba(91,124,255,.45)}
+.hist{font-size:12px;color:var(--mut);background:var(--hd)}
+.login{max-width:380px;margin:14vh auto;padding:0 16px}.login .card{display:grid;gap:14px}.login h2{font-size:34px}
+/* Clientes como legajos de vidrio */
+.cl-grid{display:grid;gap:18px;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));padding-top:6px}
+.cl{position:relative;cursor:pointer;padding:22px 18px 16px;transition:transform .15s,background .15s}
+.cl:hover{background:var(--card2);transform:translateY(-3px)}.cl.off{opacity:.55}
+.cl h3{margin:0 62px 4px 0;font-size:18px;line-height:1.2}
+.term{position:absolute;top:-1px;right:18px;width:50px;padding:8px 0 9px;text-align:center;font:700 25px/1 "Bricolage Grotesque",system-ui,sans-serif;background:linear-gradient(180deg,rgba(45,212,191,.38),rgba(45,212,191,.1));border:1px solid rgba(45,212,191,.45);border-top:0;border-radius:0 0 14px 14px;color:#d2fff9}
+.term small{display:block;font:500 9px/1.1 "Instrument Sans",system-ui,sans-serif;color:#8fe9dc;margin-top:4px}
+.term.big{position:static;flex-shrink:0;width:64px;font-size:32px;border-top:1px solid rgba(45,212,191,.45);border-radius:16px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin:12px 0 14px;min-height:22px}
+.chip{font-size:11.5px;padding:2px 9px;border-radius:999px;background:var(--gry);color:var(--gryt)}
+.clf{display:flex;justify-content:space-between;font-size:13px;color:var(--mut);border-top:1px solid var(--bd);padding-top:10px}.clf .bad{color:var(--redt);font-weight:600}
+/* Ficha */
+.ov{position:fixed;inset:0;z-index:50;background:rgba(3,7,18,.55);backdrop-filter:blur(4px);display:flex;justify-content:flex-end}
+.dr{width:min(900px,100%);height:100%;overflow:auto;border-radius:22px 0 0 22px;background:rgba(12,19,42,.78);border:1px solid var(--bd);backdrop-filter:blur(26px) saturate(150%);-webkit-backdrop-filter:blur(26px) saturate(150%);padding:22px 26px;box-shadow:-24px 0 60px rgba(0,0,0,.45)}
+.dr.in{animation:slin .22s ease-out}@keyframes slin{from{transform:translateX(40px);opacity:0}to{transform:none;opacity:1}}
+.drh{display:flex;gap:16px;align-items:center;margin-bottom:18px}.drh h2{margin:0;font-size:25px}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:18px;padding:5px;background:var(--hd);border:1px solid var(--bd);border-radius:14px}
+.tabs button{background:none;border:0;color:var(--mut);padding:8px 14px;border-radius:10px;font:inherit;cursor:pointer}
+.tabs button.on{background:var(--card2);color:var(--tx)}
+.fgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}.full{grid-column:1/-1}
+.fgrid input,.fgrid select{width:100%}fieldset{border:0;padding:0;margin:0;min-width:0}
+@media(max-width:700px){.app{flex-direction:column}nav{width:100%;height:auto;position:static;display:flex;gap:4px;overflow-x:auto;padding:12px;border-right:0;border-bottom:1px solid var(--bd)}nav h1{display:none}nav button{width:auto;white-space:nowrap;margin:0}.me{display:none}main{padding:16px}.dr{border-radius:0;padding:16px}h2{font-size:24px}}
+@media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+<div class="app">
+<nav id="nav"></nav>
+<main id="main"></main>
+</div>
+<script>
+'use strict';
+/* ===== Utilidades ===== */
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const money=n=>new Intl.NumberFormat('es-AR',{style:'currency',currency:'ARS'}).format(n);
+const fAR=iso=>iso.split('-').reverse().join('/');
+const cuitF=c=>c.slice(0,2)+'-'+c.slice(2,10)+'-'+c.slice(10);
+const uid=()=>Math.random().toString(36).slice(2,10);
+const norm=s=>String(s??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+
+/* ===== Estados ===== */
+const DOC={no_recibida:['No recibida','red'],recibida_fisica:['Recibida (papel)','grn'],recibida_digital:['Recibida (digital)','blu'],archivo_vinculado:['Archivo vinculado','teal'],pendiente_revision:['Pendiente de revisión','amb']};
+const PROC={pendiente:['Pendiente','gry'],liquidado_con_documentacion:['Liquidado con factura','grn'],liquidado_sin_documentacion:['Liquidado SIN factura','org'],excluido:['Excluido','vio'],requiere_revision:['Requiere revisión','amb']};
+const tag=(m,k)=>`<span class="tag" style="background:var(--${m[k][1]});color:var(--${m[k][1]}t)">${m[k][0]}</span>`;
+function validar(doc,proc,motivo){
+  if(proc==='liquidado_con_documentacion'&&doc==='no_recibida')return 'No puede estar "liquidado con factura" si la factura figura como no recibida.';
+  if(proc==='excluido'&&!String(motivo||'').trim())return 'Para excluir un comprobante hay que indicar el motivo.';
+  return null;
+}
+
+/* ===== Importador ARCA (mismo criterio que el módulo probado) ===== */
+const ALIASES={fecha:['fecha','fecha de emision'],tipo:['tipo','tipo de comprobante'],pv:['punto de venta','pto vta'],numero:['numero desde','numero','nro comprobante'],cuit:['nro doc emisor','cuit emisor','cuit'],nombre:['denominacion emisor','razon social emisor','denominacion'],moneda:['moneda'],cambio:['tipo cambio','tipo de cambio'],total:['imp total','importe total','total']};
+const FBH=new Map();for(const[f,hs]of Object.entries(ALIASES))hs.forEach(h=>FBH.set(norm(h),f));
+const REQ=['fecha','tipo','pv','numero','cuit','total'];
+function pNum(v){if(typeof v==='number')return isFinite(v)?v:null;let s=String(v??'').trim().replace(/\s|\$/g,'');if(!s)return null;if(s.includes(','))s=s.replace(/\./g,'').replace(',','.');const n=Number(s);return isFinite(n)?n:null}
+function vDate(y,m,d){const t=new Date(Date.UTC(y,m-1,d));return(t.getUTCFullYear()===y&&t.getUTCMonth()===m-1&&t.getUTCDate()===d)?t.toISOString().slice(0,10):null}
+function pDate(v){if(typeof v==='number'&&v>20000&&v<80000)return new Date(Math.round((v-25569)*864e5)).toISOString().slice(0,10);const s=String(v??'').trim();let m=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);if(m)return vDate(+m[3],+m[2],+m[1]);m=s.match(/^(\d{4})-(\d{2})-(\d{2})/);return m?vDate(+m[1],+m[2],+m[3]):null}
+const pTipo=v=>{const m=String(v??'').trim().match(/^(\d{1,3})\b/);return m?+m[1]:null};
+const pMon=v=>{const m=String(v??'').trim().toUpperCase();return(!m||m==='$'||m==='ARS')?'PES':(m==='USD'||m==='U$S')?'DOL':m};
+function parseArca(rows){
+  let h=-1;
+  for(let i=0;i<Math.min(rows.length,15);i++){const fs=new Set((rows[i]||[]).map(c=>FBH.get(norm(c))).filter(Boolean));if(REQ.every(r=>fs.has(r))){h=i;break}}
+  if(h<0)return{ok:false,error:'No se reconoció el formato. Se esperan al menos las columnas: Fecha, Tipo, Punto de Venta, Número, Nro. Doc. Emisor e Imp. Total. ¿Es el Excel de "Mis Comprobantes"?'};
+  const top=rows.slice(0,h).flat().map(c=>String(c??'')).join(' ');
+  const meta={kind:/recibidos/i.test(top)?'recibidos':/emitidos/i.test(top)?'emitidos':null,cuit:(top.match(/CUIT\s*(\d{11})/i)||[])[1]||null};
+  const heads=rows[h].map(x=>String(x??'').trim()),cf=heads.map(x=>FBH.get(norm(x)));
+  const vs=[],errors=[],seen=new Set();let read=0,dupFile=0;
+  for(let i=h+1;i<rows.length;i++){
+    const r=rows[i];if(!r||r.every(c=>String(c??'').trim()===''))continue;read++;
+    const f={},raw={};heads.forEach((n,c)=>{if(n)raw[n]=r[c]??null;if(cf[c])f[cf[c]]=r[c]});
+    const fecha=pDate(f.fecha),tipo=pTipo(f.tipo),pv=pNum(f.pv),num=pNum(f.numero),tot=pNum(f.total),cuit=String(f.cuit??'').replace(/\D/g,'');
+    const p=[];if(!fecha)p.push('fecha inválida');if(tipo===null)p.push('tipo inválido');if(pv===null||!Number.isInteger(pv))p.push('punto de venta inválido');
+    if(num===null||!Number.isInteger(num)||num<0)p.push('número inválido');if(cuit.length!==11)p.push('CUIT del emisor inválido');if(tot===null)p.push('importe inválido');
+    if(p.length){errors.push({row:i+1,message:p.join(', ')});continue}
+    const k=[cuit,tipo,pv,num].join('|');if(seen.has(k)){dupFile++;continue}seen.add(k);
+    vs.push({fecha,tipo_cmp:tipo,tipo_txt:String(f.tipo).trim(),punto_venta:pv,numero:num,emisor_cuit:cuit,emisor_nombre:f.nombre?String(f.nombre).trim():null,moneda:pMon(f.moneda),tipo_cambio:pNum(f.cambio)??1,importe_total:tot,raw});
+  }
+  return{ok:true,meta,vs,errors,read,dupFile};
+}
+const vkey=v=>[v.emisor_cuit,v.tipo_cmp,v.punto_venta,v.numero].join('|');
+function planImport(parsed,meta,existing,ctx){
+  const pl={nuevos:[],repetidos:[],difs:[],fuera:[],bloqueos:[]};
+  if(meta.cuit&&meta.cuit!==ctx.cuit)pl.bloqueos.push(`El archivo es del CUIT ${meta.cuit}, pero el cliente elegido tiene CUIT ${ctx.cuit}.`);
+  const by=new Map(existing.map(e=>[vkey(e),e]));
+  for(const v of parsed){
+    if(!v.fecha.startsWith(ctx.periodo)){pl.fuera.push(v);continue}
+    const e=by.get(vkey(v));if(!e){pl.nuevos.push(v);continue}
+    const d=[e.fecha!==v.fecha&&`fecha ${fAR(e.fecha)} → ${fAR(v.fecha)}`,Math.abs(e.importe_total-v.importe_total)>0.005&&`importe ${e.importe_total} → ${v.importe_total}`].filter(Boolean).join('; ');
+    d?pl.difs.push({v,motivo:d}):pl.repetidos.push(v);
+  }
+  return pl;
+}
+
+
+/* ===== Supabase ===== */
+const SUPABASE_URL='https://tugdqcoxcpsiynlvnqdu.supabase.co';
+const SUPABASE_KEY='sb_publishable_2-96VeZrsNNftRXkzA1l_A_YG7ThJrL'; // clave pública: los permisos los da la base (RLS)
+const sb=(typeof supabase!=='undefined')?supabase.createClient(SUPABASE_URL,SUPABASE_KEY):null;
+let me=null,prof=null;
+const ui={tab:'inicio',clients:[],cid:null,periodo:new Date().toISOString().slice(0,7),q:'',filtro:'',sel:new Set(),pend:null,msg:null,hist:null,vs:[],batches:[],stats:null,busy:false,dl:[],vcli:'',vdias:'30',cstats:{},vinact:false,ficha:null,pst:[]};
+const $=id=>document.getElementById(id);
+const flash=(t,k='ok')=>{ui.msg={t,k}};
+const isAdmin=()=>prof&&prof.role==='administrador';
+const errTxt=e=>{const m=(e&&e.message)||String(e);return /Invalid login/i.test(m)?'Usuario o contraseña incorrectos.':/foreign key/i.test(m)?'No se puede eliminar: tiene comprobantes, períodos o importaciones asociados. Podés desactivarlo en su lugar.':/duplicate key/i.test(m)?'Ya existe un registro con esos datos.':/row-level security/i.test(m)?'No tenés permiso para hacer esto.':/check constraint/i.test(m)?'La combinación de estados no es válida.':m};
+async function fetchAll(make){const out=[];for(let from=0;;from+=1000){const {data,error}=await make(from,from+999);if(error)throw error;out.push(...data);if(data.length<1000)break}return out}
+const tipoTxt=v=>String((v.raw&&(v.raw['Tipo']||v.raw['Tipo de Comprobante']))||v.tipo_cmp);
+
+/* ===== Arranque / login ===== */
+async function init(){
+  if(!sb){$('main').innerHTML='<div class="msg err" style="margin:20px">No se pudo cargar la conexión con Supabase (¿sin internet?).</div>';return}
+  const {data}=await sb.auth.getSession();
+  data.session?await boot(data.session.user):drawLogin();
+  sb.auth.onAuthStateChange((ev,s)=>{if(ev==='SIGNED_OUT'){me=prof=null;drawLogin()}});
+}
+function drawLogin(extra){
+  $('nav').style.display='none';
+  $('main').innerHTML=`<div class="login"><h2>Estudio Theiler</h2>${extra?`<div class="msg err">${esc(extra)}</div>`:''}
+  <form class="card" onsubmit="return doLogin(event)"><label>Usuario<input name="e" required autocomplete="username" autocapitalize="none" spellcheck="false" style="width:100%"></label>
+  <label>Contraseña<input name="p" type="password" required autocomplete="current-password" style="width:100%"></label><button class="b">Ingresar</button></form></div>`;
+}
+async function doLogin(e){
+  e.preventDefault();const f=new FormData(e.target),u=String(f.get('e')).trim();let email=u;
+  if(!u.includes('@')){
+    const {data,error}=await sb.rpc('email_para_usuario',{u});
+    if(error||!data)return drawLogin('Usuario o contraseña incorrectos.');
+    email=data;
+  }
+  const {data,error}=await sb.auth.signInWithPassword({email,password:String(f.get('p'))});
+  if(error)return drawLogin(errTxt(error));
+  await boot(data.user);return false;
+}
+async function boot(user){
+  me=user;
+  const {data,error}=await sb.from('profiles').select('*').eq('id',user.id).maybeSingle();
+  if(error||!data||!data.active){await sb.auth.signOut();return drawLogin(error?errTxt(error):'Tu usuario no está habilitado. Pedile acceso a un administrador.')}
+  prof=data;$('nav').style.display='';
+  try{await loadClients()}catch(e){flash(errTxt(e),'err')}
+  await show('inicio');
+}
+async function loadClients(){const {data,error}=await sb.from('clients').select('*').order('razon_social');if(error)throw error;ui.clients=data;if(!ui.cid||!data.find(c=>c.id===ui.cid))ui.cid=data[0]?data[0].id:null}
+async function logout(){await sb.auth.signOut()}
+
+/* ===== Navegación y carga de datos ===== */
+const TABS=[['inicio','Inicio'],['vencimientos','Vencimientos'],['clientes','Clientes'],['importar','Importar ARCA'],['escanear','Escanear QR'],['comprobantes','Comprobantes']];
+async function show(t){
+  stopCam();ui.tab=t;ui.hist=null;ui.scan=null;
+  try{
+    if(t==='inicio'||t==='vencimientos')await loadDeadlines();
+    if(t==='clientes')await loadCStats();
+    if(t==='inicio')await loadDash();
+    if(t==='importar'){const {data,error}=await sb.from('import_batches').select('*, clients(razon_social)').order('imported_at',{ascending:false}).limit(50);if(error)throw error;ui.batches=data}
+    if(t==='comprobantes')await loadVouchers();
+  }catch(e){flash(errTxt(e),'err')}
+  draw();
+}
+async function loadVouchers(){
+  ui.sel.clear();ui.vs=[];if(!ui.cid)return;
+  const {data:p,error}=await sb.from('client_periods').select('id').eq('client_id',ui.cid).eq('periodo',ui.periodo+'-01').maybeSingle();
+  if(error)throw error;if(!p)return;
+  ui.vs=await fetchAll((a,b)=>sb.from('vouchers').select('*').eq('period_id',p.id).order('fecha').order('numero').range(a,b));
+}
+function draw(){
+  $('nav').innerHTML='<h1>Estudio Theiler</h1>'+TABS.map(([k,t])=>`<button class="${ui.tab===k?'on':''}" onclick="show('${k}')">${t}</button>`).join('')+
+   `<div class="me">${esc(prof.username||prof.full_name||me.email)}<br>${esc(prof.role)}<br><button class="g" onclick="logout()">Cerrar sesión</button></div>`;
+  const m=ui.msg?`<div class="msg ${ui.msg.k}">${esc(ui.msg.t)}</div>`:'';ui.msg=null;window._fm=m;
+  $('main').innerHTML=(ui.ficha?'':m)+({inicio:vInicio,clientes:vClientes,importar:vImportar,escanear:vEscanear,comprobantes:vComp,vencimientos:vVenc})[ui.tab]()+vFicha();
+  document.body.style.overflow=ui.ficha?'hidden':'';
+}
+function vInicio(){
+  const R=dashRows(),wp=workPeriod(),lab=wp.slice(5)+'/'+wp.slice(0,4);
+  const sum=k=>R.reduce((a,r)=>a+r[k],0),venc7=R.filter(r=>r.nxt&&diasHasta(r.nxt.fecha)<=7).length;
+  const K=[['Clientes activos',R.length],['Sin importar el Excel',R.filter(r=>r.state==='sin_importar').length],['Comprobantes sin pasar',sum('pend')],['Facturas faltantes',sum('fal')],['Vencen en 7 días',venc7]];
+  const ST={sin_importar:['Sin importar','amb'],pendiente:['Sin pasar','blu'],faltan:['Faltan facturas','org'],al_dia:['Al día','grn']};
+  const SH={IVA:'IVA',CM:'IIBB CM',F931:'F.931',GANANCIAS_PH:'Ganancias',MONOTRIBUTO:'Monotributo',OTRO:'Otro'};
+  const urg=n=>n<=2?'var(--redt)':n<=7?'var(--ambt)':'var(--mut)';
+  const prox=R.filter(r=>r.nxt&&diasHasta(r.nxt.fecha)<=14).sort((a,b)=>a.nxt.fecha<b.nxt.fecha?-1:1);
+  return `<h2>Inicio</h2>
+  <div class="row" style="margin-bottom:14px;align-items:center"><label>Período de trabajo<br><input type="month" value="${wp}" onchange="ui.wp=this.value;draw()"></label><span class="s" style="max-width:420px">Por defecto es el mes anterior, que es el que se declara ahora. Los totales de la tabla corresponden a ${lab}.</span></div>
+  <div class="grid" style="margin-bottom:22px">${K.map(([t,n])=>`<div class="card kpi"><b>${n}</b><span>${t}</span></div>`).join('')}</div>
+  <div class="row" style="align-items:flex-start;gap:20px">
+  <div style="flex:2;min-width:340px"><h3 style="margin-top:0">Clientes por atender (${lab})</h3>
+  <div class="tw"><table><thead><tr><th>Cliente</th><th>Estado</th><th>Sin pasar</th><th>Faltan facturas</th><th></th></tr></thead><tbody>
+  ${R.length?R.map(r=>`<tr ${r.state==='al_dia'?'style="opacity:.6"':''}><td><a href="#" style="color:var(--tx);font-weight:600;text-decoration:none" onclick="abrirFicha('${r.c.id}');return false">${esc(r.c.razon_social)}</a><span class="s">termina en ${r.c.cuit.slice(-1)}</span></td>
+  <td><span class="tag" style="background:var(--${ST[r.state][1]});color:var(--${ST[r.state][1]}t)">${ST[r.state][0]}</span></td><td>${r.cur?r.pend:'-'}</td><td ${r.fal?'style="color:var(--redt);font-weight:600"':''}>${r.cur?r.fal:'-'}</td>
+  <td style="white-space:nowrap">${r.state==='sin_importar'?`<button class="g" onclick="ui.cid='${r.c.id}';ui.periodo='${wp}';show('importar')">Importar</button>`:r.fal?`<button class="b" onclick="abrirFicha('${r.c.id}','pedir','${wp}')">Pedir facturas</button>`:`<button class="g" onclick="abrirComp('${r.c.id}','${wp}')">Abrir</button>`}</td></tr>`).join(''):'<tr><td colspan="5" style="color:var(--mut)">Todavía no hay clientes activos. Agregalos en "Clientes".</td></tr>'}</tbody></table></div></div>
+  <div style="flex:1;min-width:280px"><h3 style="margin-top:0">Vencen pronto</h3>
+  ${prox.length?`<div class="card" style="padding:6px 16px">${prox.map(r=>{const n=diasHasta(r.nxt.fecha);return `<div style="padding:11px 0;border-bottom:1px solid var(--bd)"><div style="font-weight:600">${esc(r.c.razon_social)}</div><div style="display:flex;justify-content:space-between;gap:10px"><span class="s" style="font-size:13px">${SH[r.nxt.impuesto]||''}, ${fAR(r.nxt.fecha).slice(0,5)}</span><span style="font-size:13px;color:${urg(n)};font-weight:600">${cuando(n)}</span></div></div>`}).join('')}</div>`:`<div class="card" style="color:var(--mut)">${R.some(r=>(r.c.impuestos||[]).length)?'Ningún cliente tiene vencimientos en los próximos 14 días según lo cargado.':'Marcá los impuestos de cada cliente para ver sus vencimientos acá.'}</div>`}
+  <p class="s" style="margin-top:10px">Las fechas están "A confirmar" hasta que las verifiques en ARCA (pantalla Vencimientos).</p></div></div>`;
+}
+const workPeriod=()=>{if(ui.wp)return ui.wp;const d=new Date();d.setDate(1);d.setMonth(d.getMonth()-1);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')};
+function dashRows(){
+  const wp=workPeriod(),ord={sin_importar:0,pendiente:1,faltan:2,al_dia:3};
+  return ui.clients.filter(c=>c.active!==false).map(c=>{
+    const cur=ui.pst.find(r=>r.client_id===c.id&&r.periodo.slice(0,7)===wp),nxt=ui.dl.filter(d=>diasHasta(d.fecha)>=0&&delC(d,c)).sort((a,b)=>a.fecha<b.fecha?-1:1)[0];
+    const pend=cur?cur.sin_pasar:0,fal=cur?cur.faltan:0;
+    return {c,cur,nxt,pend,fal,state:!cur?'sin_importar':pend>0?'pendiente':fal>0?'faltan':'al_dia'};
+  }).sort((a,b)=>ord[a.state]-ord[b.state]||(a.nxt&&b.nxt?(a.nxt.fecha<b.nxt.fecha?-1:1):a.nxt?-1:b.nxt?1:0));
+}
+function _vInicioViejo(){return vInicio0()+vProx()}
+function vInicio0(){
+  const s=ui.stats||{tot:0,fal:0,sin:0,rev:0},k=[['Clientes',ui.clients.length],['Comprobantes importados',s.tot],['Facturas faltantes',s.fal],['Liquidados sin factura',s.sin],['Por revisar',s.rev]];
+  return `<h2>Inicio</h2><div class="grid">${k.map(([t,n])=>`<div class="card kpi"><b>${n}</b><span>${t}</span></div>`).join('')}</div>
+  <p style="color:var(--mut)">${ui.clients.length?'Importá el Excel de ARCA de un cliente desde "Importar ARCA".':(isAdmin()?'Empezá creando un cliente en "Clientes".':'Todavía no tenés clientes asignados. Pedile a un administrador que te los asigne.')}</p>`;
+}
+function vClientes(){
+  const ed=canEdit(),L=ui.clients.filter(c=>ui.vinact||c.active!==false),SH={IVA:'IVA',CM:'IIBB CM',F931:'F.931',GANANCIAS_PH:'Ganancias',MONOTRIBUTO:'Monotributo'};
+  const card=c=>{const st=ui.cstats[c.id]||{tot:0,fal:0};return `<div class="card cl ${c.active===false?'off':''}" tabindex="0" role="button" onclick="abrirFicha('${c.id}')" onkeydown="if(event.key==='Enter')abrirFicha('${c.id}')">
+    <div class="term">${c.cuit.slice(-1)}<small>termina en</small></div><h3>${esc(c.razon_social)}</h3><div class="s" style="font-size:13px">CUIT ${cuitF(c.cuit)}${c.active===false?' (inactivo)':''}</div>
+    <div class="chips">${(c.impuestos||[]).map(k=>`<span class="chip">${SH[k]||esc(k)}</span>`).join('')}</div>
+    <div class="clf"><span>${st.tot} comprobantes</span><span class="${st.fal?'bad':''}">${st.fal} sin factura</span></div></div>`};
+  return `<h2>Clientes</h2>${ed?`<form class="card row" onsubmit="return addClient(event)" style="margin-bottom:16px">
+  <label style="flex:1;min-width:200px">Razón social<input name="rs" required style="width:100%"></label>
+  <label>CUIT<input name="cuit" required inputmode="numeric" placeholder="30-12345678-9"></label><button class="b">Agregar cliente</button></form>`:''}
+  <label style="display:flex;gap:8px;align-items:center;margin-bottom:12px"><input type="checkbox" style="margin:0" ${ui.vinact?'checked':''} onchange="ui.vinact=this.checked;draw()"> Mostrar clientes inactivos</label>
+  <div class="cl-grid">${L.length?L.map(card).join(''):'<div class="card">Todavía no hay clientes. Agregá el primero con su razón social y CUIT.</div>'}</div>`;
+}
+async function addClient(e){
+  e.preventDefault();const f=new FormData(e.target),cuit=String(f.get('cuit')).replace(/\D/g,''),rs=String(f.get('rs')).trim();
+  if(cuit.length!==11)flash('El CUIT debe tener 11 dígitos.','err');else if(!rs)flash('Falta la razón social.','err');
+  else{const {error}=await sb.from('clients').insert({razon_social:rs,cuit});if(error)flash(errTxt(error),'err');else{await loadClients();flash('Cliente agregado.')}}
+  draw();return false;
+}
+const clientOpts=()=>ui.clients.filter(c=>c.active!==false).map(c=>`<option value="${c.id}" ${c.id===ui.cid?'selected':''}>${esc(c.razon_social)}</option>`).join('');
+function vImportar(){
+  if(!ui.clients.length)return `<h2>Importar Excel de ARCA</h2><div class="card">No hay clientes disponibles.</div>`;
+  if(ui.pend)return vPreview();
+  return `<h2>Importar Excel de ARCA</h2><div class="card row" style="max-width:640px">
+  <label>Cliente<br><select id="icl" onchange="ui.cid=this.value">${clientOpts()}</select></label>
+  <label>Período<br><input type="month" id="iper" value="${ui.periodo}" onchange="ui.periodo=this.value"></label>
+  <label style="flex:1;min-width:220px">Archivo de "Mis Comprobantes" (.xls / .xlsx)<br><input type="file" id="ifile" accept=".xls,.xlsx"></label>
+  <button class="b" onclick="previsualizar()">Ver vista previa</button></div>
+  <p style="color:var(--mut);font-size:12px">El archivo se lee en tu navegador; solo se guardan los comprobantes en la base.</p>
+  <h3>Historial de importaciones</h3><div class="tw"><table><thead><tr><th>Fecha</th><th>Cliente</th><th>Archivo</th><th>Leídos</th><th>Nuevos</th><th>Repetidos</th><th>Rechazados</th></tr></thead><tbody>
+  ${ui.batches.length?ui.batches.map(b=>`<tr><td>${new Date(b.imported_at).toLocaleString('es-AR')}</td><td>${esc(b.clients&&b.clients.razon_social)}</td><td>${esc(b.file_name)}</td><td>${b.rows_read}</td><td>${b.rows_new}</td><td>${b.rows_duplicate}</td><td>${b.rows_rejected}</td></tr>`).join(''):'<tr><td colspan="7" style="color:var(--mut)">Todavía no hay importaciones.</td></tr>'}</tbody></table></div>`;
+}
+async function previsualizar(){
+  const f=$('ifile').files[0],cid=$('icl').value,periodo=$('iper').value;ui.cid=cid;ui.periodo=periodo;
+  const bad=m=>{flash(m,'err');draw()};
+  if(!/^\d{4}-\d{2}$/.test(periodo))return bad('Elegí el período.');
+  if(!f)return bad('Subí el archivo Excel.');
+  if(!/\.xlsx?$/i.test(f.name))return bad('El archivo debe ser .xls o .xlsx.');
+  if(f.size>10*1048576)return bad('El archivo supera los 10 MB.');
+  if(typeof XLSX==='undefined')return bad('No se pudo cargar el lector de Excel (¿sin conexión a internet?).');
+  let buf,rows;try{buf=await f.arrayBuffer();const wb=XLSX.read(buf,{type:'array'});rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,raw:true,defval:null})}catch(e){return bad('No se pudo abrir el archivo: ¿está dañado?')}
+  const r=parseArca(rows);if(!r.ok)return bad(r.error);
+  const c=ui.clients.find(x=>x.id===cid);
+  try{
+    const ex=await fetchAll((a,b)=>sb.from('vouchers').select('emisor_cuit,tipo_cmp,punto_venta,numero,fecha,importe_total').eq('client_id',cid).range(a,b));
+    ex.forEach(e=>{e.importe_total=Number(e.importe_total)});
+    const hash=[...new Uint8Array(await crypto.subtle.digest('SHA-256',buf))].map(x=>x.toString(16).padStart(2,'0')).join('');
+    ui.pend={cid,periodo,file:f.name,hash,r,plan:planImport(r.vs,r.meta,ex,{cuit:c.cuit,periodo})};
+  }catch(e){flash(errTxt(e),'err')}
+  draw();
+}
+function vPreview(){
+  const {plan:p,r,file}=ui.pend;
+  return `<h2>Vista previa: ${esc(file)}</h2>${p.bloqueos.map(b=>`<div class="msg err">${esc(b)} No se puede importar.</div>`).join('')}
+  <div class="grid" style="margin-bottom:12px">${[['Leídos',r.read],['Nuevos',p.nuevos.length],['Ya existían',p.repetidos.length],['Con diferencias',p.difs.length],['Fuera del período',p.fuera.length]].map(([t,n])=>`<div class="card kpi"><b>${n}</b><span>${t}</span></div>`).join('')}</div>
+  ${r.errors.length?`<div class="msg warn">Filas rechazadas: ${r.errors.map(e=>`fila ${e.row}: ${esc(e.message)}`).join(' · ')}</div>`:''}
+  ${p.difs.length?`<div class="msg warn">Existen con datos distintos (no se modifican, revisalos): ${p.difs.map(d=>`N° ${d.v.numero} (${esc(d.motivo)})`).join(' · ')}</div>`:''}
+  ${p.fuera.length?`<div class="msg warn">${p.fuera.length} comprobante(s) con fecha de otro mes no se importan.</div>`:''}
+  <div class="tw" style="margin-bottom:12px"><table><thead><tr><th>Fecha</th><th>Tipo</th><th>Pto. vta.</th><th>Número</th><th>CUIT emisor</th><th>Emisor</th><th>Total</th></tr></thead><tbody>
+  ${p.nuevos.map(v=>`<tr><td>${fAR(v.fecha)}</td><td>${esc(v.tipo_txt)}</td><td>${v.punto_venta}</td><td>${v.numero}</td><td>${cuitF(v.emisor_cuit)}</td><td>${esc(v.emisor_nombre)}</td><td>${money(v.importe_total)}</td></tr>`).join('')||'<tr><td colspan="7" style="color:var(--mut)">No hay comprobantes nuevos.</td></tr>'}</tbody></table></div>
+  <div class="row"><button class="b" id="bconf" ${p.bloqueos.length||!p.nuevos.length?'disabled':''} onclick="confirmar()">Confirmar importación de ${p.nuevos.length}</button><button class="g" onclick="ui.pend=null;draw()">Cancelar</button></div>`;
+}
+async function confirmar(){
+  if(ui.busy)return;ui.busy=true;$('bconf').disabled=true;$('bconf').textContent='Importando…';
+  const {cid,periodo,file,hash,r,plan}=ui.pend;let batchId=null,inserted=0;
+  try{
+    const {data:per,error:e1}=await sb.from('client_periods').upsert({client_id:cid,periodo:periodo+'-01'},{onConflict:'client_id,periodo'}).select('id').single();if(e1)throw e1;
+    const {data:b,error:e2}=await sb.from('import_batches').insert({client_id:cid,period_id:per.id,file_name:file,file_sha256:hash,imported_by:me.id,rows_read:r.read,rows_new:plan.nuevos.length,rows_duplicate:plan.repetidos.length+r.dupFile,rows_rejected:r.errors.length,errors:r.errors}).select('id').single();if(e2)throw e2;
+    batchId=b.id;
+    const rowsDb=plan.nuevos.map(v=>({client_id:cid,period_id:per.id,batch_id:batchId,fecha:v.fecha,tipo_cmp:v.tipo_cmp,punto_venta:v.punto_venta,numero:v.numero,emisor_cuit:v.emisor_cuit,emisor_nombre:v.emisor_nombre,moneda:v.moneda,tipo_cambio:v.tipo_cambio,importe_total:v.importe_total,raw:v.raw}));
+    for(let i=0;i<rowsDb.length;i+=300){
+      const {data,error}=await sb.from('vouchers').upsert(rowsDb.slice(i,i+300),{onConflict:'client_id,emisor_cuit,tipo_cmp,punto_venta,numero',ignoreDuplicates:true}).select('id');
+      if(error)throw error;inserted+=data.length;
+    }
+    if(inserted!==plan.nuevos.length)await sb.from('import_batches').update({rows_new:inserted,rows_duplicate:plan.repetidos.length+r.dupFile+(plan.nuevos.length-inserted)}).eq('id',batchId);
+    ui.pend=null;ui.busy=false;ui.periodo=periodo;ui.cid=cid;flash(`Se importaron ${inserted} comprobantes.`);await show('comprobantes');
+  }catch(e){
+    if(batchId)await sb.from('import_batches').update({rows_new:inserted,errors:[...r.errors,{row:0,message:'Importación interrumpida: '+errTxt(e)}]}).eq('id',batchId);
+    ui.busy=false;flash(`La importación falló${inserted?` después de guardar ${inserted} comprobantes`:''}: ${errTxt(e)}. Podés volver a importar el mismo archivo: no se duplica nada.`,'err');draw();
+  }
+}
+
+/* ===== Comprobantes ===== */
+function filtered(){
+  let vs=ui.vs;const q=ui.q.toLowerCase().trim();
+  if(q)vs=vs.filter(v=>[v.emisor_cuit,v.emisor_nombre,v.numero].join(' ').toLowerCase().includes(q));
+  const f=ui.filtro;
+  if(f==='faltan')vs=vs.filter(v=>v.doc_status==='no_recibida');
+  if(f==='fisica')vs=vs.filter(v=>v.doc_status==='recibida_fisica');
+  if(f==='digital')vs=vs.filter(v=>v.doc_status==='recibida_digital');
+  if(f==='liq')vs=vs.filter(v=>v.proc_status.startsWith('liquidado'));
+  if(f==='sinfactura')vs=vs.filter(v=>v.proc_status==='liquidado_sin_documentacion');
+  if(f==='revisar')vs=vs.filter(v=>v.doc_status==='pendiente_revision'||v.proc_status==='requiere_revision');
+  return vs;
+}
+const optsOf=(M,sel)=>Object.entries(M).map(([k,[t]])=>`<option value="${k}" ${k===sel?'selected':''}>${t}</option>`).join('');
+function vComp(){
+  if(!ui.clients.length)return `<h2>Comprobantes</h2><div class="card">No hay clientes disponibles.</div>`;
+  const F=[['','Todos'],['faltan','Sin factura recibida'],['fisica','Recibidos en papel'],['digital','Recibidos digitalmente'],['liq','Liquidados'],['sinfactura','Liquidados sin factura'],['revisar','Por revisar']];
+  return `<h2>Comprobantes</h2><div class="card row" style="margin-bottom:12px">
+  <label>Cliente<br><select onchange="ui.cid=this.value;show('comprobantes')">${clientOpts()}</select></label>
+  <label>Período<br><input type="month" value="${ui.periodo}" onchange="ui.periodo=this.value;show('comprobantes')"></label>
+  <label>Buscar<br><input value="${esc(ui.q)}" placeholder="CUIT, proveedor o número" oninput="ui.q=this.value;redrawTable()"></label>
+  <label>Filtro<br><select onchange="ui.filtro=this.value;ui.sel.clear();draw()">${F.map(([k,t])=>`<option value="${k}" ${ui.filtro===k?'selected':''}>${t}</option>`).join('')}</select></label>
+  <button class="g" onclick="copiarFaltantes()">Copiar lista de faltantes</button><button class="b" onclick="abrirFicha(ui.cid,'pedir',ui.periodo)">Pedir faltantes por WhatsApp</button></div><div id="tabla">${tabla(filtered())}</div>`;
+}
+function redrawTable(){$('tabla').innerHTML=tabla(filtered())}
+function tabla(vs){
+  const n=ui.sel.size;
+  return `<div class="card row" style="margin-bottom:10px"><b style="align-self:center">${n} seleccionado(s)</b>
+  <label>Documentación<br><select id="bd"><option value="">(sin cambio)</option>${optsOf(DOC)}</select></label>
+  <label>Procesamiento<br><select id="bp"><option value="">(sin cambio)</option>${optsOf(PROC)}</select></label>
+  <label>Motivo (si excluye)<br><input id="bm"></label><button class="b" ${n?'':'disabled'} onclick="masivo()">Aplicar a los seleccionados</button></div>
+  <div class="tw"><table><thead><tr><th><input type="checkbox" onchange="selAll(this.checked)" ${n&&n===vs.length?'checked':''}></th><th>Fecha</th><th>Proveedor</th><th>Comprobante</th><th>Importe</th><th>Documentación</th><th>Procesamiento</th><th>Cambiar</th></tr></thead><tbody>
+  ${vs.length?vs.map(v=>`<tr><td><input type="checkbox" ${ui.sel.has(v.id)?'checked':''} onchange="toggleSel('${v.id}',this.checked)"></td><td>${fAR(v.fecha)}</td>
+  <td>${esc(v.emisor_nombre)}<span class="s">${cuitF(v.emisor_cuit)}</span></td>
+  <td>${esc(tipoTxt(v))}<span class="s">${String(v.punto_venta).padStart(5,'0')}-${String(v.numero).padStart(8,'0')}</span></td><td>${money(Number(v.importe_total))}</td>
+  <td>${tag(DOC,v.doc_status)}</td><td>${tag(PROC,v.proc_status)}${v.proc_exclusion_reason?`<span class="s">${esc(v.proc_exclusion_reason)}</span>`:''}</td>
+  <td><div class="row" style="gap:4px"><select id="d${v.id}">${optsOf(DOC,v.doc_status)}</select><select id="p${v.id}">${optsOf(PROC,v.proc_status)}</select><input id="m${v.id}" placeholder="Motivo" style="width:90px">
+  <button class="g" onclick="guardar('${v.id}')">Guardar</button><button class="g" onclick="verHist('${v.id}')">Historial</button></div></td></tr>
+  ${ui.hist&&ui.hist.id===v.id?`<tr class="hist"><td></td><td colspan="7">${ui.hist.html}</td></tr>`:''}`).join(''):'<tr><td colspan="8" style="color:var(--mut)">Sin comprobantes para este cliente, período y filtro.</td></tr>'}</tbody></table></div>`;
+}
+async function verHist(id){
+  if(ui.hist&&ui.hist.id===id){ui.hist=null;return redrawTable()}
+  const {data,error}=await sb.from('voucher_status_history').select('*, profiles:changed_by(full_name)').eq('voucher_id',id).order('changed_at',{ascending:false});
+  const L=(d,p)=>`${(DOC[d]||[''])[0]} / ${(PROC[p]||[''])[0]}`;
+  ui.hist={id,html:error?esc(errTxt(error)):data.length?data.map(x=>`${new Date(x.changed_at).toLocaleString('es-AR')}: ${esc(L(x.old_doc,x.old_proc))} → ${esc(L(x.new_doc,x.new_proc))}${x.profiles?` (${esc(x.profiles.full_name)})`:''}`).join('<br>'):'Sin cambios de estado registrados.'};
+  redrawTable();
+}
+function toggleSel(id,on){on?ui.sel.add(id):ui.sel.delete(id);redrawTable()}
+function selAll(on){ui.sel.clear();if(on)filtered().forEach(v=>ui.sel.add(v.id));redrawTable()}
+const RECIBIDOS=['recibida_fisica','recibida_digital'];
+/** Aplica cambios agrupados por estado destino; registra recepción cuando corresponde. */
+async function aplicarGrupos(targets){ // targets: [{v,doc,proc,motivo}]
+  const groups=new Map();
+  targets.forEach(t=>{const k=[t.doc,t.proc,t.proc==='excluido'?t.motivo:''].join('|');(groups.get(k)||groups.set(k,{doc:t.doc,proc:t.proc,motivo:t.proc==='excluido'?t.motivo:null,ids:[]}).get(k)).ids.push(t.v.id)});
+  for(const g of groups.values()){
+    const upd={doc_status:g.doc,proc_status:g.proc,proc_exclusion_reason:g.motivo,updated_by:me.id};
+    if(RECIBIDOS.includes(g.doc))upd.received_at=new Date().toISOString();
+    const {error}=await sb.from('vouchers').update(upd).in('id',g.ids);if(error)throw error;
+    const nuevosRec=targets.filter(t=>g.ids.includes(t.v.id)&&RECIBIDOS.includes(g.doc)&&t.v.doc_status!==g.doc);
+    if(nuevosRec.length){const {error:e2}=await sb.from('document_receipts').insert(nuevosRec.map(t=>({voucher_id:t.v.id,method:'manual',received_by:me.id})));if(e2)throw e2}
+  }
+}
+async function guardar(id){
+  const v=ui.vs.find(x=>x.id===id),doc=$('d'+id).value,proc=$('p'+id).value,motivo=($('m'+id).value||v.proc_exclusion_reason||'').trim();
+  const e=validar(doc,proc,motivo);if(e){flash(e,'err');return draw()}
+  try{await aplicarGrupos([{v,doc,proc,motivo}]);flash('Estado actualizado.');await loadVouchers()}catch(x){flash(errTxt(x),'err')}
+  draw();
+}
+async function masivo(){
+  const d=$('bd').value,p=$('bp').value,m=$('bm').value.trim();
+  if(!d&&!p){flash('Elegí al menos un estado para aplicar.','err');return draw()}
+  const vs=ui.vs.filter(v=>ui.sel.has(v.id));
+  const t=vs.map(v=>({v,doc:d||v.doc_status,proc:p||v.proc_status,motivo:m||v.proc_exclusion_reason||''}));
+  const errs=t.map(x=>validar(x.doc,x.proc,x.motivo)).filter(Boolean);
+  if(errs.length){flash(`No se aplicó nada: ${errs[0]} (${errs.length} comprobante(s) afectados).`,'err');return draw()}
+  if(!confirm(`¿Cambiar el estado de ${vs.length} comprobante(s)?`))return;
+  try{await aplicarGrupos(t);flash(`Se actualizaron ${vs.length} comprobantes.`);await loadVouchers()}catch(x){flash(errTxt(x),'err')}
+  draw();
+}
+function copiarFaltantes(){
+  const vs=ui.vs.filter(v=>v.doc_status==='no_recibida');
+  const t=['Fecha\tProveedor\tCUIT\tComprobante\tImporte',...vs.map(v=>[fAR(v.fecha),v.emisor_nombre,v.emisor_cuit,`${tipoTxt(v)} ${v.punto_venta}-${v.numero}`,v.importe_total].join('\t'))].join('\n');
+  const ok=()=>{flash(`Copiadas ${vs.length} facturas faltantes. Pegalas en Excel.`);draw()};
+  const fb=()=>{const a=document.createElement('textarea');a.value=t;document.body.appendChild(a);a.select();let r=false;try{r=document.execCommand('copy')}catch(e){}a.remove();r?ok():(flash('No se pudo copiar desde este navegador.','err'),draw())};
+  navigator.clipboard?navigator.clipboard.writeText(t).then(ok,fb):fb();
+}
+
+/* ===== Escaneo de QR de factura electrónica ===== */
+/* Leer el QR identifica el comprobante; NO verifica la factura ante ARCA ni significa que exista copia digital. */
+const QRS={stream:null,on:false,raf:0,last:'',lastAt:0,list:[]};
+function parseAfipQr(text){
+  let p;try{p=new URL(String(text).trim()).searchParams.get('p')}catch(e){return{ok:false,error:'El código no es una URL; no parece un QR de factura electrónica.'}}
+  if(!p)return{ok:false,error:'La URL no contiene el parámetro "p" de ARCA.'};
+  let j;try{const b=p.replace(/-/g,'+').replace(/_/g,'/');j=JSON.parse(decodeURIComponent(escape(atob(b+'='.repeat((4-b.length%4)%4)))))}catch(e){return{ok:false,error:'No se pudo decodificar el contenido del QR.'}}
+  const cuit=String(j.cuit??'').replace(/\D/g,'');
+  if(cuit.length!==11||[j.fecha,j.ptoVta,j.tipoCmp,j.nroCmp,j.importe].some(v=>v==null))return{ok:false,error:'Al QR le faltan datos (CUIT, fecha, punto de venta, tipo, número o importe).'};
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(String(j.fecha)))return{ok:false,error:'Fecha del QR con formato inesperado.'};
+  return{ok:true,data:{fecha:j.fecha,cuit,ptoVta:+j.ptoVta,tipoCmp:+j.tipoCmp,nroCmp:+j.nroCmp,importe:+j.importe,ctz:+(j.ctz??1),raw:j}};
+}
+const nroF=(pv,n)=>String(pv).padStart(5,'0')+'-'+String(n).padStart(8,'0');
+function vEscanear(){
+  if(!ui.clients.length)return `<h2>Escanear factura</h2><div class="card">No hay clientes disponibles.</div>`;
+  return `<h2>Escanear factura</h2>
+  ${window.isSecureContext?'':'<div class="msg warn">Esta página no usa HTTPS, así que el navegador bloquea la cámara en vivo. Podés usar "Sacar foto al QR" o un lector USB, o subir la app a un hosting con HTTPS.</div>'}
+  <label style="display:flex;gap:8px;align-items:center;color:var(--tx);margin-bottom:14px"><input type="checkbox" id="auto" checked style="margin:0"> Marcar como recibida automáticamente cuando la factura coincide sin diferencias</label>
+  <div class="row" style="align-items:flex-start;gap:20px"><div style="flex:1;min-width:280px">
+  <div class="card" style="margin-bottom:12px"><b>Sacar foto al QR</b><div class="s" style="margin-bottom:8px">Abre la cámara del celular. Funciona aunque la página no tenga HTTPS.</div><input type="file" id="qrfoto" accept="image/*" capture="environment" onchange="leerFoto(this)" style="width:100%"></div>
+  <div class="card" style="margin-bottom:12px"><b>Cámara en vivo</b><div class="s" style="margin-bottom:8px">Escanea una factura tras otra sin tocar nada.</div>
+  <video id="cam" playsinline muted style="width:100%;max-width:480px;background:#000;border-radius:12px;min-height:140px"></video><canvas id="cv" style="display:none"></canvas>
+  <div class="row" style="margin-top:8px"><button class="b" onclick="startCam()">Activar cámara</button><button class="g" onclick="stopCam()">Detener</button></div></div>
+  <div class="card"><b>Lector USB o pegar el link del QR</b><div class="s" style="margin-bottom:8px">Un lector de códigos tipo teclado escribe el link y manda Enter solo.</div><input id="qrtxt" style="width:100%" autocomplete="off" onkeydown="if(event.key==='Enter'){handleQr(this.value);this.value=''}"></div></div>
+  <div style="flex:1;min-width:280px"><div id="scanres">${scanHtml()}</div><h3>Registradas en esta sesión (${QRS.list.length})</h3><div id="scanlist">${scanList()}</div></div></div>
+  <p style="color:var(--mut);font-size:12px">Escanear el QR identifica el comprobante en cualquier cliente y período y registra que la factura llegó en papel. No la verifica ante ARCA ni la archiva en digital.</p>`;
+}
+function scanList(){return QRS.list.length?QRS.list.map(x=>`<div class="s" style="font-size:13px;color:var(--tx)">${esc(x)}</div>`).join(''):'<span class="s">Todavía ninguna.</span>'}
+function scanHtml(){
+  const s=ui.scan;
+  if(!s)return '<div class="msg info">Escaneá el QR de una factura: se busca solo en los comprobantes importados de todos tus clientes.</div>';
+  const v=s.v,per=v&&v.client_periods&&v.client_periods.periodo,card=v?`<div class="card" style="margin-bottom:8px"><b>${esc(v.emisor_nombre)}</b><span class="s">${cuitF(v.emisor_cuit)}</span>${esc(tipoTxt(v))} ${nroF(v.punto_venta,v.numero)}<br>${fAR(v.fecha)}, ${money(Number(v.importe_total))}<span class="s" style="margin-top:6px">Cliente: ${esc(s.cli?s.cli.razon_social:'')}${per?', período '+per.slice(5,7)+'/'+per.slice(0,4):''}</span></div>`:'';
+  return `<div class="msg ${s.k}">${esc(s.t)}${s.d&&s.d.length?'<br>'+s.d.map(esc).join('<br>'):''}</div>${card}
+  <div class="row">${s.confirm?`<button class="b" onclick="registrarQr()">${s.d&&s.d.length?'Registrar igual':'Marcar como recibida'}</button>`:''}<button class="g" onclick="seguirScan()">${s.confirm?'Descartar':'Seguir escaneando'}</button></div>`;
+}
+function renderScan(){const a=document.getElementById('scanres'),b=document.getElementById('scanlist');if(a)a.innerHTML=scanHtml();if(b)b.innerHTML=scanList()}
+function setScan(o){ui.scan=o;renderScan()}
+function seguirScan(){ui.scan=null;renderScan()}
+function beep(ok){
+  try{const A=window.AudioContext||window.webkitAudioContext,a=new A(),o=a.createOscillator(),g=a.createGain();o.connect(g);g.connect(a.destination);o.frequency.value=ok?880:220;g.gain.value=.08;o.start();setTimeout(()=>{o.stop();a.close()},ok?130:260)}catch(e){}
+  try{navigator.vibrate&&navigator.vibrate(ok?80:[120,60,120])}catch(e){}
+}
+async function handleQr(text){
+  if(QRS.proc)return;QRS.proc=true;
+  try{
+    const r=parseAfipQr(text);if(!r.ok){beep(false);return setScan({k:'err',t:r.error})}
+    const q=r.data,{data,error}=await sb.from('vouchers').select('*, client_periods(periodo)').eq('emisor_cuit',q.cuit).eq('tipo_cmp',q.tipoCmp).eq('punto_venta',q.ptoVta).eq('numero',q.nroCmp);
+    if(error){beep(false);return setScan({k:'err',t:errTxt(error)})}
+    let hits=data;
+    if(hits.length>1){const rc=String(q.raw.nroDocRec??'').replace(/\D/g,''),cl=ui.clients.find(c=>c.cuit===rc);hits=cl?hits.filter(h=>h.client_id===cl.id):[]}
+    if(!hits.length){beep(false);return setScan({k:'warn',t:data.length>1?'Esa factura figura en más de un cliente y no se pudo decidir cuál es. Marcala a mano en Comprobantes.':`No figura entre los comprobantes importados (emisor ${cuitF(q.cuit)}, tipo ${q.tipoCmp}, N° ${nroF(q.ptoVta,q.nroCmp)}). Puede que falte importar el Excel de ARCA de ese mes, o que sea de un cliente al que no tenés acceso.`})}
+    const v=hits[0],cli=ui.clients.find(c=>c.id===v.client_id),d=[];
+    if(v.fecha!==q.fecha)d.push(`Fecha: QR ${fAR(q.fecha)} vs ARCA ${fAR(v.fecha)}`);
+    const imp=Number(v.importe_total);
+    if(Math.abs(imp-q.importe)>0.01&&Math.abs(imp-q.importe*(q.ctz||1))>0.01)d.push(`Importe: QR ${money(q.importe)} vs ARCA ${money(imp)}`);
+    if(v.doc_status!=='no_recibida'){beep(false);return setScan({k:'info',t:`Ya figuraba como "${DOC[v.doc_status][0]}". No se cambió nada.`,v,cli})}
+    const o={k:d.length?'warn':'ok',t:d.length?'Se encontró el comprobante, pero hay diferencias:':'Comprobante encontrado.',v,q,d,cli,confirm:true},auto=document.getElementById('auto');
+    if(auto&&auto.checked&&!d.length){ui.scan=o;return await registrarQr()}
+    setScan(o);
+  }finally{QRS.proc=false}
+}
+async function registrarQr(){
+  const s=ui.scan;if(!s||!s.confirm)return;const {v,q,d,cli}=s;
+  try{
+    const {data,error}=await sb.from('vouchers').update({doc_status:'recibida_fisica',received_at:new Date().toISOString(),updated_by:me.id}).eq('id',v.id).eq('doc_status','no_recibida').select('id');
+    if(error)throw error;
+    if(!data.length){beep(false);return setScan({k:'warn',t:'Otra persona ya registró este comprobante hace un instante. No se cambió nada.',v,cli})}
+    const {error:e2}=await sb.from('document_receipts').insert({voucher_id:v.id,method:'qr',received_by:me.id,qr_payload:q.raw,match_result:d.length?'con_diferencias: '+d.join('; '):'coincidencia_unica'});
+    if(e2)throw e2;
+    beep(true);
+    QRS.list.unshift(`${new Date().toLocaleTimeString('es-AR')}, ${cli?cli.razon_social+', ':''}${v.emisor_nombre||cuitF(v.emisor_cuit)}, ${nroF(v.punto_venta,v.numero)}`);
+    ui.scan=null;renderScan();
+    const l=document.getElementById('scanres');if(l)l.insertAdjacentHTML('afterbegin',`<div class="msg ok"><b>Recibida y registrada.</b><br>${esc(cli?cli.razon_social:'')}: ${esc(v.emisor_nombre||'')}, ${nroF(v.punto_venta,v.numero)}. Podés escanear la siguiente.</div>`);
+  }catch(e){beep(false);setScan({k:'err',t:errTxt(e)})}
+}
+async function startCam(){
+  if(QRS.on)return;
+  if(!window.isSecureContext)return setScan({k:'err',t:'El navegador bloquea la cámara en vivo porque esta página no usa HTTPS. Usá "Sacar foto al QR" o el lector USB, o subí la app a un hosting con HTTPS.'});
+  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia)return setScan({k:'err',t:'Este navegador no permite usar la cámara. Probá con Chrome o Safari actualizados, o usá "Sacar foto al QR".'});
+  QRS.det=null;if('BarcodeDetector' in window){try{QRS.det=new BarcodeDetector({formats:['qr_code']})}catch(e){QRS.det=null}}
+  if(!QRS.det&&typeof jsQR==='undefined')return setScan({k:'err',t:'No se pudo cargar el lector de QR (¿sin internet?). Probá con "Sacar foto al QR".'});
+  try{QRS.stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}},audio:false})}
+  catch(e){return setScan({k:'err',t:e.name==='NotAllowedError'?'Permiso de cámara denegado. Habilitalo en el navegador (ícono del candado) y volvé a intentar.':e.name==='NotFoundError'?'No se encontró ninguna cámara.':e.name==='NotReadableError'?'La cámara está siendo usada por otra aplicación.':'No se pudo abrir la cámara: '+(e.message||e.name)})}
+  const v=document.getElementById('cam');if(!v){stopCam();return}
+  v.srcObject=QRS.stream;try{await v.play()}catch(e){}
+  QRS.on=true;setScan({k:'info',t:'Cámara activa. Apuntá al QR de la factura.'});scanLoop();
+}
+function stopCam(){
+  QRS.on=false;cancelAnimationFrame(QRS.raf);
+  if(QRS.stream){QRS.stream.getTracks().forEach(t=>t.stop());QRS.stream=null}
+  const v=document.getElementById('cam');if(v)v.srcObject=null;
+}
+function recibido(t){const now=Date.now();if(t!==QRS.last||now-QRS.lastAt>6000){QRS.last=t;QRS.lastAt=now;handleQr(t)}}
+function scanLoop(){
+  if(!QRS.on)return;
+  const v=document.getElementById('cam'),c=document.getElementById('cv');
+  if(v&&v.readyState===v.HAVE_ENOUGH_DATA&&v.videoWidth&&!(ui.scan&&ui.scan.confirm)&&!QRS.proc&&!QRS.busy){
+    if(QRS.det){QRS.busy=true;QRS.det.detect(v).then(r=>{if(r[0]&&r[0].rawValue)recibido(r[0].rawValue)}).catch(()=>{}).finally(()=>{QRS.busy=false})}
+    else if(c){
+      const k=Math.min(1,640/v.videoWidth);c.width=Math.round(v.videoWidth*k);c.height=Math.round(v.videoHeight*k);
+      const x=c.getContext('2d',{willReadFrequently:true});x.drawImage(v,0,0,c.width,c.height);
+      const im=x.getImageData(0,0,c.width,c.height),code=jsQR(im.data,c.width,c.height,{inversionAttempts:'dontInvert'});
+      if(code&&code.data)recibido(code.data);
+    }
+  }
+  QRS.raf=requestAnimationFrame(scanLoop);
+}
+async function leerFoto(inp){
+  const f=inp.files[0];if(!f)return;
+  try{
+    const bmp=await createImageBitmap(f);let txt=null;
+    if('BarcodeDetector' in window){try{const r=await new BarcodeDetector({formats:['qr_code']}).detect(bmp);if(r[0])txt=r[0].rawValue}catch(e){}}
+    if(!txt&&typeof jsQR!=='undefined'){
+      for(const mw of [1000,1600,600]){
+        const k=Math.min(1,mw/bmp.width),c=document.createElement('canvas');c.width=Math.round(bmp.width*k);c.height=Math.round(bmp.height*k);
+        const x=c.getContext('2d',{willReadFrequently:true});x.drawImage(bmp,0,0,c.width,c.height);
+        const im=x.getImageData(0,0,c.width,c.height),code=jsQR(im.data,c.width,c.height,{inversionAttempts:'attemptBoth'});
+        if(code){txt=code.data;break}
+      }
+    }
+    inp.value='';
+    if(!txt)return setScan({k:'warn',t:'No se encontró ningún QR en la foto. Acercate para que el QR ocupe buena parte de la imagen, con buena luz y sin reflejos.'});
+    handleQr(txt);
+  }catch(e){setScan({k:'err',t:'No se pudo leer la foto: '+(e.message||e)})}
+}
+
+/* ===== Vencimientos ===== */
+const IMPS=[['IVA','IVA'],['CM','IIBB Conv. Multilateral'],['F931','Cargas sociales F.931'],['GANANCIAS_PH','Ganancias / BP (pers. humanas)'],['MONOTRIBUTO','Monotributo']];
+const canEdit=()=>isAdmin()||(prof&&prof.all_clients);
+const isoLocal=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+const diasHasta=iso=>{const [y,m,d]=iso.split('-').map(Number),h=isoLocal(new Date()).split('-').map(Number);return Math.round((Date.UTC(y,m-1,d)-Date.UTC(h[0],h[1]-1,h[2]))/864e5)};
+const DSEM=['domingo','lunes','martes','miércoles','jueves','viernes','sábado'];
+const diaSem=iso=>{const [y,m,d]=iso.split('-').map(Number);return DSEM[new Date(Date.UTC(y,m-1,d)).getUTCDay()]};
+const cuando=n=>n<0?`vencido hace ${-n} d`:n===0?'HOY':n===1?'mañana':`en ${n} días`;
+async function loadDeadlines(){const d=new Date();d.setDate(d.getDate()-7);const {data,error}=await sb.from('tax_deadlines').select('*').gte('fecha',isoLocal(d)).order('fecha');if(error)throw error;ui.dl=data}
+const afectados=d=>ui.clients.filter(c=>c.active!==false&&(c.impuestos||[]).includes(d.impuesto)&&d.terminaciones.includes(Number(c.cuit.slice(-1))));
+function vProx(){
+  const rows=ui.dl.filter(d=>{const n=diasHasta(d.fecha);return n>=0&&n<=7}).map(d=>({d,a:afectados(d)})).filter(x=>x.a.length);
+  return `<h3>Próximos 7 días</h3>`+(rows.length?`<div class="tw"><table><tbody>${rows.map(({d,a})=>`<tr><td style="white-space:nowrap">${fAR(d.fecha)}<span class="s">${cuando(diasHasta(d.fecha))}</span></td><td>${esc(d.descripcion)}${d.periodo?`<span class="s">período ${esc(d.periodo)}</span>`:''}</td><td>${a.map(c=>esc(c.razon_social)).join(', ')}</td></tr>`).join('')}</tbody></table></div>`:`<div class="card" style="color:var(--mut)">${ui.clients.some(c=>(c.impuestos||[]).length)?'No hay vencimientos de tus clientes en los próximos 7 días (según lo cargado).':'Indicá qué impuestos tiene cada cliente en "Clientes" para ver sus vencimientos acá.'}</div>`);
+}
+function vVenc(){
+  const n=Number(ui.vdias),sel=ui.vcli;
+  let rows=ui.dl.filter(d=>{const x=diasHasta(d.fecha);return x>=-7&&(n===0||x<=n)}).map(d=>({d,a:afectados(d)}));
+  if(sel)rows=rows.filter(x=>x.a.some(c=>c.id===sel));
+  return `<h2>Vencimientos</h2><div class="msg warn">Estas fechas se tomaron de calendarios publicados y se cruzaron entre varias fuentes; no se leen directamente de ARCA. Confirmalas en el calendario oficial antes de depender de ellas, y actualizalas si ARCA prorroga.</div>
+  <div class="card row" style="margin-bottom:12px"><label>Cliente<br><select onchange="ui.vcli=this.value;draw()"><option value="">Todos los clientes</option>${ui.clients.map(c=>`<option value="${c.id}" ${sel===c.id?'selected':''}>${esc(c.razon_social)}</option>`).join('')}</select></label>
+  <label>Ver<br><select onchange="ui.vdias=this.value;draw()">${[['30','Próximos 30 días'],['60','Próximos 60 días'],['0','Todo lo cargado']].map(([k,t])=>`<option value="${k}" ${ui.vdias===k?'selected':''}>${t}</option>`).join('')}</select></label></div>
+  <div class="tw"><table><thead><tr><th>Fecha</th><th>Obligación</th><th>Terminaciones</th><th>Clientes</th><th>Estado</th></tr></thead><tbody>
+  ${rows.length?rows.map(({d,a})=>{const x=diasHasta(d.fecha);return `<tr><td style="white-space:nowrap">${fAR(d.fecha)}<span class="s">${diaSem(d.fecha)} · ${cuando(x)}</span></td><td>${esc(d.descripcion)}${d.periodo?`<span class="s">período ${esc(d.periodo)}</span>`:''}</td><td>${d.terminaciones.length===10?'Todas':d.terminaciones.join(', ')}</td><td>${a.length?a.map(c=>esc(c.razon_social)).join(', '):'<span class="s">Ningún cliente con este impuesto</span>'}</td><td>${d.verificado?'<span class="tag" style="background:var(--grn);color:var(--grnt)">Verificado</span>':'<span class="tag" style="background:var(--amb);color:var(--ambt)">A confirmar</span>'}${isAdmin()?`<br><button class="g" style="margin-top:4px" onclick="toggleVerif('${d.id}',${!d.verificado})">${d.verificado?'Desmarcar':'Marcar verificado'}</button>`:''}</td></tr>`}).join(''):'<tr><td colspan="5" style="color:var(--mut)">Sin vencimientos para este filtro.</td></tr>'}</tbody></table></div>
+  ${isAdmin()?formVenc():''}`;
+}
+function formVenc(){return `<h3>Cargar vencimiento</h3><form class="card row" onsubmit="return addVenc(event)"><label>Impuesto<br><select name="imp">${IMPS.map(([k,t])=>`<option value="${k}">${t}</option>`).join('')}<option value="OTRO">Otro</option></select></label><label style="flex:1;min-width:220px">Descripción<br><input name="desc" required style="width:100%"></label><label>Período<br><input name="per" placeholder="2026-10"></label><label>Fecha<br><input type="date" name="fec" required></label><label>Terminaciones<br><input name="ter" placeholder="0,1,2 (vacío = todas)"></label><label>Fuente<br><input name="fte"></label><button class="b">Agregar</button></form>`}
+async function addVenc(e){
+  e.preventDefault();const f=new FormData(e.target),t=String(f.get('ter')).trim(),ter=t?t.split(/[,\s]+/).map(Number):[0,1,2,3,4,5,6,7,8,9];
+  if(ter.some(x=>!Number.isInteger(x)||x<0||x>9)){flash('Las terminaciones deben ser números de 0 a 9.','err');draw();return false}
+  const {error}=await sb.from('tax_deadlines').insert({impuesto:f.get('imp'),descripcion:String(f.get('desc')).trim(),periodo:String(f.get('per')).trim()||null,fecha:f.get('fec'),terminaciones:ter,fuente:String(f.get('fte')).trim()||null});
+  if(error)flash(errTxt(error),'err');else{await loadDeadlines();flash('Vencimiento agregado: queda "A confirmar" hasta que lo marques como verificado.')}
+  draw();return false;
+}
+async function toggleVerif(id,v){const {data,error}=await sb.from('tax_deadlines').update({verificado:v}).eq('id',id).select('id');if(error)flash(errTxt(error),'err');else if(!data.length)flash('No tenés permiso.','err');else await loadDeadlines();draw()}
+async function saveImps(id){
+  const arr=IMPS.map(([k])=>k).filter(k=>document.getElementById(`imp_${id}_${k}`).checked);
+  const {data,error}=await sb.from('clients').update({impuestos:arr}).eq('id',id).select('id');
+  if(error)flash(errTxt(error),'err');else if(!data.length)flash('No tenés permiso para editar clientes.','err');else{await loadClients();flash('Impuestos del cliente actualizados.')}
+  draw();
+}
+
+/* ===== Ficha del cliente ===== */
+async function loadCStats(){
+  const {data,error}=await sb.from('v_period_stats').select('client_id,total,faltan');if(error)throw error;
+  const m={};data.forEach(r=>{const o=m[r.client_id]||(m[r.client_id]={tot:0,fal:0});o.tot+=r.total;o.fal+=r.faltan});ui.cstats=m;
+}
+const SEL_IVA=['Responsable Inscripto','Monotributista','IVA Exento','No responsable'];
+async function loadDash(){const {data,error}=await sb.from('v_period_stats').select('*');if(error)throw error;ui.pst=data}
+async function loadCStats_old(){
+  const v=await fetchAll((a,b)=>sb.from('vouchers').select('client_id,doc_status').range(a,b)),m={};
+  v.forEach(x=>{const o=m[x.client_id]||(m[x.client_id]={tot:0,fal:0});o.tot++;if(x.doc_status==='no_recibida')o.fal++});ui.cstats=m;
+}
+async function abrirFicha(id,tab,periodo){
+  ui.ficha={id,tab:tab||'resumen',loading:true,fresh:true,per:[],bs:[],ct:[],rec:null,recPer:periodo||null};draw();
+  try{
+    await loadDeadlines();
+    const [per,bs,ct]=await Promise.all([
+      sb.from('v_period_stats').select('*').eq('client_id',id).order('periodo',{ascending:false}),
+      sb.from('import_batches').select('*').eq('client_id',id).order('imported_at',{ascending:false}).limit(50),
+      sb.from('client_contacts').select('*').eq('client_id',id).order('nombre')]);
+    for(const r of [per,bs,ct])if(r.error)throw r.error;
+    Object.assign(ui.ficha,{per:per.data,bs:bs.data,ct:ct.data,loading:false});
+  }catch(e){ui.ficha=null;flash(errTxt(e),'err');return draw()}
+  if(ui.ficha.tab==='pedir')return initPedir();
+  draw();
+}
+function cerrarFicha(){ui.ficha=null;draw()}
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&ui.ficha)cerrarFicha()});
+const fst=v=>({tot:v.length,fal:v.filter(x=>x.doc_status==='no_recibida').length,sin:v.filter(x=>x.proc_status==='liquidado_sin_documentacion').length,rev:v.filter(x=>x.doc_status==='pendiente_revision'||x.proc_status==='requiere_revision').length});
+const delC=(d,c)=>(c.impuestos||[]).includes(d.impuesto)&&d.terminaciones.includes(Number(c.cuit.slice(-1)));
+function vFicha(){
+  const f=ui.ficha;if(!f)return'';const c=ui.clients.find(x=>x.id===f.id);if(!c)return'';
+  const T=[['resumen','Resumen'],['pedir','Pedir facturas'],['datos','Datos'],['contactos','Contactos'],['comprobantes','Comprobantes'],['venc','Vencimientos'],['imports','Importaciones']],cls=f.fresh?'dr in':'dr';f.fresh=false;
+  return `<div class="ov" onclick="cerrarFicha()"><aside class="${cls}" onclick="event.stopPropagation()" role="dialog" aria-label="Ficha de ${esc(c.razon_social)}">
+  <div class="drh"><div class="term big">${c.cuit.slice(-1)}<small>termina en</small></div><div style="flex:1;min-width:0"><h2>${esc(c.razon_social)}</h2><div style="color:var(--mut)">${c.nombre_comercial?esc(c.nombre_comercial)+'<br>':''}CUIT ${cuitF(c.cuit)}${c.active===false?' (inactivo)':''}</div></div><button class="g" onclick="cerrarFicha()">Cerrar</button></div>
+  <div class="tabs">${T.map(([k,t])=>`<button class="${f.tab===k?'on':''}" onclick="selTab('${k}')">${t}</button>`).join('')}</div>
+  ${window._fm||''}<div>${f.loading?'<div class="msg info">Cargando la ficha…</div>':fTab(c,f)}</div></aside></div>`;
+}
+function fVencRows(c,max,dias){return ui.dl.filter(d=>{const n=diasHasta(d.fecha);return n>=-7&&n<=dias&&delC(d,c)}).slice(0,max)}
+function fVencTable(c,rows){
+  if(!(c.impuestos||[]).length)return '<div class="card" style="color:var(--mut)">Todavía no indicaste qué impuestos le corresponden. Marcalos en la pestaña Datos para ver sus vencimientos acá.</div>';
+  return rows.length?`<div class="tw"><table><thead><tr><th>Fecha</th><th>Obligación</th><th>Estado</th></tr></thead><tbody>${rows.map(d=>`<tr><td style="white-space:nowrap">${fAR(d.fecha)}<span class="s">${diaSem(d.fecha)}, ${cuando(diasHasta(d.fecha))}</span></td><td>${esc(d.descripcion)}${d.periodo?`<span class="s">período ${esc(d.periodo)}</span>`:''}</td><td>${d.verificado?'<span class="tag" style="background:var(--grn);color:var(--grnt)">Verificado</span>':'<span class="tag" style="background:var(--amb);color:var(--ambt)">A confirmar</span>'}</td></tr>`).join('')}</tbody></table></div>`:'<div class="card" style="color:var(--mut)">No hay vencimientos cargados para este cliente en el período consultado.</div>';
+}
+function fTab(c,f){
+  const ed=canEdit();
+  if(f.tab==='resumen'){
+    const s=sumSt(f.per);
+    return `<div class="grid">${[['Comprobantes',s.tot],['Sin factura recibida',s.fal],['Liquidados sin factura',s.sin],['Por revisar',s.rev]].map(([t,n])=>`<div class="card kpi"><b>${n}</b><span>${t}</span></div>`).join('')}</div>
+    <h3>Próximos vencimientos</h3>${fVencTable(c,fVencRows(c,6,60))}
+    ${c.observaciones?`<h3>Observaciones internas</h3><div class="card">${esc(c.observaciones)}</div>`:''}`;
+  }
+  if(f.tab==='datos'){
+    const v=k=>esc(c[k]);
+    return `<form onsubmit="return saveCliente(event)"><fieldset ${ed?'':'disabled'}><div class="fgrid">
+    <label>Razón social<input name="razon_social" required value="${v('razon_social')}"></label>
+    <label>Nombre comercial<input name="nombre_comercial" value="${v('nombre_comercial')}"></label>
+    <label>CUIT<input name="cuit" required inputmode="numeric" value="${cuitF(c.cuit)}"></label>
+    <label>Condición frente al IVA<select name="condicion_iva"><option value="">Sin indicar</option>${SEL_IVA.map(o=>`<option ${c.condicion_iva===o?'selected':''}>${o}</option>`).join('')}</select></label>
+    <label>Domicilio<input name="domicilio" value="${v('domicilio')}"></label><label>Localidad<input name="localidad" value="${v('localidad')}"></label>
+    <label>Provincia<input name="provincia" value="${v('provincia')}"></label><label>Teléfono<input name="telefono" value="${v('telefono')}"></label>
+    <label>Correo electrónico<input type="email" name="email" value="${v('email')}"></label>
+    <label class="full">Observaciones internas<textarea name="observaciones" rows="3">${v('observaciones')}</textarea></label>
+    <div class="full"><div style="color:var(--mut);font-size:12.5px;margin-bottom:8px">Impuestos que le corresponden (definen sus vencimientos)</div><div class="row" style="gap:16px">${IMPS.map(([k,t])=>`<label style="display:flex;gap:6px;align-items:center;color:var(--tx)"><input type="checkbox" name="imp" value="${k}" style="margin:0" ${(c.impuestos||[]).includes(k)?'checked':''}>${t}</label>`).join('')}</div></div>
+    ${ed?'<div class="full"><button class="b">Guardar cambios</button></div>':'<div class="full msg info">Tu usuario puede ver estos datos pero no editarlos.</div>'}</div></fieldset></form>
+    ${ed?`<h3>Estado del cliente</h3><div class="card row" style="justify-content:space-between;align-items:center"><div style="flex:1;min-width:220px">${c.active===false?'Este cliente está inactivo: no aparece en importaciones, escaneo ni vencimientos.':'Desactivarlo lo oculta de importaciones, escaneo y vencimientos, y conserva todos sus datos.'}</div>
+    <div class="row"><button class="g" onclick="toggleActivo()">${c.active===false?'Reactivar cliente':'Desactivar cliente'}</button><button class="dng" onclick="delCliente()">Eliminar cliente</button></div></div>
+    <p class="s">Solo se puede eliminar un cliente que no tenga comprobantes ni importaciones. Si los tiene, desactivalo.</p>`:''}`;
+  }
+  if(f.tab==='pedir')return vPedir(c,f);
+  if(f.tab==='contactos'){
+    return encargadoCard(f,ed)+`<div class="tw" style="margin-bottom:16px"><table><thead><tr><th>Nombre</th><th>Cargo</th><th>WhatsApp</th><th>Correo</th><th>Rol</th><th></th></tr></thead><tbody>
+    ${f.ct.length?f.ct.map(x=>`<tr><td>${esc(x.nombre)}</td><td>${esc(x.cargo)}</td><td>${esc(x.whatsapp)}</td><td>${esc(x.email)}</td><td>${x.is_reclamo_principal?'<span class="tag" style="background:var(--blu);color:var(--blut)">Recibe reclamos</span> ':''}${x.is_entrega?'<span class="tag" style="background:var(--teal);color:var(--tealt)">Entrega facturas</span>':''}</td><td>${ed?`<button class="dng" onclick="delContacto('${x.id}')">Quitar</button>`:''}</td></tr>`).join(''):'<tr><td colspan="6" style="color:var(--mut)">Sin contactos. Agregá a la persona que entrega las facturas o a quien hay que reclamarle.</td></tr>'}</tbody></table></div>
+    ${ed?`<form class="card" onsubmit="return addContacto(event)"><div class="fgrid"><label>Nombre y apellido<input name="nombre" required></label><label>Cargo o relación<input name="cargo"></label><label>WhatsApp<input name="whatsapp" inputmode="tel" placeholder="+54 9 3537 ..."></label><label>Correo<input type="email" name="email"></label>
+    <label style="display:flex;gap:6px;align-items:center;color:var(--tx)"><input type="checkbox" name="rec" style="margin:0"> Recibe los reclamos</label><label style="display:flex;gap:6px;align-items:center;color:var(--tx)"><input type="checkbox" name="ent" style="margin:0"> Entrega las facturas</label>
+    <div class="full"><button class="b">Agregar contacto</button></div></div></form>`:''}`;
+  }
+  if(f.tab==='comprobantes'){
+    const rows=f.per.map(p=>({p,s:{tot:p.total,fal:p.faltan,sin:p.sin_factura,rev:p.revisar}}));
+    return `<div class="row" style="margin-bottom:14px"><button class="b" onclick="ui.cid='${c.id}';ui.ficha=null;show('importar')">Importar Excel de ARCA</button><button class="g" onclick="ui.cid='${c.id}';ui.ficha=null;show('escanear')">Escanear facturas</button></div>
+    <div class="tw"><table><thead><tr><th>Período</th><th>Comprobantes</th><th>Sin factura</th><th>Liquidados sin factura</th><th>Por revisar</th><th></th></tr></thead><tbody>
+    ${rows.length?rows.map(({p,s})=>`<tr><td>${p.periodo.slice(5,7)}/${p.periodo.slice(0,4)}</td><td>${s.tot}</td><td ${s.fal?'style="color:var(--redt);font-weight:600"':''}>${s.fal}</td><td>${s.sin}</td><td>${s.rev}</td><td><button class="g" onclick="abrirComp('${c.id}','${p.periodo.slice(0,7)}')">Abrir comprobantes</button></td></tr>`).join(''):'<tr><td colspan="6" style="color:var(--mut)">Todavía no se importó ningún período para este cliente.</td></tr>'}</tbody></table></div>`;
+  }
+  if(f.tab==='venc')return fVencTable(c,fVencRows(c,40,120));
+  if(f.tab==='imports')return `<div class="tw"><table><thead><tr><th>Fecha</th><th>Archivo</th><th>Leídos</th><th>Nuevos</th><th>Repetidos</th><th>Rechazados</th></tr></thead><tbody>${f.bs.length?f.bs.map(b=>`<tr><td>${new Date(b.imported_at).toLocaleString('es-AR')}</td><td>${esc(b.file_name)}</td><td>${b.rows_read}</td><td>${b.rows_new}</td><td>${b.rows_duplicate}</td><td>${b.rows_rejected}</td></tr>`).join(''):'<tr><td colspan="6" style="color:var(--mut)">Sin importaciones para este cliente.</td></tr>'}</tbody></table></div>`;
+  return '';
+}
+function abrirComp(cid,periodo){ui.cid=cid;ui.periodo=periodo;ui.ficha=null;show('comprobantes')}
+async function reabrir(msg,kind){ // recarga clientes y refresca ficha
+  try{await loadClients()}catch(e){msg=errTxt(e);kind='err'}
+  flash(msg,kind||'ok');draw();
+}
+async function saveCliente(e){
+  e.preventDefault();const f=new FormData(e.target),id=ui.ficha.id,cuit=String(f.get('cuit')).replace(/\D/g,''),rs=String(f.get('razon_social')).trim(),t=k=>String(f.get(k)||'').trim()||null;
+  if(cuit.length!==11){flash('El CUIT debe tener 11 dígitos.','err');draw();return false}
+  if(!rs){flash('Falta la razón social.','err');draw();return false}
+  const {data,error}=await sb.from('clients').update({razon_social:rs,nombre_comercial:t('nombre_comercial'),cuit,condicion_iva:t('condicion_iva'),domicilio:t('domicilio'),localidad:t('localidad'),provincia:t('provincia'),telefono:t('telefono'),email:t('email'),observaciones:t('observaciones'),impuestos:f.getAll('imp')}).eq('id',id).select('id');
+  if(error)flash(errTxt(error),'err');else if(!data.length)flash('No tenés permiso para editar clientes.','err');else return reabrir('Datos guardados.'),false;
+  draw();return false;
+}
+async function toggleActivo(){
+  const c=ui.clients.find(x=>x.id===ui.ficha.id),nuevo=c.active===false;
+  const {data,error}=await sb.from('clients').update({active:nuevo}).eq('id',c.id).select('id');
+  if(error)flash(errTxt(error),'err');else if(!data.length)flash('No tenés permiso para editar clientes.','err');else return reabrir(nuevo?'Cliente reactivado.':'Cliente desactivado.');
+  draw();
+}
+async function delCliente(){
+  const c=ui.clients.find(x=>x.id===ui.ficha.id);
+  if(!confirm(`¿Eliminar definitivamente a "${c.razon_social}"? Esta acción no se puede deshacer.`))return;
+  const {data,error}=await sb.from('clients').delete().eq('id',c.id).select('id');
+  if(error)flash(errTxt(error),'err');else if(!data.length)flash('No tenés permiso para eliminar clientes.','err');
+  else{ui.ficha=null;try{await loadCStats()}catch(e){}return reabrir('Cliente eliminado.'),void 0}
+  draw();
+}
+async function addContacto(e){
+  e.preventDefault();const f=new FormData(e.target),t=k=>String(f.get(k)||'').trim()||null;
+  const {error}=await sb.from('client_contacts').insert({client_id:ui.ficha.id,nombre:String(f.get('nombre')).trim(),cargo:t('cargo'),whatsapp:t('whatsapp'),email:t('email'),is_reclamo_principal:!!f.get('rec'),is_entrega:!!f.get('ent')});
+  if(error)flash(errTxt(error),'err');else{await recargarContactos();flash('Contacto agregado.')}
+  draw();return false;
+}
+async function delContacto(id){
+  if(!confirm('¿Quitar este contacto?'))return;
+  const {error}=await sb.from('client_contacts').delete().eq('id',id);
+  if(error)flash(errTxt(error),'err');else{await recargarContactos();flash('Contacto quitado.')}
+  draw();
+}
+async function recargarContactos(){const {data,error}=await sb.from('client_contacts').select('*').eq('client_id',ui.ficha.id).order('nombre');if(error)throw error;ui.ficha.ct=data}
+
+/* ===== Pedir facturas por WhatsApp ===== */
+const sumSt=per=>per.reduce((a,p)=>({tot:a.tot+p.total,fal:a.fal+p.faltan,sin:a.sin+p.sin_factura,rev:a.rev+p.revisar}),{tot:0,fal:0,sin:0,rev:0});
+function selTab(k){ui.ficha.tab=k;if(k==='pedir'&&!ui.ficha.rec)initPedir();else draw()}
+/** Número de WhatsApp para wa.me: 549 + código de área + número (10 dígitos), sin 0 ni 15. */
+function waNum(raw){
+  let d=String(raw||'').replace(/\D/g,'').replace(/^00/,'');if(!d)return null;
+  d=d.startsWith('54')?d.slice(2):d.replace(/^0/,'');d=d.replace(/^9/,'');
+  return {num:'549'+d,ok:d.length===10};
+}
+function contactoPedir(f){const L=f.ct.filter(x=>x.whatsapp);return L.find(x=>x.id===(f.rec&&f.rec.cid))||L.find(x=>x.is_entrega)||L[0]||null}
+function buildMsg(c,ct,periodo,rows,det,fmt){
+  if(!rows.length)return '';
+  const nom=ct?String(ct.nombre).trim().split(/\s+/)[0]:'',per=periodo.slice(5)+'/'+periodo.slice(0,4),n=rows.length,lim=15,arch=fmt==='xlsx'?'el Excel':'el PDF';
+  const cab=`Hola${nom?' '+nom:''}, ¿cómo estás? Te escribimos de Estudio Theiler. Para cerrar el período ${per} de ${c.razon_social} ${n===1?'nos falta 1 factura':'nos faltan '+n+' facturas'}.`;
+  let cuerpo=`Te paso en ${arch} adjunto el detalle de lo que falta.`;
+  if(det){const L=rows.slice(0,lim).map(v=>`- ${fAR(v.fecha).slice(0,5)} ${v.emisor_nombre||cuitF(v.emisor_cuit)}, ${tipoTxt(v)} ${nroF(v.punto_venta,v.numero)}`);cuerpo=`${L.join('\n')}${n>lim?`\n...y ${n-lim} más (están en ${arch} adjunto).`:''}\n\nTe paso también ${arch} con el detalle.`}
+  return `${cab}\n\n${cuerpo}\n\nCuando puedas, ¿nos las acercás o nos las mandás por acá? Muchas gracias.`;
+}
+async function initPedir(){
+  const f=ui.ficha,wp=workPeriod(),has=f.per.find(p=>p.periodo.slice(0,7)===(f.recPer||wp));
+  const per=has?has.periodo.slice(0,7):(f.per[0]?f.per[0].periodo.slice(0,7):null);
+  f.rec={periodo:per,rev:false,det:false,fmt:'pdf',rows:[],msg:'',dirty:false,cid:null,loading:!!per};draw();
+  if(per)await loadRec();
+}
+async function loadRec(){
+  const f=ui.ficha,r=f.rec,c=ui.clients.find(x=>x.id===f.id),pr=f.per.find(p=>p.periodo.slice(0,7)===r.periodo);
+  r.loading=true;draw();
+  try{
+    const est=r.rev?['no_recibida','pendiente_revision']:['no_recibida'];
+    r.rows=await fetchAll((a,b)=>sb.from('vouchers').select('id,fecha,emisor_cuit,emisor_nombre,tipo_cmp,punto_venta,numero,importe_total,doc_status,raw').eq('period_id',pr.period_id).in('doc_status',est).order('fecha').order('numero').range(a,b));
+    if(!r.dirty)r.msg=buildMsg(c,contactoPedir(f),r.periodo,r.rows,r.det,r.fmt);
+  }catch(e){flash(errTxt(e),'err')}
+  r.loading=false;draw();
+}
+function recOpt(k,v){const r=ui.ficha.rec;r[k]=v;if(k==='periodo'||k==='rev'){r.dirty=false;loadRec()}else{if(!r.dirty)rebuildMsg();draw()}}
+function rebuildMsg(){const f=ui.ficha,r=f.rec,c=ui.clients.find(x=>x.id===f.id);r.msg=buildMsg(c,contactoPedir(f),r.periodo,r.rows,r.det,r.fmt)}
+function vPedir(c,f){
+  const r=f.rec,ed=canEdit();
+  if(!f.per.length)return '<div class="card">Este cliente todavía no tiene comprobantes importados. Importá primero el Excel de ARCA.</div><div style="margin-top:12px"><button class="b" onclick="ui.cid=\''+c.id+'\';ui.ficha=null;show(\'importar\')">Importar Excel de ARCA</button></div>';
+  if(!r)return '<div class="msg info">Preparando…</div>';
+  const ct=contactoPedir(f),w=ct?waNum(ct.whatsapp):null;
+  return `<div class="card row" style="margin-bottom:14px">
+  <label>Período<br><select onchange="recOpt('periodo',this.value)">${f.per.map(p=>{const v=p.periodo.slice(0,7);return `<option value="${v}" ${v===r.periodo?'selected':''}>${v.slice(5)}/${v.slice(0,4)}</option>`}).join('')}</select></label>
+  <label style="display:flex;gap:6px;align-items:center;color:var(--tx);margin-bottom:8px"><input type="checkbox" style="margin:0" ${r.rev?'checked':''} onchange="recOpt('rev',this.checked)"> Incluir pendientes de revisión</label>
+  <label>Archivo adjunto<br><select onchange="recOpt('fmt',this.value)"><option value="pdf" ${r.fmt==='pdf'?'selected':''}>PDF</option><option value="xlsx" ${r.fmt==='xlsx'?'selected':''}>Excel</option></select></label>
+  <label style="display:flex;gap:6px;align-items:center;color:var(--tx);margin-bottom:8px"><input type="checkbox" style="margin:0" ${r.det?'checked':''} onchange="recOpt('det',this.checked)"> Detallar las facturas también en el mensaje</label></div>
+  ${r.loading?'<div class="msg info">Buscando las facturas faltantes…</div>':r.rows.length?`
+  <div class="msg warn" style="margin-bottom:14px">${r.rows.length} ${r.rows.length===1?'comprobante sin factura recibida':'comprobantes sin factura recibida'} según lo que marcaste en ${r.periodo.slice(5)}/${r.periodo.slice(0,4)}. Si ya llegaron, marcalas como recibidas en Comprobantes y este mensaje se actualiza solo.</div>
+  <div class="card" style="margin-bottom:14px"><b>Para quién</b>${f.ct.filter(x=>x.whatsapp).length?`<div class="row" style="margin:8px 0 6px"><label>Contacto<br><select onchange="ui.ficha.rec.cid=this.value;recOpt('cid',this.value)">${f.ct.filter(x=>x.whatsapp).map(x=>`<option value="${x.id}" ${ct&&x.id===ct.id?'selected':''}>${esc(x.nombre)}${x.is_entrega?' (entrega las facturas)':''}</option>`).join('')}</select></label><span class="s">WhatsApp: ${esc(ct.whatsapp)}${w&&!w.ok?' <b style="color:var(--redt)">Revisá el número: código de área + número, sin 0 ni 15.</b>':''}</span></div>`:`<div class="s" style="margin:6px 0 10px">Todavía no cargaste el celular del encargado de enviar las facturas.</div>${encargadoForm(f,ed)}`}</div>
+  <label>Mensaje (podés editarlo antes de enviar)<textarea rows="11" oninput="ui.ficha.rec.msg=this.value;ui.ficha.rec.dirty=true">${esc(r.msg)}</textarea></label>
+  <div class="row" style="margin:12px 0"><button class="b" onclick="waAbrir()">Abrir WhatsApp y descargar el archivo</button>${typeof navigator.canShare==='function'?'<button class="b" onclick="waCompartir()">Compartir archivo y mensaje (celular)</button>':''}<button class="g" onclick="soloArchivo()">Solo descargar el archivo</button><button class="g" onclick="copiarMsg()">Copiar mensaje</button></div>
+  <p class="s">El archivo trae solo las facturas que faltan. En la compu: se descarga y se abre el chat con el mensaje listo; arrastrá el archivo al chat. En el celular: "Compartir" te deja elegir WhatsApp con el archivo ya cargado, pero ahí elegís vos el chat. La app no sabe si el mensaje se envió y no deja registro.</p>
+  <div class="tw"><table><thead><tr><th>Fecha</th><th>Proveedor</th><th>Comprobante</th><th>Importe</th></tr></thead><tbody>${r.rows.map(v=>`<tr><td>${fAR(v.fecha)}</td><td>${esc(v.emisor_nombre)}<span class="s">${cuitF(v.emisor_cuit)}</span></td><td>${esc(tipoTxt(v))}<span class="s">${nroF(v.punto_venta,v.numero)}</span></td><td>${money(Number(v.importe_total))}</td></tr>`).join('')}</tbody></table></div>`
+  :'<div class="msg ok">No hay facturas faltantes en este período según lo marcado. No hace falta pedir nada.</div>'}`;
+}
+function archivoPedir(){
+  const f=ui.ficha,r=f.rec,c=ui.clients.find(x=>x.id===f.id);
+  if(r.fmt==='xlsx'){
+    if(typeof XLSX==='undefined')throw new Error('No se pudo cargar el generador de Excel (¿sin internet?).');
+    const ws=XLSX.utils.aoa_to_sheet([['Fecha','Proveedor','CUIT','Comprobante','Importe','Estado'],...r.rows.map(filaFalt)]);
+    ws['!cols']=[{wch:12},{wch:36},{wch:14},{wch:32},{wch:16},{wch:22}];r.rows.forEach((_,i)=>{const x=ws['E'+(i+2)];if(x)x.z='#,##0.00'});
+    const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Faltantes');
+    return {blob:new Blob([XLSX.write(wb,{type:'array',bookType:'xlsx'})],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),name:fileBase()+'.xlsx'};
+  }
+  if(!window.jspdf||!window.jspdf.jsPDF)throw new Error('No se pudo cargar el generador de PDF (¿sin internet?).');
+  const doc=new window.jspdf.jsPDF({orientation:'landscape'});
+  doc.setFontSize(15);doc.text('Facturas faltantes - '+c.razon_social,14,16);doc.setFontSize(10);
+  doc.text(`CUIT ${cuitF(c.cuit)}  |  Período ${r.periodo.slice(5)}/${r.periodo.slice(0,4)}  |  ${r.rows.length} comprobante(s)  |  Estudio Theiler`,14,23);
+  doc.autoTable({startY:29,head:[['Fecha','Proveedor','CUIT','Comprobante','Importe','Estado']],body:r.rows.map(v=>{const a=filaFalt(v);a[4]=money(a[4]);return a}),styles:{fontSize:9},headStyles:{fillColor:[23,48,92]},columnStyles:{4:{halign:'right'}}});
+  return {blob:doc.output('blob'),name:fileBase()+'.pdf'};
+}
+function bajar(a){const u=URL.createObjectURL(a.blob),l=document.createElement('a');l.href=u;l.download=a.name;document.body.appendChild(l);l.click();l.remove();setTimeout(()=>URL.revokeObjectURL(u),5000)}
+function soloArchivo(){try{bajar(archivoPedir())}catch(e){flash(e.message,'err');draw()}}
+function waAbrir(){
+  const f=ui.ficha,r=f.rec,ct=contactoPedir(f);let url='https://wa.me/?text='+encodeURIComponent(r.msg);
+  if(ct){const w=waNum(ct.whatsapp);if(!w||!w.ok){flash('Revisá el número de WhatsApp: tiene que ser código de área + número (10 dígitos), sin 0 ni 15.','err');return draw()}url='https://wa.me/'+w.num+'?text='+encodeURIComponent(r.msg)}
+  try{bajar(archivoPedir())}catch(e){flash(e.message,'err');return draw()}
+  window.open(url,'_blank','noopener');
+}
+async function waCompartir(){
+  try{
+    const a=archivoPedir(),file=new File([a.blob],a.name,{type:a.blob.type});
+    if(!navigator.canShare||!navigator.canShare({files:[file]})){flash('Este dispositivo no permite compartir archivos desde el navegador. Usá "Abrir WhatsApp y descargar el archivo".','warn');return draw()}
+    await navigator.share({files:[file],text:ui.ficha.rec.msg,title:a.name});
+  }catch(e){if(e.name!=='AbortError'){flash('No se pudo compartir: '+(e.message||e),'err');draw()}}
+}
+function copiarMsg(){
+  const t=ui.ficha.rec.msg,ok=()=>{flash('Mensaje copiado.');draw()};
+  const fb=()=>{const a=document.createElement('textarea');a.value=t;document.body.appendChild(a);a.select();let k=false;try{k=document.execCommand('copy')}catch(e){}a.remove();k?ok():(flash('No se pudo copiar desde este navegador.','err'),draw())};
+  navigator.clipboard?navigator.clipboard.writeText(t).then(ok,fb):fb();
+}
+const fileBase=()=>{const f=ui.ficha,c=ui.clients.find(x=>x.id===f.id);return `Facturas faltantes - ${c.razon_social.replace(/[\\/:*?"<>|]/g,'')} - ${f.rec.periodo.slice(5)}-${f.rec.periodo.slice(0,4)}`};
+const filaFalt=v=>[fAR(v.fecha),v.emisor_nombre||'',v.emisor_cuit,`${tipoTxt(v)} ${nroF(v.punto_venta,v.numero)}`,Number(v.importe_total),DOC[v.doc_status][0]];
+function descargarExcel(){
+  if(typeof XLSX==='undefined'){flash('No se pudo cargar el generador de Excel (¿sin internet?).','err');return draw()}
+  const r=ui.ficha.rec,ws=XLSX.utils.aoa_to_sheet([['Fecha','Proveedor','CUIT','Comprobante','Importe','Estado'],...r.rows.map(filaFalt)]);
+  ws['!cols']=[{wch:12},{wch:36},{wch:14},{wch:32},{wch:16},{wch:22}];r.rows.forEach((_,i)=>{const c=ws['E'+(i+2)];if(c)c.z='#,##0.00'});
+  const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Faltantes');XLSX.writeFile(wb,fileBase()+'.xlsx');
+}
+function descargarPdf(){
+  if(!window.jspdf||!window.jspdf.jsPDF){flash('No se pudo cargar el generador de PDF (¿sin internet?).','err');return draw()}
+  const f=ui.ficha,r=f.rec,c=ui.clients.find(x=>x.id===f.id),doc=new window.jspdf.jsPDF({orientation:'landscape'});
+  doc.setFontSize(15);doc.text('Facturas faltantes - '+c.razon_social,14,16);doc.setFontSize(10);
+  doc.text(`CUIT ${cuitF(c.cuit)}  |  Período ${r.periodo.slice(5)}/${r.periodo.slice(0,4)}  |  ${r.rows.length} comprobante(s)  |  Estudio Theiler`,14,23);
+  doc.autoTable({startY:29,head:[['Fecha','Proveedor','CUIT','Comprobante','Importe','Estado']],body:r.rows.map(v=>{const a=filaFalt(v);a[4]=money(a[4]);return a}),styles:{fontSize:9},headStyles:{fillColor:[23,48,92]},columnStyles:{4:{halign:'right'}}});
+  doc.save(fileBase()+'.pdf');
+}
+function encargadoForm(f,ed){
+  const e=f.ct.find(x=>x.is_entrega);
+  return `<form onsubmit="return saveEncargado(event)"><fieldset ${ed?'':'disabled'}><div class="fgrid"><label>Nombre<input name="nombre" required value="${esc(e&&e.nombre)}"></label><label>Celular de WhatsApp<input name="whatsapp" required inputmode="tel" placeholder="3537 412345" value="${esc(e&&e.whatsapp)}"><span class="s">Con código de área, sin 0 ni 15.</span></label>${ed?'<div style="align-self:end"><button class="b">Guardar encargado</button></div>':''}</div></fieldset></form>`;
+}
+function encargadoCard(f,ed){return `<div class="card" style="margin-bottom:16px"><b>Encargado de enviar las facturas</b><div class="s" style="margin-bottom:10px">Es a quien se le piden por WhatsApp las facturas que faltan.</div>${encargadoForm(f,ed)}</div>`}
+async function saveEncargado(e){
+  e.preventDefault();const fd=new FormData(e.target),f=ui.ficha,nombre=String(fd.get('nombre')).trim(),wa=String(fd.get('whatsapp')).trim(),n=waNum(wa);
+  if(!n||n.num.length<8){flash('Escribí el celular con código de área, por ejemplo 3537 412345.','err');draw();return false}
+  const ex=f.ct.find(x=>x.is_entrega);
+  const {error}=ex?await sb.from('client_contacts').update({nombre,whatsapp:wa,is_reclamo_principal:true}).eq('id',ex.id):await sb.from('client_contacts').insert({client_id:f.id,nombre,whatsapp:wa,is_entrega:true,is_reclamo_principal:true});
+  if(error)flash(errTxt(error),'err');else{await recargarContactos();if(f.rec&&!f.rec.dirty)rebuildMsg();flash(n.ok?'Encargado guardado.':'Guardado, pero revisá el número: tiene que ser código de área + número, sin 0 ni 15.',n.ok?'ok':'warn')}
+  draw();return false;
+}
+init();
+</script>
+</body>
+</html>
