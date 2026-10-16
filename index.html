@@ -73,6 +73,11 @@ td{border-top:1px solid var(--bd);padding:11px 14px;vertical-align:top}
 .fgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}.full{grid-column:1/-1}
 .fgrid input,.fgrid select{width:100%}fieldset{border:0;padding:0;margin:0;min-width:0}
 @media(max-width:700px){.app{flex-direction:column}nav{width:100%;height:auto;position:static;display:flex;gap:4px;overflow-x:auto;padding:12px;border-right:0;border-bottom:1px solid var(--bd)}nav h1{display:none}nav button{width:auto;white-space:nowrap;margin:0}.me{display:none}main{padding:16px}.dr{border-radius:0;padding:16px}h2{font-size:24px}}
+.sm{padding:4px 9px!important;font-size:12.5px!important}
+input.sm{margin-top:0;border-radius:8px}
+label.g{display:inline-flex;align-items:center;color:var(--tx);background:var(--card);border:1px solid var(--bd);border-radius:10px;cursor:pointer;margin:0}
+label.g:hover{background:var(--card2)}
+.cel{display:grid;gap:6px;min-width:200px;justify-items:start}
 @media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style>
 </head>
@@ -224,7 +229,7 @@ function vInicio(){
   const sum=k=>R.reduce((a,r)=>a+r[k],0),venc7=R.filter(r=>r.nxt&&diasHasta(r.nxt.fecha)<=7).length;
   const K=[['Clientes activos',R.length],['Sin importar el Excel',R.filter(r=>r.state==='sin_importar').length],['Comprobantes sin pasar',sum('pend')],['Facturas faltantes',sum('fal')],['Vencen en 7 días',venc7],['Declaraciones sin presentar',R.reduce((a,r)=>a+r.fil.filter(x=>!x.ok).length,0)]];
   const ST={sin_importar:['Sin importar','amb'],pendiente:['Sin pasar','blu'],faltan:['Faltan facturas','org'],al_dia:['Al día','grn']};
-  const SH={IVA:'IVA',CM:'IIBB CM',F931:'F.931',GANANCIAS_PH:'Ganancias',MONOTRIBUTO:'Monotributo',OTRO:'Otro'};
+  const SH={IVA:'IVA',CM:'IIBB CM',F931:'F.931',GANANCIAS_PH:'Ganancias',GAN_ANT:'Anticipos Gcias.',GAN_DDJJ:'Ganancias',BP:'B. Personales',MONOTRIBUTO:'Monotributo',OTRO:'Otro'};
   const urg=n=>n<=2?'var(--redt)':n<=7?'var(--ambt)':'var(--mut)';
   const prox=R.filter(r=>r.nxt&&diasHasta(r.nxt.fecha)<=14).sort((a,b)=>a.nxt.fecha<b.nxt.fecha?-1:1);
   return `<h2>Inicio</h2>
@@ -247,7 +252,7 @@ function dashRows(){
   return ui.clients.filter(c=>c.active!==false).map(c=>{
     const cur=ui.pst.find(r=>r.client_id===c.id&&r.periodo.slice(0,7)===wp),nxt=ui.dl.filter(d=>diasHasta(d.fecha)>=0&&delC(d,c)).sort((a,b)=>a.fecha<b.fecha?-1:1)[0];
     const pend=cur?cur.sin_pasar:0,fal=cur?cur.faltan:0;
-    return {c,cur,nxt,pend,fal,fil:aplica(c).map(imp=>({imp,ok:!!ui.fil.find(f=>f.client_id===c.id&&f.periodo.slice(0,7)===wp&&f.impuesto===imp)})),state:!cur?'sin_importar':pend>0?'pendiente':fal>0?'faltan':'al_dia'};
+    return {c,cur,nxt,pend,fal,fil:aplica(c).filter(k=>OBLIG[k].t==='m').map(imp=>({imp,ok:!!ui.fil.find(f=>f.client_id===c.id&&f.periodo.slice(0,7)===wp&&f.impuesto===imp)})),state:!cur?'sin_importar':pend>0?'pendiente':fal>0?'faltan':'al_dia'};
   }).sort((a,b)=>ord[a.state]-ord[b.state]||(a.nxt&&b.nxt?(a.nxt.fecha<b.nxt.fecha?-1:1):a.nxt?-1:b.nxt?1:0));
 }
 function _vInicioViejo(){return vInicio0()+vProx()}
@@ -257,7 +262,7 @@ function vInicio0(){
   <p style="color:var(--mut)">${ui.clients.length?'Importá el Excel de ARCA de un cliente desde "Importar ARCA".':(isAdmin()?'Empezá creando un cliente en "Clientes".':'Todavía no tenés clientes asignados. Pedile a un administrador que te los asigne.')}</p>`;
 }
 function vClientes(){
-  const ed=canEdit(),L=ui.clients.filter(c=>ui.vinact||c.active!==false),SH={IVA:'IVA',CM:'IIBB CM',IIBB:'IIBB',F931:'F.931',GANANCIAS_PH:'Ganancias',MONOTRIBUTO:'Monotributo'};
+  const ed=canEdit(),L=ui.clients.filter(c=>ui.vinact||c.active!==false),SH={IVA:'IVA',CM:'IIBB CM',IIBB:'IIBB',F931:'F.931',GANANCIAS_PH:'Ganancias',GAN_ANT:'Anticipos Gcias.',GAN_DDJJ:'Ganancias',BP:'B. Personales',MONOTRIBUTO:'Monotributo'};
   const card=c=>{const st=ui.cstats[c.id]||{tot:0,fal:0};return `<div class="card cl ${c.active===false?'off':''}" tabindex="0" role="button" onclick="abrirFicha('${c.id}')" onkeydown="if(event.key==='Enter')abrirFicha('${c.id}')">
     <div class="term">${c.cuit.slice(-1)}<small>termina en</small></div><h3>${esc(c.razon_social)}</h3><div class="s" style="font-size:13px">CUIT ${cuitF(c.cuit)}${c.active===false?' (inactivo)':''}</div>
     <div class="chips">${(c.impuestos||[]).map(k=>`<span class="chip">${SH[k]||esc(k)}</span>`).join('')}</div>
@@ -551,7 +556,7 @@ async function leerFoto(inp){
 }
 
 /* ===== Vencimientos ===== */
-const IMPS=[['IVA','IVA'],['CM','IIBB Convenio Multilateral'],['IIBB','IIBB provincial (fuera de CM)'],['F931','Cargas sociales F.931'],['GANANCIAS_PH','Ganancias / BP (pers. humanas)'],['MONOTRIBUTO','Monotributo']];
+const IMPS=[['IVA','IVA'],['IIBB','IIBB provincial (fuera de CM)'],['CM','IIBB Convenio Multilateral'],['F931','Cargas sociales F.931'],['GAN_ANT','Ganancias: anticipos'],['GAN_DDJJ','Ganancias: declaración jurada anual'],['BP','Bienes Personales'],['MONOTRIBUTO','Monotributo']];
 const canEdit=()=>isAdmin()||(prof&&prof.all_clients);
 const isoLocal=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
 const diasHasta=iso=>{const [y,m,d]=iso.split('-').map(Number),h=isoLocal(new Date()).split('-').map(Number);return Math.round((Date.UTC(y,m-1,d)-Date.UTC(h[0],h[1]-1,h[2]))/864e5)};
@@ -559,7 +564,7 @@ const DSEM=['domingo','lunes','martes','miércoles','jueves','viernes','sábado'
 const diaSem=iso=>{const [y,m,d]=iso.split('-').map(Number);return DSEM[new Date(Date.UTC(y,m-1,d)).getUTCDay()]};
 const cuando=n=>n<0?`vencido hace ${-n} d`:n===0?'HOY':n===1?'mañana':`en ${n} días`;
 async function loadDeadlines(){const d=new Date();d.setDate(d.getDate()-7);const {data,error}=await sb.from('tax_deadlines').select('*').gte('fecha',isoLocal(d)).order('fecha');if(error)throw error;ui.dl=data}
-const afectados=d=>ui.clients.filter(c=>c.active!==false&&(c.impuestos||[]).includes(d.impuesto)&&d.terminaciones.includes(Number(c.cuit.slice(-1))));
+const afectados=d=>ui.clients.filter(c=>c.active!==false&&tieneImp(c,d.impuesto)&&d.terminaciones.includes(Number(c.cuit.slice(-1))));
 function vProx(){
   const rows=ui.dl.filter(d=>{const n=diasHasta(d.fecha);return n>=0&&n<=7}).map(d=>({d,a:afectados(d)})).filter(x=>x.a.length);
   return `<h3>Próximos 7 días</h3>`+(rows.length?`<div class="tw"><table><tbody>${rows.map(({d,a})=>`<tr><td style="white-space:nowrap">${fAR(d.fecha)}<span class="s">${cuando(diasHasta(d.fecha))}</span></td><td>${esc(d.descripcion)}${d.periodo?`<span class="s">período ${esc(d.periodo)}</span>`:''}</td><td>${a.map(c=>esc(c.razon_social)).join(', ')}</td></tr>`).join('')}</tbody></table></div>`:`<div class="card" style="color:var(--mut)">${ui.clients.some(c=>(c.impuestos||[]).length)?'No hay vencimientos de tus clientes en los próximos 7 días (según lo cargado).':'Indicá qué impuestos tiene cada cliente en "Clientes" para ver sus vencimientos acá.'}</div>`);
@@ -603,15 +608,16 @@ async function loadCStats_old(){
   v.forEach(x=>{const o=m[x.client_id]||(m[x.client_id]={tot:0,fal:0});o.tot++;if(x.doc_status==='no_recibida')o.fal++});ui.cstats=m;
 }
 async function abrirFicha(id,tab,periodo){
-  ui.ficha={id,tab:tab||'resumen',loading:true,fresh:true,per:[],bs:[],ct:[],rec:null,recPer:periodo||null};draw();
+  ui.ficha={id,tab:tab||'resumen',loading:true,fresh:true,per:[],bs:[],ct:[],docs:[],rec:null,recPer:periodo||null};draw();
   try{
     await loadDeadlines();await loadFil();
-    const [per,bs,ct]=await Promise.all([
+    const [per,bs,ct,dc]=await Promise.all([
       sb.from('v_period_stats').select('*').eq('client_id',id).order('periodo',{ascending:false}),
       sb.from('import_batches').select('*').eq('client_id',id).order('imported_at',{ascending:false}).limit(50),
-      sb.from('client_contacts').select('*').eq('client_id',id).order('nombre')]);
-    for(const r of [per,bs,ct])if(r.error)throw r.error;
-    Object.assign(ui.ficha,{per:per.data,bs:bs.data,ct:ct.data,loading:false});
+      sb.from('client_contacts').select('*').eq('client_id',id).order('nombre'),
+      sb.from('client_documents').select('*').eq('client_id',id).order('subido_at',{ascending:false})]);
+    for(const r of [per,bs,ct,dc])if(r.error)throw r.error;
+    Object.assign(ui.ficha,{per:per.data,bs:bs.data,ct:ct.data,docs:dc.data,loading:false});
   }catch(e){ui.ficha=null;flash(errTxt(e),'err');return draw()}
   if(ui.ficha.tab==='pedir')return initPedir();
   draw();
@@ -619,10 +625,10 @@ async function abrirFicha(id,tab,periodo){
 function cerrarFicha(){ui.ficha=null;draw()}
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&ui.ficha)cerrarFicha()});
 const fst=v=>({tot:v.length,fal:v.filter(x=>x.doc_status==='no_recibida').length,sin:v.filter(x=>x.proc_status==='liquidado_sin_documentacion').length,rev:v.filter(x=>x.doc_status==='pendiente_revision'||x.proc_status==='requiere_revision').length});
-const delC=(d,c)=>(c.impuestos||[]).includes(d.impuesto)&&d.terminaciones.includes(Number(c.cuit.slice(-1)));
+const delC=(d,c)=>tieneImp(c,d.impuesto)&&d.terminaciones.includes(Number(c.cuit.slice(-1)));
 function vFicha(){
   const f=ui.ficha;if(!f)return'';const c=ui.clients.find(x=>x.id===f.id);if(!c)return'';
-  const T=[['resumen','Resumen'],['present','Presentaciones'],['pedir','Pedir facturas'],['datos','Datos'],['contactos','Contactos'],['comprobantes','Comprobantes'],['venc','Vencimientos'],['imports','Importaciones']],cls=f.fresh?'dr in':'dr';f.fresh=false;
+  const T=[['resumen','Resumen'],['present','Presentaciones'],['pedir','Pedir facturas'],['datos','Datos'],['contactos','Contactos'],['comprobantes','Comprobantes'],['docs','Documentos'],['venc','Vencimientos'],['imports','Importaciones']],cls=f.fresh?'dr in':'dr';f.fresh=false;
   return `<div class="ov" onclick="cerrarFicha()"><aside class="${cls}" onclick="event.stopPropagation()" role="dialog" aria-label="Ficha de ${esc(c.razon_social)}">
   <div class="drh"><div class="term big">${c.cuit.slice(-1)}<small>termina en</small></div><div style="flex:1;min-width:0"><h2>${esc(c.razon_social)}</h2><div style="color:var(--mut)">${c.nombre_comercial?esc(c.nombre_comercial)+'<br>':''}CUIT ${cuitF(c.cuit)}${c.active===false?' (inactivo)':''}</div></div><div class="row" style="gap:8px"><button class="b" onclick="abrirArca()">Entrar a ARCA</button><button class="g" onclick="cerrarFicha()">Cerrar</button></div></div>
   <div class="tabs">${T.map(([k,t])=>`<button class="${f.tab===k?'on':''}" onclick="selTab('${k}')">${t}</button>`).join('')}</div>
@@ -638,7 +644,7 @@ function fTab(c,f){
   if(f.tab==='resumen'){
     const s=sumSt(f.per);
     return `<div class="grid">${[['Comprobantes',s.tot],['Sin factura recibida',s.fal],['Liquidados sin factura',s.sin],['Por revisar',s.rev]].map(([t,n])=>`<div class="card kpi"><b>${n}</b><span>${t}</span></div>`).join('')}</div>
-    <h3>Próximos vencimientos</h3>${fVencTable(c,fVencRows(c,6,60))}
+    ${infoCliente(c)}<h3>Próximos vencimientos</h3>${fVencTable(c,fVencRows(c,6,60))}
     ${c.observaciones?`<h3>Observaciones internas</h3><div class="card">${esc(c.observaciones)}</div>`:''}`;
   }
   if(f.tab==='datos'){
@@ -651,11 +657,15 @@ function fTab(c,f){
     <label>Domicilio<input name="domicilio" value="${v('domicilio')}"></label><label>Localidad<input name="localidad" value="${v('localidad')}"></label>
     <label>Provincia<input name="provincia" value="${v('provincia')}"></label><label>Teléfono<input name="telefono" value="${v('telefono')}"></label>
     <label>Correo electrónico<input type="email" name="email" value="${v('email')}"></label>
+    <label>Forma de pago<select name="forma_pago"><option value="">Sin indicar</option>${FORMAS_PAGO.map(o=>`<option ${c.forma_pago===o?'selected':''}>${o}</option>`).join('')}</select></label>
+    <label>Detalle de la forma de pago<input name="forma_pago_detalle" placeholder="Banco, cuenta, quién paga" value="${v('forma_pago_detalle')}"></label>
+    <label>Ejercicio económico: mes de inicio<select name="ej_inicio" onchange="syncEj(this)"><option value="">Sin indicar</option>${MESES.map((m,i)=>`<option value="${i+1}" ${c.ejercicio_inicio_mes===i+1?'selected':''}>${m}</option>`).join('')}</select></label>
+    <label>Ejercicio económico: mes de cierre<select name="ej_cierre" onchange="syncEj(this)"><option value="">Sin indicar</option>${MESES.map((m,i)=>`<option value="${i+1}" ${c.ejercicio_cierre_mes===i+1?'selected':''}>${m}</option>`).join('')}</select></label>
     <label>CUIT de ingreso a ARCA<input name="cuit_ingreso" inputmode="numeric" placeholder="Vacío = el CUIT del cliente" value="${c.cuit_ingreso?cuitF(c.cuit_ingreso):''}"></label>
     <label>Titular de ese CUIT (quién ingresa)<input name="titular_ingreso" value="${v('titular_ingreso')}"></label>
     <div class="full msg info" style="margin:0">La clave fiscal no se guarda en esta app, a propósito: es personal e intransferible y quedaría expuesta si alguien accede a la base. Usá el administrador de contraseñas del navegador. <button type="button" class="g" style="margin-left:6px" onclick="abrirArca()">Entrar a ARCA</button></div>
     <label class="full">Observaciones internas<textarea name="observaciones" rows="3">${v('observaciones')}</textarea></label>
-    <div class="full"><div style="color:var(--mut);font-size:12.5px;margin-bottom:8px">Impuestos que le corresponden (definen sus vencimientos)</div><div class="row" style="gap:16px">${IMPS.map(([k,t])=>`<label style="display:flex;gap:6px;align-items:center;color:var(--tx)"><input type="checkbox" name="imp" value="${k}" style="margin:0" ${(c.impuestos||[]).includes(k)?'checked':''}>${t}</label>`).join('')}</div></div>
+    <div class="full"><div style="color:var(--mut);font-size:12.5px;margin-bottom:8px">Impuestos que le corresponden (definen sus vencimientos)</div><div class="row" style="gap:16px">${IMPS.map(([k,t])=>`<label style="display:flex;gap:6px;align-items:center;color:var(--tx)"><input type="checkbox" name="imp" value="${k}" style="margin:0" ${tieneChk(c,k)?'checked':''}>${t}</label>`).join('')}</div></div>
     ${ed?'<div class="full"><button class="b">Guardar cambios</button></div>':'<div class="full msg info">Tu usuario puede ver estos datos pero no editarlos.</div>'}</div></fieldset></form>
     ${ed?`<h3>Estado del cliente</h3><div class="card row" style="justify-content:space-between;align-items:center"><div style="flex:1;min-width:220px">${c.active===false?'Este cliente está inactivo: no aparece en importaciones, escaneo ni vencimientos.':'Desactivarlo lo oculta de importaciones, escaneo y vencimientos, y conserva todos sus datos.'}</div>
     <div class="row"><button class="g" onclick="toggleActivo()">${c.active===false?'Reactivar cliente':'Desactivar cliente'}</button><button class="dng" onclick="delCliente()">Eliminar cliente</button></div></div>
@@ -676,6 +686,7 @@ function fTab(c,f){
     <div class="tw"><table><thead><tr><th>Período</th><th>Comprobantes</th><th>Sin factura</th><th>Liquidados sin factura</th><th>Por revisar</th><th></th></tr></thead><tbody>
     ${rows.length?rows.map(({p,s})=>`<tr><td>${p.periodo.slice(5,7)}/${p.periodo.slice(0,4)}</td><td>${s.tot}</td><td ${s.fal?'style="color:var(--redt);font-weight:600"':''}>${s.fal}</td><td>${s.sin}</td><td>${s.rev}</td><td><button class="g" onclick="abrirComp('${c.id}','${p.periodo.slice(0,7)}')">Abrir comprobantes</button></td></tr>`).join(''):'<tr><td colspan="6" style="color:var(--mut)">Todavía no se importó ningún período para este cliente.</td></tr>'}</tbody></table></div>`;
   }
+  if(f.tab==='docs')return vDocs(c,f);
   if(f.tab==='venc')return fVencTable(c,fVencRows(c,40,120));
   if(f.tab==='imports')return `<div class="tw"><table><thead><tr><th>Fecha</th><th>Archivo</th><th>Leídos</th><th>Nuevos</th><th>Repetidos</th><th>Rechazados</th></tr></thead><tbody>${f.bs.length?f.bs.map(b=>`<tr><td>${new Date(b.imported_at).toLocaleString('es-AR')}</td><td>${esc(b.file_name)}</td><td>${b.rows_read}</td><td>${b.rows_new}</td><td>${b.rows_duplicate}</td><td>${b.rows_rejected}</td></tr>`).join(''):'<tr><td colspan="6" style="color:var(--mut)">Sin importaciones para este cliente.</td></tr>'}</tbody></table></div>`;
   return '';
@@ -690,7 +701,9 @@ async function saveCliente(e){
   if(cuit.length!==11){flash('El CUIT debe tener 11 dígitos.','err');draw();return false}
   if(!rs){flash('Falta la razón social.','err');draw();return false}
   const ci=String(f.get('cuit_ingreso')||'').replace(/\D/g,'');if(ci&&ci.length!==11){flash('El CUIT de ingreso debe tener 11 dígitos (o dejalo vacío).','err');draw();return false}
-  const {data,error}=await sb.from('clients').update({razon_social:rs,nombre_comercial:t('nombre_comercial'),cuit,condicion_iva:t('condicion_iva'),domicilio:t('domicilio'),localidad:t('localidad'),provincia:t('provincia'),telefono:t('telefono'),email:t('email'),observaciones:t('observaciones'),impuestos:f.getAll('imp'),cuit_ingreso:ci||null,titular_ingreso:t('titular_ingreso')}).eq('id',id).select('id');
+  const num=k=>{const x=String(f.get(k)||'');return x?Number(x):null},ei=num('ej_inicio'),ec=num('ej_cierre');
+  if((ei===null)!==(ec===null)||(ei!==null&&ei!==ec%12+1)){flash('El ejercicio necesita mes de inicio y de cierre, y el inicio es el mes siguiente al cierre (por ejemplo, cierre en junio e inicio en julio).','err');draw();return false}
+  const {data,error}=await sb.from('clients').update({razon_social:rs,nombre_comercial:t('nombre_comercial'),cuit,condicion_iva:t('condicion_iva'),domicilio:t('domicilio'),localidad:t('localidad'),provincia:t('provincia'),telefono:t('telefono'),email:t('email'),observaciones:t('observaciones'),impuestos:f.getAll('imp'),cuit_ingreso:ci||null,titular_ingreso:t('titular_ingreso'),forma_pago:t('forma_pago'),forma_pago_detalle:t('forma_pago_detalle'),ejercicio_inicio_mes:ei,ejercicio_cierre_mes:ec}).eq('id',id).select('id');
   if(error)flash(errTxt(error),'err');else if(!data.length)flash('No tenés permiso para editar clientes.','err');else return reabrir('Datos guardados.'),false;
   draw();return false;
 }
@@ -847,32 +860,60 @@ async function saveEncargado(e){
 const ARCA_URL='https://www.arca.gob.ar/';
 async function loadFil(){const {data,error}=await sb.from('tax_filings').select('*');if(error)throw error;ui.fil=data}
 /** Qué declaraciones se controlan para un cliente: IVA, y IIBB (provincial o Convenio Multilateral). */
-const aplica=c=>{const i=c.impuestos||[],r=[];if(i.includes('IVA'))r.push('IVA');if(i.includes('IIBB')||i.includes('CM'))r.push('IIBB');return r};
+const OBLIG={IVA:{n:'IVA',s:'IVA',t:'m'},IIBB:{n:'IIBB',s:'IIBB',t:'m'},F931:{n:'Cargas sociales F.931',s:'F.931',t:'m'},GAN_ANT:{n:'Anticipos de Ganancias',s:'Anticipos',t:'m'},GAN_DDJJ:{n:'Ganancias, DDJJ anual',s:'Ganancias',t:'a'},BP:{n:'Bienes Personales',s:'BP',t:'a'}};
+const tieneImp=(c,k)=>{const i=c.impuestos||[];return k==='GANANCIAS_PH'?['GANANCIAS_PH','GAN_ANT','GAN_DDJJ','BP'].some(x=>i.includes(x)):i.includes(k)};
+const tieneChk=(c,k)=>{const i=c.impuestos||[];return i.includes(k)||(i.includes('GANANCIAS_PH')&&(k==='GAN_ANT'||k==='GAN_DDJJ'))};
+/** Qué declaraciones se controlan para un cliente según los impuestos que tiene. */
+const aplica=c=>{const i=c.impuestos||[],r=[];if(i.includes('IVA'))r.push('IVA');if(i.includes('IIBB')||i.includes('CM'))r.push('IIBB');if(i.includes('F931'))r.push('F931');if(i.includes('GAN_ANT')||i.includes('GANANCIAS_PH'))r.push('GAN_ANT');if(i.includes('GAN_DDJJ')||i.includes('GANANCIAS_PH'))r.push('GAN_DDJJ');if(i.includes('BP'))r.push('BP');return r};
 function declChips(r,wp){
-  return r.fil.length?r.fil.map(x=>`<a href="#" onclick="abrirFicha('${r.c.id}','present');return false" class="tag" style="text-decoration:none;background:var(--${x.ok?'grn':'amb'});color:var(--${x.ok?'grnt':'ambt'});margin:0 4px 4px 0">${x.imp} ${x.ok?'presentado':'pendiente'}</a>`).join(''):'<span class="s">sin IVA ni IIBB cargados</span>';
+  return r.fil.length?r.fil.map(x=>`<a href="#" onclick="abrirFicha('${r.c.id}','present');return false" class="tag" style="text-decoration:none;background:var(--${x.ok?'grn':'amb'});color:var(--${x.ok?'grnt':'ambt'});margin:0 4px 4px 0">${OBLIG[x.imp].s} ${x.ok?'presentado':'pendiente'}</a>`).join(''):'<span class="s">sin IVA ni IIBB cargados</span>';
+}
+const hoyISO=()=>isoLocal(new Date());
+const nuevaFecha=iso=>new Date(iso+'T12:00:00').toISOString();
+function ejerciciosCerrados(cierre,n){
+  const h=new Date(),now=h.getFullYear()*12+h.getMonth()+1;let cur=h.getFullYear()*12+cierre;if(cur>=now)cur-=12;const out=[];
+  for(let i=0;i<n;i++){const yy=Math.floor((cur-1)/12),mm=((cur-1)%12)+1;out.push(yy+'-'+String(mm).padStart(2,'0'));cur-=12}return out;
+}
+function cel(c,imp,per){
+  const x=ui.fil.find(z=>z.client_id===c.id&&z.periodo.slice(0,7)===per&&z.impuesto===imp),k=imp+'_'+per;
+  if(!x)return `<div class="cel"><input type="date" class="sm" id="pf_${k}" value="${hoyISO()}" title="Fecha de presentación"><button class="b sm" onclick="marcarPres('${imp}','${per}')">Marcar presentado</button></div>`;
+  const fd=x.presentado_at?isoLocal(new Date(x.presentado_at)):'';
+  return `<div class="cel"><span class="tag" style="background:var(--grn);color:var(--grnt)">Presentado</span>
+  <input type="date" class="sm" value="${fd}" title="Fecha de presentación (se puede cambiar)" onchange="cambiarFechaPres('${imp}','${per}',this.value)">
+  ${x.nota?`<span class="s">${esc(x.nota)}</span>`:''}
+  <div class="row" style="gap:4px">${x.archivo_path?`<button class="g sm" onclick="verArchivo('${x.archivo_path}')">Ver PDF</button><button class="g sm" onclick="quitarPdf('${imp}','${per}')">Quitar PDF</button>`:`<label class="g sm">Adjuntar PDF<input type="file" accept="application/pdf,.pdf" hidden onchange="adjPres('${imp}','${per}',this)"></label>`}<button class="g sm" onclick="notaPres('${imp}','${per}')">Nota</button><button class="g sm" onclick="deshacerPres('${imp}','${per}')">Deshacer</button></div></div>`;
 }
 function vPresent(c,f){
   const ap=aplica(c);
-  if(!ap.length)return '<div class="card" style="color:var(--mut)">Marcá en la pestaña Datos qué impuestos tiene este cliente (IVA, IIBB o Convenio Multilateral) para controlar sus presentaciones.</div>';
-  const meses=[];let [y,m]=workPeriod().split('-').map(Number);for(let i=0;i<8;i++){meses.push(y+'-'+String(m).padStart(2,'0'));m--;if(m===0){m=12;y--}}
-  const cel=(imp,per)=>{
-    if(!ap.includes(imp))return '<span class="s">No corresponde</span>';
-    const x=ui.fil.find(z=>z.client_id===c.id&&z.periodo.slice(0,7)===per&&z.impuesto===imp);
-    return x?`<span class="tag" style="background:var(--grn);color:var(--grnt)">Presentado ${new Date(x.presentado_at).toLocaleDateString('es-AR')}</span>${x.nota?`<span class="s">${esc(x.nota)}</span>`:''}<button class="g" style="margin-top:6px" onclick="deshacerPres('${imp}','${per}')">Deshacer</button>`
-      :`<span class="tag" style="background:var(--amb);color:var(--ambt)">Pendiente</span><button class="b" style="margin-left:8px" onclick="marcarPres('${imp}','${per}')">Marcar presentado</button>`;
-  };
-  return `<p class="s" style="margin-bottom:12px">Marcá cada declaración jurada cuando quede presentada. La app solo guarda tu marca: no verifica nada con ARCA ni con la provincia.</p>
-  <div class="tw"><table><thead><tr><th>Período</th><th>IVA</th><th>IIBB</th></tr></thead><tbody>${meses.map(per=>`<tr><td>${per.slice(5)}/${per.slice(0,4)}${per===workPeriod()?'<span class="s">período de trabajo</span>':''}</td><td>${cel('IVA',per)}</td><td>${cel('IIBB',per)}</td></tr>`).join('')}</tbody></table></div>`;
+  if(!ap.length)return '<div class="card" style="color:var(--mut)">Marcá en la pestaña Datos qué impuestos presenta este cliente (IVA, IIBB, F.931, Ganancias, Bienes Personales) y acá aparecen sus columnas de presentación.</div>';
+  const mens=ap.filter(k=>OBLIG[k].t==='m'),anu=ap.filter(k=>OBLIG[k].t==='a'),meses=[];
+  let [y,m]=workPeriod().split('-').map(Number);for(let i=0;i<8;i++){meses.push(y+'-'+String(m).padStart(2,'0'));m--;if(m===0){m=12;y--}}
+  let h=`<p class="s" style="margin-bottom:12px">Las columnas dependen de los impuestos del cliente. Marcá cada una cuando quede presentada: podés cambiar la fecha y adjuntar la declaración jurada en PDF. La app solo guarda tu marca; no verifica nada con ARCA ni con la provincia.</p>`;
+  if(mens.length)h+=`<div class="tw"><table><thead><tr><th>Período</th>${mens.map(k=>`<th>${OBLIG[k].n}</th>`).join('')}</tr></thead><tbody>${meses.map(per=>`<tr><td>${per.slice(5)}/${per.slice(0,4)}${per===workPeriod()?'<span class="s">período de trabajo</span>':''}</td>${mens.map(k=>`<td>${cel(c,k,per)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+  anu.forEach(k=>{const cierre=k==='BP'?12:(c.ejercicio_cierre_mes||12);h+=`<h3>${OBLIG[k].n}</h3><div class="tw"><table><thead><tr><th>Ejercicio cerrado el</th><th>Presentación</th></tr></thead><tbody>${ejerciciosCerrados(cierre,4).map(per=>{const [yy,mm]=per.split('-').map(Number);return `<tr><td>${new Date(Date.UTC(yy,mm,0)).getUTCDate()}/${String(mm).padStart(2,'0')}/${yy}</td><td>${cel(c,k,per)}</td></tr>`}).join('')}</tbody></table></div>`});
+  if(anu.includes('GAN_DDJJ')&&!c.ejercicio_cierre_mes)h+=`<p class="s" style="margin-top:8px">Cargá el ejercicio económico en Datos: mientras tanto se asume cierre en diciembre.</p>`;
+  return h;
 }
 async function marcarPres(imp,per){
-  const c=ui.clients.find(x=>x.id===ui.ficha.id),nota=prompt(`Marcar ${imp} ${per.slice(5)}/${per.slice(0,4)} de ${c.razon_social} como presentado.\nNota opcional (por ejemplo, el número de presentación):`,'');
+  const c=ui.clients.find(x=>x.id===ui.ficha.id),inp=document.getElementById(`pf_${imp}_${per}`),fecha=inp&&inp.value;
+  if(!fecha){flash('Elegí la fecha de presentación.','err');return draw()}
+  const nota=prompt(`${OBLIG[imp].n} (${per.slice(5)}/${per.slice(0,4)}) de ${c.razon_social}.\nNota opcional (por ejemplo, el número de presentación):`,'');
   if(nota===null)return;
-  const {error}=await sb.from('tax_filings').upsert({client_id:c.id,periodo:per+'-01',impuesto:imp,presentado_by:me.id,presentado_at:new Date().toISOString(),nota:nota.trim()||null},{onConflict:'client_id,periodo,impuesto'});
-  if(error)flash(errTxt(error),'err');else{try{await loadFil();flash(`${imp} ${per.slice(5)}/${per.slice(0,4)} marcado como presentado.`)}catch(e){flash(errTxt(e),'err')}}
+  const {error}=await sb.from('tax_filings').insert({client_id:c.id,periodo:per+'-01',impuesto:imp,presentado_by:me.id,presentado_at:nuevaFecha(fecha),nota:nota.trim()||null});
+  if(error)flash(errTxt(error),'err');else{try{await loadFil();flash(`${OBLIG[imp].n} ${per.slice(5)}/${per.slice(0,4)} marcado como presentado el ${fAR(fecha)}.`)}catch(e){flash(errTxt(e),'err')}}
   draw();
 }
+async function updPres(imp,per,cambios,okMsg){
+  const {data,error}=await sb.from('tax_filings').update({...cambios,modificado_by:me.id,modificado_at:new Date().toISOString()}).eq('client_id',ui.ficha.id).eq('periodo',per+'-01').eq('impuesto',imp).select('id');
+  if(error)flash(errTxt(error),'err');else if(!data.length)flash('No se pudo actualizar: la presentación ya no existe o no tenés permiso.','err');else{try{await loadFil();flash(okMsg)}catch(e){flash(errTxt(e),'err')}}
+  draw();
+}
+function cambiarFechaPres(imp,per,v){if(!v){flash('La fecha no puede quedar vacía.','err');return draw()}return updPres(imp,per,{presentado_at:nuevaFecha(v)},`Fecha de presentación actualizada: ${fAR(v)}.`)}
+function notaPres(imp,per){const x=ui.fil.find(z=>z.client_id===ui.ficha.id&&z.periodo.slice(0,7)===per&&z.impuesto===imp),n=prompt('Nota de esta presentación:',(x&&x.nota)||'');if(n===null)return;return updPres(imp,per,{nota:n.trim()||null},'Nota guardada.')}
 async function deshacerPres(imp,per){
-  if(!confirm(`¿Quitar la marca de presentado de ${imp} ${per.slice(5)}/${per.slice(0,4)}?`))return;
+  const x=ui.fil.find(z=>z.client_id===ui.ficha.id&&z.periodo.slice(0,7)===per&&z.impuesto===imp);
+  if(!confirm(`¿Quitar la marca de presentado de ${OBLIG[imp].n} ${per.slice(5)}/${per.slice(0,4)}?${x&&x.archivo_path?'\nTambién se elimina el PDF adjunto.':''}`))return;
+  if(x&&x.archivo_path){const r=await sb.storage.from('clientes').remove([x.archivo_path]);if(r.error){flash(errTxt(r.error),'err');return draw()}}
   const {error}=await sb.from('tax_filings').delete().eq('client_id',ui.ficha.id).eq('periodo',per+'-01').eq('impuesto',imp);
   if(error)flash(errTxt(error),'err');else{try{await loadFil();flash('Marca quitada.')}catch(e){flash(errTxt(e),'err')}}
   draw();
@@ -884,6 +925,81 @@ function abrirArca(){
   const ok=()=>{flash(`Se copió el CUIT ${cuitF(cuit)}${c.titular_ingreso?' (ingresa '+c.titular_ingreso+')':''}. En ARCA tocá "Iniciar sesión" y pegalo; la clave la completa tu navegador o la escribís vos.`);draw()};
   const fb=()=>{const a=document.createElement('textarea');a.value=cuit;document.body.appendChild(a);a.select();let k=false;try{k=document.execCommand('copy')}catch(e){}a.remove();k?ok():(flash(`No se pudo copiar solo. El CUIT de ingreso es ${cuitF(cuit)}.`,'warn'),draw())};
   navigator.clipboard?navigator.clipboard.writeText(cuit).then(ok,fb):fb();
+}
+
+/* ===== Ficha ampliada: forma de pago, ejercicio, documentos y DDJJ adjuntas ===== */
+const MESES=['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+const FORMAS_PAGO=['Red Link','Banelco','Interbanking','Pago Mis Cuentas','Débito automático','Otra'];
+const CAT_DOC=['Contrato','Balance','Estatuto','Acta','Poder','Constancia de inscripción','Presentación','Otro'];
+const EXT_MIME={pdf:'application/pdf',jpg:'image/jpeg',jpeg:'image/jpeg',png:'image/png',doc:'application/msword',docx:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',xls:'application/vnd.ms-excel',xlsx:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'};
+const fmtTam=b=>b>=1048576?(b/1048576).toFixed(1)+' MB':Math.max(1,Math.round(b/1024))+' KB';
+/** Al elegir el cierre se completa el inicio (mes siguiente) y viceversa. */
+function syncEj(el){const f=el.form,i=f.elements.ej_inicio,c=f.elements.ej_cierre;if(!el.value)return;if(el.name==='ej_cierre')i.value=String(Number(el.value)%12+1);else c.value=String((Number(el.value)+10)%12+1)}
+function proxCierre(c){const m=c.ejercicio_cierre_mes;if(!m)return null;const h=new Date(),y=h.getFullYear(),hoy=Date.UTC(y,h.getMonth(),h.getDate());let d=new Date(Date.UTC(y,m,0));if(d.getTime()<hoy)d=new Date(Date.UTC(y+1,m,0));return d.toISOString().slice(0,10)}
+function infoCliente(c){
+  const k=[];
+  if(c.forma_pago)k.push(['Forma de pago',esc(c.forma_pago)+(c.forma_pago_detalle?`<span class="s">${esc(c.forma_pago_detalle)}</span>`:'')]);
+  if(c.ejercicio_cierre_mes){const pc=proxCierre(c),ini=c.ejercicio_inicio_mes||(c.ejercicio_cierre_mes%12+1);k.push(['Ejercicio económico',`Del 1 de ${MESES[ini-1]} al fin de ${MESES[c.ejercicio_cierre_mes-1]}<span class="s">Próximo cierre: ${fAR(pc)}, ${cuando(diasHasta(pc))}</span>`])}
+  return k.length?`<div class="grid" style="margin:16px 0 0">${k.map(([t,h])=>`<div class="card"><span class="s">${t}</span><div style="font-weight:600">${h}</div></div>`).join('')}</div>`:'';
+}
+async function esPdf(f){
+  if(!f||!f.size)return 'Elegí un archivo.';
+  if(!/\.pdf$/i.test(f.name))return 'El archivo tiene que ser un PDF.';
+  if(f.size>15*1048576)return 'El PDF supera los 15 MB.';
+  if(await f.slice(0,5).text()!=='%PDF-')return 'El archivo no parece un PDF válido.';
+  return null;
+}
+async function adjPres(imp,per,inp){
+  const f=inp.files[0];inp.value='';const e=await esPdf(f);if(e){flash(e,'err');return draw()}
+  const path=`${ui.ficha.id}/ddjj/${imp}-${per}.pdf`,up=await sb.storage.from('clientes').upload(path,f,{contentType:'application/pdf',upsert:true});
+  if(up.error){flash('No se pudo subir el PDF: '+errTxt(up.error),'err');return draw()}
+  return updPres(imp,per,{archivo_path:path,archivo_nombre:f.name,archivo_at:new Date().toISOString()},'Declaración jurada adjuntada.');
+}
+async function quitarPdf(imp,per){
+  const x=ui.fil.find(z=>z.client_id===ui.ficha.id&&z.periodo.slice(0,7)===per&&z.impuesto===imp);
+  if(!x||!x.archivo_path||!confirm('¿Quitar el PDF adjunto? Se elimina el archivo.'))return;
+  const r=await sb.storage.from('clientes').remove([x.archivo_path]);if(r.error){flash(errTxt(r.error),'err');return draw()}
+  return updPres(imp,per,{archivo_path:null,archivo_nombre:null,archivo_at:null},'PDF quitado.');
+}
+/** Abre un archivo privado con un enlace temporal de 2 minutos. */
+async function verArchivo(path){
+  const w=window.open('about:blank','_blank');
+  const {data,error}=await sb.storage.from('clientes').createSignedUrl(path,120);
+  if(error||!data){if(w)w.close();flash('No se pudo abrir el archivo: '+(error?errTxt(error):'sin respuesta'),'err');return draw()}
+  if(w)w.location.href=data.signedUrl;else{flash('El navegador bloqueó la ventana emergente. Permitila para esta página e intentá de nuevo.','warn');draw()}
+}
+function vDocs(c,f){
+  return `<form class="card" style="margin-bottom:16px" onsubmit="return subirDoc(event)"><div class="fgrid">
+  <label>Tipo<select name="cat">${CAT_DOC.map(x=>`<option>${x}</option>`).join('')}</select></label>
+  <label>Título o descripción<input name="titulo" required placeholder="Ej.: Balance ejercicio 2025"></label>
+  <label>Año o ejercicio (opcional)<input name="anio" inputmode="numeric" maxlength="4" placeholder="2025"></label>
+  <label>Archivo (PDF, imagen, Word o Excel, hasta 15 MB)<input type="file" name="archivo" required accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xls,.xlsx"></label>
+  <div class="full"><button class="b">Subir documento</button></div></div></form>
+  <div class="tw"><table><thead><tr><th>Tipo</th><th>Documento</th><th>Año</th><th>Archivo</th><th>Subido</th><th></th></tr></thead><tbody>
+  ${f.docs.length?f.docs.map(d=>`<tr><td><span class="tag" style="background:var(--blu);color:var(--blut)">${esc(d.categoria)}</span></td><td>${esc(d.titulo)}</td><td>${d.anio||''}</td><td>${esc(d.nombre_archivo)}<span class="s">${d.size_bytes?fmtTam(d.size_bytes):''}</span></td><td>${new Date(d.subido_at).toLocaleDateString('es-AR')}</td><td style="white-space:nowrap"><button class="g" onclick="verArchivo('${d.path}')">Ver</button> <button class="dng" onclick="quitarDoc('${d.id}')">Quitar</button></td></tr>`).join(''):'<tr><td colspan="6" style="color:var(--mut)">Todavía no hay documentos. Subí contratos, balances, estatutos y otras presentaciones importantes.</td></tr>'}</tbody></table></div>`;
+}
+async function subirDoc(e){
+  e.preventDefault();const fd=new FormData(e.target),file=fd.get('archivo'),f=ui.ficha,bad=m=>{flash(m,'err');draw();return false};
+  const ext=(String((file&&file.name)||'').split('.').pop()||'').toLowerCase();
+  if(!file||!file.size)return bad('Elegí un archivo.');
+  if(!EXT_MIME[ext])return bad('Formato no permitido. Usá PDF, JPG, PNG, Word o Excel.');
+  if(file.size>15*1048576)return bad('El archivo supera los 15 MB.');
+  const anio=String(fd.get('anio')||'').trim();if(anio&&!/^(19|20)\d{2}$/.test(anio))return bad('El año tiene que tener 4 dígitos, por ejemplo 2025.');
+  const safe=file.name.normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^A-Za-z0-9._-]+/g,'_').slice(-80),path=`${f.id}/docs/${crypto.randomUUID()}-${safe}`;
+  const up=await sb.storage.from('clientes').upload(path,file,{contentType:EXT_MIME[ext],upsert:false});
+  if(up.error)return bad('No se pudo subir el archivo: '+errTxt(up.error));
+  const {error}=await sb.from('client_documents').insert({client_id:f.id,categoria:fd.get('cat'),titulo:String(fd.get('titulo')).trim(),anio:anio?Number(anio):null,nombre_archivo:file.name,path,size_bytes:file.size,mime:EXT_MIME[ext],subido_by:me.id});
+  if(error){await sb.storage.from('clientes').remove([path]);return bad(errTxt(error))}
+  try{await recargarDocs();flash('Documento subido.')}catch(x){flash(errTxt(x),'err')}
+  draw();return false;
+}
+async function recargarDocs(){const {data,error}=await sb.from('client_documents').select('*').eq('client_id',ui.ficha.id).order('subido_at',{ascending:false});if(error)throw error;ui.ficha.docs=data}
+async function quitarDoc(id){
+  const d=ui.ficha.docs.find(x=>x.id===id);if(!d||!confirm(`¿Quitar "${d.titulo}"? Se elimina el archivo.`))return;
+  const r=await sb.storage.from('clientes').remove([d.path]);if(r.error){flash(errTxt(r.error),'err');return draw()}
+  const {error}=await sb.from('client_documents').delete().eq('id',id);
+  if(error)flash(errTxt(error),'err');else{try{await recargarDocs();flash('Documento quitado.')}catch(x){flash(errTxt(x),'err')}}
+  draw();
 }
 init();
 </script>
