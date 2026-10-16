@@ -150,7 +150,7 @@ const SUPABASE_URL='https://tugdqcoxcpsiynlvnqdu.supabase.co';
 const SUPABASE_KEY='sb_publishable_2-96VeZrsNNftRXkzA1l_A_YG7ThJrL'; // clave pública: los permisos los da la base (RLS)
 const sb=(typeof supabase!=='undefined')?supabase.createClient(SUPABASE_URL,SUPABASE_KEY):null;
 let me=null,prof=null;
-const ui={tab:'inicio',clients:[],cid:null,periodo:new Date().toISOString().slice(0,7),q:'',filtro:'',sel:new Set(),pend:null,msg:null,hist:null,vs:[],batches:[],stats:null,busy:false,dl:[],vcli:'',vdias:'30',cstats:{},vinact:false,ficha:null,pst:[]};
+const ui={tab:'inicio',clients:[],cid:null,periodo:new Date().toISOString().slice(0,7),q:'',filtro:'',sel:new Set(),pend:null,msg:null,hist:null,vs:[],batches:[],stats:null,busy:false,dl:[],vcli:'',vdias:'30',cstats:{},vinact:false,ficha:null,pst:[],fil:[]};
 const $=id=>document.getElementById(id);
 const flash=(t,k='ok')=>{ui.msg={t,k}};
 const isAdmin=()=>prof&&prof.role==='administrador';
@@ -222,7 +222,7 @@ function draw(){
 function vInicio(){
   const R=dashRows(),wp=workPeriod(),lab=wp.slice(5)+'/'+wp.slice(0,4);
   const sum=k=>R.reduce((a,r)=>a+r[k],0),venc7=R.filter(r=>r.nxt&&diasHasta(r.nxt.fecha)<=7).length;
-  const K=[['Clientes activos',R.length],['Sin importar el Excel',R.filter(r=>r.state==='sin_importar').length],['Comprobantes sin pasar',sum('pend')],['Facturas faltantes',sum('fal')],['Vencen en 7 días',venc7]];
+  const K=[['Clientes activos',R.length],['Sin importar el Excel',R.filter(r=>r.state==='sin_importar').length],['Comprobantes sin pasar',sum('pend')],['Facturas faltantes',sum('fal')],['Vencen en 7 días',venc7],['Declaraciones sin presentar',R.reduce((a,r)=>a+r.fil.filter(x=>!x.ok).length,0)]];
   const ST={sin_importar:['Sin importar','amb'],pendiente:['Sin pasar','blu'],faltan:['Faltan facturas','org'],al_dia:['Al día','grn']};
   const SH={IVA:'IVA',CM:'IIBB CM',F931:'F.931',GANANCIAS_PH:'Ganancias',MONOTRIBUTO:'Monotributo',OTRO:'Otro'};
   const urg=n=>n<=2?'var(--redt)':n<=7?'var(--ambt)':'var(--mut)';
@@ -232,10 +232,11 @@ function vInicio(){
   <div class="grid" style="margin-bottom:22px">${K.map(([t,n])=>`<div class="card kpi"><b>${n}</b><span>${t}</span></div>`).join('')}</div>
   <div class="row" style="align-items:flex-start;gap:20px">
   <div style="flex:2;min-width:340px"><h3 style="margin-top:0">Clientes por atender (${lab})</h3>
-  <div class="tw"><table><thead><tr><th>Cliente</th><th>Estado</th><th>Sin pasar</th><th>Faltan facturas</th><th></th></tr></thead><tbody>
+  <div class="tw"><table><thead><tr><th>Cliente</th><th>Estado</th><th>Sin pasar</th><th>Faltan facturas</th><th>Declaraciones</th><th></th></tr></thead><tbody>
   ${R.length?R.map(r=>`<tr ${r.state==='al_dia'?'style="opacity:.6"':''}><td><a href="#" style="color:var(--tx);font-weight:600;text-decoration:none" onclick="abrirFicha('${r.c.id}');return false">${esc(r.c.razon_social)}</a><span class="s">termina en ${r.c.cuit.slice(-1)}</span></td>
   <td><span class="tag" style="background:var(--${ST[r.state][1]});color:var(--${ST[r.state][1]}t)">${ST[r.state][0]}</span></td><td>${r.cur?r.pend:'-'}</td><td ${r.fal?'style="color:var(--redt);font-weight:600"':''}>${r.cur?r.fal:'-'}</td>
-  <td style="white-space:nowrap">${r.state==='sin_importar'?`<button class="g" onclick="ui.cid='${r.c.id}';ui.periodo='${wp}';show('importar')">Importar</button>`:r.fal?`<button class="b" onclick="abrirFicha('${r.c.id}','pedir','${wp}')">Pedir facturas</button>`:`<button class="g" onclick="abrirComp('${r.c.id}','${wp}')">Abrir</button>`}</td></tr>`).join(''):'<tr><td colspan="5" style="color:var(--mut)">Todavía no hay clientes activos. Agregalos en "Clientes".</td></tr>'}</tbody></table></div></div>
+  <td>${declChips(r,wp)}</td>
+  <td style="white-space:nowrap">${r.state==='sin_importar'?`<button class="g" onclick="ui.cid='${r.c.id}';ui.periodo='${wp}';show('importar')">Importar</button>`:r.fal?`<button class="b" onclick="abrirFicha('${r.c.id}','pedir','${wp}')">Pedir facturas</button>`:`<button class="g" onclick="abrirComp('${r.c.id}','${wp}')">Abrir</button>`}</td></tr>`).join(''):'<tr><td colspan="6" style="color:var(--mut)">Todavía no hay clientes activos. Agregalos en "Clientes".</td></tr>'}</tbody></table></div></div>
   <div style="flex:1;min-width:280px"><h3 style="margin-top:0">Vencen pronto</h3>
   ${prox.length?`<div class="card" style="padding:6px 16px">${prox.map(r=>{const n=diasHasta(r.nxt.fecha);return `<div style="padding:11px 0;border-bottom:1px solid var(--bd)"><div style="font-weight:600">${esc(r.c.razon_social)}</div><div style="display:flex;justify-content:space-between;gap:10px"><span class="s" style="font-size:13px">${SH[r.nxt.impuesto]||''}, ${fAR(r.nxt.fecha).slice(0,5)}</span><span style="font-size:13px;color:${urg(n)};font-weight:600">${cuando(n)}</span></div></div>`}).join('')}</div>`:`<div class="card" style="color:var(--mut)">${R.some(r=>(r.c.impuestos||[]).length)?'Ningún cliente tiene vencimientos en los próximos 14 días según lo cargado.':'Marcá los impuestos de cada cliente para ver sus vencimientos acá.'}</div>`}
   <p class="s" style="margin-top:10px">Las fechas están "A confirmar" hasta que las verifiques en ARCA (pantalla Vencimientos).</p></div></div>`;
@@ -246,7 +247,7 @@ function dashRows(){
   return ui.clients.filter(c=>c.active!==false).map(c=>{
     const cur=ui.pst.find(r=>r.client_id===c.id&&r.periodo.slice(0,7)===wp),nxt=ui.dl.filter(d=>diasHasta(d.fecha)>=0&&delC(d,c)).sort((a,b)=>a.fecha<b.fecha?-1:1)[0];
     const pend=cur?cur.sin_pasar:0,fal=cur?cur.faltan:0;
-    return {c,cur,nxt,pend,fal,state:!cur?'sin_importar':pend>0?'pendiente':fal>0?'faltan':'al_dia'};
+    return {c,cur,nxt,pend,fal,fil:aplica(c).map(imp=>({imp,ok:!!ui.fil.find(f=>f.client_id===c.id&&f.periodo.slice(0,7)===wp&&f.impuesto===imp)})),state:!cur?'sin_importar':pend>0?'pendiente':fal>0?'faltan':'al_dia'};
   }).sort((a,b)=>ord[a.state]-ord[b.state]||(a.nxt&&b.nxt?(a.nxt.fecha<b.nxt.fecha?-1:1):a.nxt?-1:b.nxt?1:0));
 }
 function _vInicioViejo(){return vInicio0()+vProx()}
@@ -256,7 +257,7 @@ function vInicio0(){
   <p style="color:var(--mut)">${ui.clients.length?'Importá el Excel de ARCA de un cliente desde "Importar ARCA".':(isAdmin()?'Empezá creando un cliente en "Clientes".':'Todavía no tenés clientes asignados. Pedile a un administrador que te los asigne.')}</p>`;
 }
 function vClientes(){
-  const ed=canEdit(),L=ui.clients.filter(c=>ui.vinact||c.active!==false),SH={IVA:'IVA',CM:'IIBB CM',F931:'F.931',GANANCIAS_PH:'Ganancias',MONOTRIBUTO:'Monotributo'};
+  const ed=canEdit(),L=ui.clients.filter(c=>ui.vinact||c.active!==false),SH={IVA:'IVA',CM:'IIBB CM',IIBB:'IIBB',F931:'F.931',GANANCIAS_PH:'Ganancias',MONOTRIBUTO:'Monotributo'};
   const card=c=>{const st=ui.cstats[c.id]||{tot:0,fal:0};return `<div class="card cl ${c.active===false?'off':''}" tabindex="0" role="button" onclick="abrirFicha('${c.id}')" onkeydown="if(event.key==='Enter')abrirFicha('${c.id}')">
     <div class="term">${c.cuit.slice(-1)}<small>termina en</small></div><h3>${esc(c.razon_social)}</h3><div class="s" style="font-size:13px">CUIT ${cuitF(c.cuit)}${c.active===false?' (inactivo)':''}</div>
     <div class="chips">${(c.impuestos||[]).map(k=>`<span class="chip">${SH[k]||esc(k)}</span>`).join('')}</div>
@@ -550,7 +551,7 @@ async function leerFoto(inp){
 }
 
 /* ===== Vencimientos ===== */
-const IMPS=[['IVA','IVA'],['CM','IIBB Conv. Multilateral'],['F931','Cargas sociales F.931'],['GANANCIAS_PH','Ganancias / BP (pers. humanas)'],['MONOTRIBUTO','Monotributo']];
+const IMPS=[['IVA','IVA'],['CM','IIBB Convenio Multilateral'],['IIBB','IIBB provincial (fuera de CM)'],['F931','Cargas sociales F.931'],['GANANCIAS_PH','Ganancias / BP (pers. humanas)'],['MONOTRIBUTO','Monotributo']];
 const canEdit=()=>isAdmin()||(prof&&prof.all_clients);
 const isoLocal=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
 const diasHasta=iso=>{const [y,m,d]=iso.split('-').map(Number),h=isoLocal(new Date()).split('-').map(Number);return Math.round((Date.UTC(y,m-1,d)-Date.UTC(h[0],h[1]-1,h[2]))/864e5)};
@@ -596,7 +597,7 @@ async function loadCStats(){
   const m={};data.forEach(r=>{const o=m[r.client_id]||(m[r.client_id]={tot:0,fal:0});o.tot+=r.total;o.fal+=r.faltan});ui.cstats=m;
 }
 const SEL_IVA=['Responsable Inscripto','Monotributista','IVA Exento','No responsable'];
-async function loadDash(){const {data,error}=await sb.from('v_period_stats').select('*');if(error)throw error;ui.pst=data}
+async function loadDash(){const {data,error}=await sb.from('v_period_stats').select('*');if(error)throw error;ui.pst=data;await loadFil()}
 async function loadCStats_old(){
   const v=await fetchAll((a,b)=>sb.from('vouchers').select('client_id,doc_status').range(a,b)),m={};
   v.forEach(x=>{const o=m[x.client_id]||(m[x.client_id]={tot:0,fal:0});o.tot++;if(x.doc_status==='no_recibida')o.fal++});ui.cstats=m;
@@ -604,7 +605,7 @@ async function loadCStats_old(){
 async function abrirFicha(id,tab,periodo){
   ui.ficha={id,tab:tab||'resumen',loading:true,fresh:true,per:[],bs:[],ct:[],rec:null,recPer:periodo||null};draw();
   try{
-    await loadDeadlines();
+    await loadDeadlines();await loadFil();
     const [per,bs,ct]=await Promise.all([
       sb.from('v_period_stats').select('*').eq('client_id',id).order('periodo',{ascending:false}),
       sb.from('import_batches').select('*').eq('client_id',id).order('imported_at',{ascending:false}).limit(50),
@@ -621,9 +622,9 @@ const fst=v=>({tot:v.length,fal:v.filter(x=>x.doc_status==='no_recibida').length
 const delC=(d,c)=>(c.impuestos||[]).includes(d.impuesto)&&d.terminaciones.includes(Number(c.cuit.slice(-1)));
 function vFicha(){
   const f=ui.ficha;if(!f)return'';const c=ui.clients.find(x=>x.id===f.id);if(!c)return'';
-  const T=[['resumen','Resumen'],['pedir','Pedir facturas'],['datos','Datos'],['contactos','Contactos'],['comprobantes','Comprobantes'],['venc','Vencimientos'],['imports','Importaciones']],cls=f.fresh?'dr in':'dr';f.fresh=false;
+  const T=[['resumen','Resumen'],['present','Presentaciones'],['pedir','Pedir facturas'],['datos','Datos'],['contactos','Contactos'],['comprobantes','Comprobantes'],['venc','Vencimientos'],['imports','Importaciones']],cls=f.fresh?'dr in':'dr';f.fresh=false;
   return `<div class="ov" onclick="cerrarFicha()"><aside class="${cls}" onclick="event.stopPropagation()" role="dialog" aria-label="Ficha de ${esc(c.razon_social)}">
-  <div class="drh"><div class="term big">${c.cuit.slice(-1)}<small>termina en</small></div><div style="flex:1;min-width:0"><h2>${esc(c.razon_social)}</h2><div style="color:var(--mut)">${c.nombre_comercial?esc(c.nombre_comercial)+'<br>':''}CUIT ${cuitF(c.cuit)}${c.active===false?' (inactivo)':''}</div></div><button class="g" onclick="cerrarFicha()">Cerrar</button></div>
+  <div class="drh"><div class="term big">${c.cuit.slice(-1)}<small>termina en</small></div><div style="flex:1;min-width:0"><h2>${esc(c.razon_social)}</h2><div style="color:var(--mut)">${c.nombre_comercial?esc(c.nombre_comercial)+'<br>':''}CUIT ${cuitF(c.cuit)}${c.active===false?' (inactivo)':''}</div></div><div class="row" style="gap:8px"><button class="b" onclick="abrirArca()">Entrar a ARCA</button><button class="g" onclick="cerrarFicha()">Cerrar</button></div></div>
   <div class="tabs">${T.map(([k,t])=>`<button class="${f.tab===k?'on':''}" onclick="selTab('${k}')">${t}</button>`).join('')}</div>
   ${window._fm||''}<div>${f.loading?'<div class="msg info">Cargando la ficha…</div>':fTab(c,f)}</div></aside></div>`;
 }
@@ -650,6 +651,9 @@ function fTab(c,f){
     <label>Domicilio<input name="domicilio" value="${v('domicilio')}"></label><label>Localidad<input name="localidad" value="${v('localidad')}"></label>
     <label>Provincia<input name="provincia" value="${v('provincia')}"></label><label>Teléfono<input name="telefono" value="${v('telefono')}"></label>
     <label>Correo electrónico<input type="email" name="email" value="${v('email')}"></label>
+    <label>CUIT de ingreso a ARCA<input name="cuit_ingreso" inputmode="numeric" placeholder="Vacío = el CUIT del cliente" value="${c.cuit_ingreso?cuitF(c.cuit_ingreso):''}"></label>
+    <label>Titular de ese CUIT (quién ingresa)<input name="titular_ingreso" value="${v('titular_ingreso')}"></label>
+    <div class="full msg info" style="margin:0">La clave fiscal no se guarda en esta app, a propósito: es personal e intransferible y quedaría expuesta si alguien accede a la base. Usá el administrador de contraseñas del navegador. <button type="button" class="g" style="margin-left:6px" onclick="abrirArca()">Entrar a ARCA</button></div>
     <label class="full">Observaciones internas<textarea name="observaciones" rows="3">${v('observaciones')}</textarea></label>
     <div class="full"><div style="color:var(--mut);font-size:12.5px;margin-bottom:8px">Impuestos que le corresponden (definen sus vencimientos)</div><div class="row" style="gap:16px">${IMPS.map(([k,t])=>`<label style="display:flex;gap:6px;align-items:center;color:var(--tx)"><input type="checkbox" name="imp" value="${k}" style="margin:0" ${(c.impuestos||[]).includes(k)?'checked':''}>${t}</label>`).join('')}</div></div>
     ${ed?'<div class="full"><button class="b">Guardar cambios</button></div>':'<div class="full msg info">Tu usuario puede ver estos datos pero no editarlos.</div>'}</div></fieldset></form>
@@ -657,6 +661,7 @@ function fTab(c,f){
     <div class="row"><button class="g" onclick="toggleActivo()">${c.active===false?'Reactivar cliente':'Desactivar cliente'}</button><button class="dng" onclick="delCliente()">Eliminar cliente</button></div></div>
     <p class="s">Solo se puede eliminar un cliente que no tenga comprobantes ni importaciones. Si los tiene, desactivalo.</p>`:''}`;
   }
+  if(f.tab==='present')return vPresent(c,f);
   if(f.tab==='pedir')return vPedir(c,f);
   if(f.tab==='contactos'){
     return encargadoCard(f,ed)+`<div class="tw" style="margin-bottom:16px"><table><thead><tr><th>Nombre</th><th>Cargo</th><th>WhatsApp</th><th>Correo</th><th>Rol</th><th></th></tr></thead><tbody>
@@ -684,7 +689,8 @@ async function saveCliente(e){
   e.preventDefault();const f=new FormData(e.target),id=ui.ficha.id,cuit=String(f.get('cuit')).replace(/\D/g,''),rs=String(f.get('razon_social')).trim(),t=k=>String(f.get(k)||'').trim()||null;
   if(cuit.length!==11){flash('El CUIT debe tener 11 dígitos.','err');draw();return false}
   if(!rs){flash('Falta la razón social.','err');draw();return false}
-  const {data,error}=await sb.from('clients').update({razon_social:rs,nombre_comercial:t('nombre_comercial'),cuit,condicion_iva:t('condicion_iva'),domicilio:t('domicilio'),localidad:t('localidad'),provincia:t('provincia'),telefono:t('telefono'),email:t('email'),observaciones:t('observaciones'),impuestos:f.getAll('imp')}).eq('id',id).select('id');
+  const ci=String(f.get('cuit_ingreso')||'').replace(/\D/g,'');if(ci&&ci.length!==11){flash('El CUIT de ingreso debe tener 11 dígitos (o dejalo vacío).','err');draw();return false}
+  const {data,error}=await sb.from('clients').update({razon_social:rs,nombre_comercial:t('nombre_comercial'),cuit,condicion_iva:t('condicion_iva'),domicilio:t('domicilio'),localidad:t('localidad'),provincia:t('provincia'),telefono:t('telefono'),email:t('email'),observaciones:t('observaciones'),impuestos:f.getAll('imp'),cuit_ingreso:ci||null,titular_ingreso:t('titular_ingreso')}).eq('id',id).select('id');
   if(error)flash(errTxt(error),'err');else if(!data.length)flash('No tenés permiso para editar clientes.','err');else return reabrir('Datos guardados.'),false;
   draw();return false;
 }
@@ -835,6 +841,49 @@ async function saveEncargado(e){
   const {error}=ex?await sb.from('client_contacts').update({nombre,whatsapp:wa,is_reclamo_principal:true}).eq('id',ex.id):await sb.from('client_contacts').insert({client_id:f.id,nombre,whatsapp:wa,is_entrega:true,is_reclamo_principal:true});
   if(error)flash(errTxt(error),'err');else{await recargarContactos();if(f.rec&&!f.rec.dirty)rebuildMsg();flash(n.ok?'Encargado guardado.':'Guardado, pero revisá el número: tiene que ser código de área + número, sin 0 ni 15.',n.ok?'ok':'warn')}
   draw();return false;
+}
+
+/* ===== Presentaciones (IVA / IIBB) y acceso a ARCA ===== */
+const ARCA_URL='https://www.arca.gob.ar/';
+async function loadFil(){const {data,error}=await sb.from('tax_filings').select('*');if(error)throw error;ui.fil=data}
+/** Qué declaraciones se controlan para un cliente: IVA, y IIBB (provincial o Convenio Multilateral). */
+const aplica=c=>{const i=c.impuestos||[],r=[];if(i.includes('IVA'))r.push('IVA');if(i.includes('IIBB')||i.includes('CM'))r.push('IIBB');return r};
+function declChips(r,wp){
+  return r.fil.length?r.fil.map(x=>`<a href="#" onclick="abrirFicha('${r.c.id}','present');return false" class="tag" style="text-decoration:none;background:var(--${x.ok?'grn':'amb'});color:var(--${x.ok?'grnt':'ambt'});margin:0 4px 4px 0">${x.imp} ${x.ok?'presentado':'pendiente'}</a>`).join(''):'<span class="s">sin IVA ni IIBB cargados</span>';
+}
+function vPresent(c,f){
+  const ap=aplica(c);
+  if(!ap.length)return '<div class="card" style="color:var(--mut)">Marcá en la pestaña Datos qué impuestos tiene este cliente (IVA, IIBB o Convenio Multilateral) para controlar sus presentaciones.</div>';
+  const meses=[];let [y,m]=workPeriod().split('-').map(Number);for(let i=0;i<8;i++){meses.push(y+'-'+String(m).padStart(2,'0'));m--;if(m===0){m=12;y--}}
+  const cel=(imp,per)=>{
+    if(!ap.includes(imp))return '<span class="s">No corresponde</span>';
+    const x=ui.fil.find(z=>z.client_id===c.id&&z.periodo.slice(0,7)===per&&z.impuesto===imp);
+    return x?`<span class="tag" style="background:var(--grn);color:var(--grnt)">Presentado ${new Date(x.presentado_at).toLocaleDateString('es-AR')}</span>${x.nota?`<span class="s">${esc(x.nota)}</span>`:''}<button class="g" style="margin-top:6px" onclick="deshacerPres('${imp}','${per}')">Deshacer</button>`
+      :`<span class="tag" style="background:var(--amb);color:var(--ambt)">Pendiente</span><button class="b" style="margin-left:8px" onclick="marcarPres('${imp}','${per}')">Marcar presentado</button>`;
+  };
+  return `<p class="s" style="margin-bottom:12px">Marcá cada declaración jurada cuando quede presentada. La app solo guarda tu marca: no verifica nada con ARCA ni con la provincia.</p>
+  <div class="tw"><table><thead><tr><th>Período</th><th>IVA</th><th>IIBB</th></tr></thead><tbody>${meses.map(per=>`<tr><td>${per.slice(5)}/${per.slice(0,4)}${per===workPeriod()?'<span class="s">período de trabajo</span>':''}</td><td>${cel('IVA',per)}</td><td>${cel('IIBB',per)}</td></tr>`).join('')}</tbody></table></div>`;
+}
+async function marcarPres(imp,per){
+  const c=ui.clients.find(x=>x.id===ui.ficha.id),nota=prompt(`Marcar ${imp} ${per.slice(5)}/${per.slice(0,4)} de ${c.razon_social} como presentado.\nNota opcional (por ejemplo, el número de presentación):`,'');
+  if(nota===null)return;
+  const {error}=await sb.from('tax_filings').upsert({client_id:c.id,periodo:per+'-01',impuesto:imp,presentado_by:me.id,presentado_at:new Date().toISOString(),nota:nota.trim()||null},{onConflict:'client_id,periodo,impuesto'});
+  if(error)flash(errTxt(error),'err');else{try{await loadFil();flash(`${imp} ${per.slice(5)}/${per.slice(0,4)} marcado como presentado.`)}catch(e){flash(errTxt(e),'err')}}
+  draw();
+}
+async function deshacerPres(imp,per){
+  if(!confirm(`¿Quitar la marca de presentado de ${imp} ${per.slice(5)}/${per.slice(0,4)}?`))return;
+  const {error}=await sb.from('tax_filings').delete().eq('client_id',ui.ficha.id).eq('periodo',per+'-01').eq('impuesto',imp);
+  if(error)flash(errTxt(error),'err');else{try{await loadFil();flash('Marca quitada.')}catch(e){flash(errTxt(e),'err')}}
+  draw();
+}
+/** Abre ARCA en otra pestaña y copia el CUIT de ingreso. No es posible rellenar el formulario de ARCA desde acá. */
+function abrirArca(){
+  const c=ui.clients.find(x=>x.id===ui.ficha.id),cuit=c.cuit_ingreso||c.cuit;
+  window.open(ARCA_URL,'_blank','noopener');
+  const ok=()=>{flash(`Se copió el CUIT ${cuitF(cuit)}${c.titular_ingreso?' (ingresa '+c.titular_ingreso+')':''}. En ARCA tocá "Iniciar sesión" y pegalo; la clave la completa tu navegador o la escribís vos.`);draw()};
+  const fb=()=>{const a=document.createElement('textarea');a.value=cuit;document.body.appendChild(a);a.select();let k=false;try{k=document.execCommand('copy')}catch(e){}a.remove();k?ok():(flash(`No se pudo copiar solo. El CUIT de ingreso es ${cuitF(cuit)}.`,'warn'),draw())};
+  navigator.clipboard?navigator.clipboard.writeText(cuit).then(ok,fb):fb();
 }
 init();
 </script>
