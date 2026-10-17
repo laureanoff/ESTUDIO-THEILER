@@ -9,6 +9,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/zxing-wasm@3.1.5/dist/iife/reader/index.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
 <style>
@@ -155,7 +156,7 @@ const SUPABASE_URL='https://tugdqcoxcpsiynlvnqdu.supabase.co';
 const SUPABASE_KEY='sb_publishable_2-96VeZrsNNftRXkzA1l_A_YG7ThJrL'; // clave pública: los permisos los da la base (RLS)
 const sb=(typeof supabase!=='undefined')?supabase.createClient(SUPABASE_URL,SUPABASE_KEY):null;
 let me=null,prof=null;
-const ui={tab:'inicio',clients:[],cid:null,periodo:new Date().toISOString().slice(0,7),q:'',filtro:'',sel:new Set(),pend:null,msg:null,hist:null,vs:[],batches:[],stats:null,busy:false,dl:[],vcli:'',vdias:'30',cstats:{},vinact:false,ficha:null,pst:[],fil:[]};
+const ui={tab:'inicio',clients:[],cid:null,periodo:new Date().toISOString().slice(0,7),q:'',filtro:'',sel:new Set(),pend:null,msg:null,hist:null,vs:[],batches:[],stats:null,busy:false,dl:[],vcli:'',vdias:'30',cstats:{},vinact:false,ficha:null,pst:[],fil:[],ffil:[]};
 const $=id=>document.getElementById(id);
 const flash=(t,k='ok')=>{ui.msg={t,k}};
 const isAdmin=()=>prof&&prof.role==='administrador';
@@ -445,13 +446,15 @@ const nroF=(pv,n)=>String(pv).padStart(5,'0')+'-'+String(n).padStart(8,'0');
 function vEscanear(){
   if(!ui.clients.length)return `<h2>Escanear factura</h2><div class="card">No hay clientes disponibles.</div>`;
   return `<h2>Escanear factura</h2>
-  ${window.isSecureContext?'':'<div class="msg warn">Esta página no usa HTTPS, así que el navegador bloquea la cámara en vivo. Podés usar "Sacar foto al QR" o un lector USB, o subir la app a un hosting con HTTPS.</div>'}
+  ${window.isSecureContext?'':'<div class="msg warn">Esta página no usa HTTPS, así que el navegador bloquea la cámara en vivo. Podés usar "Sacar foto" o "Elegir imagen", o abrir la app desde su dirección https.</div>'}
   <label style="display:flex;gap:8px;align-items:center;color:var(--tx);margin-bottom:14px"><input type="checkbox" id="auto" checked style="margin:0"> Marcar como recibida automáticamente cuando la factura coincide sin diferencias</label>
   <div class="row" style="align-items:flex-start;gap:20px"><div style="flex:1;min-width:280px">
-  <div class="card" style="margin-bottom:12px"><b>Sacar foto al QR</b><div class="s" style="margin-bottom:8px">Abre la cámara del celular. Funciona aunque la página no tenga HTTPS.</div><input type="file" id="qrfoto" accept="image/*" capture="environment" onchange="leerFoto(this)" style="width:100%"></div>
+  <div class="card" style="margin-bottom:12px"><b>Foto o imagen del QR</b><div class="s" style="margin-bottom:8px">El QR de las facturas es muy denso: acercate hasta que ocupe buena parte de la foto, con buena luz y bien enfocado.</div>
+  <label>Sacar foto con la cámara<input type="file" accept="image/*" capture="environment" onchange="leerFoto(this)" style="width:100%"></label>
+  <label style="margin-top:10px">Elegir una imagen o captura de pantalla<input type="file" accept="image/*" onchange="leerFoto(this)" style="width:100%"></label></div>
   <div class="card" style="margin-bottom:12px"><b>Cámara en vivo</b><div class="s" style="margin-bottom:8px">Escanea una factura tras otra sin tocar nada.</div>
   <video id="cam" playsinline muted style="width:100%;max-width:480px;background:#000;border-radius:12px;min-height:140px"></video><canvas id="cv" style="display:none"></canvas>
-  <div class="row" style="margin-top:8px"><button class="b" onclick="startCam()">Activar cámara</button><button class="g" onclick="stopCam()">Detener</button></div></div>
+  <div class="row" style="margin-top:8px"><button class="b" onclick="startCam()">Activar cámara</button><button class="g" onclick="stopCam()">Detener</button><button class="g" onclick="diagCam()">Diagnóstico</button></div></div>
   <div class="card"><b>Lector USB o pegar el link del QR</b><div class="s" style="margin-bottom:8px">Un lector de códigos tipo teclado escribe el link y manda Enter solo.</div><input id="qrtxt" style="width:100%" autocomplete="off" onkeydown="if(event.key==='Enter'){handleQr(this.value);this.value=''}"></div></div>
   <div style="flex:1;min-width:280px"><div id="scanres">${scanHtml()}</div><h3>Registradas en esta sesión (${QRS.list.length})</h3><div id="scanlist">${scanList()}</div></div></div>
   <p style="color:var(--mut);font-size:12px">Escanear el QR identifica el comprobante en cualquier cliente y período y registra que la factura llegó en papel. No la verifica ante ARCA ni la archiva en digital.</p>`;
@@ -461,7 +464,8 @@ function scanHtml(){
   const s=ui.scan;
   if(!s)return '<div class="msg info">Escaneá el QR de una factura: se busca solo en los comprobantes importados de todos tus clientes.</div>';
   const v=s.v,per=v&&v.client_periods&&v.client_periods.periodo,card=v?`<div class="card" style="margin-bottom:8px"><b>${esc(v.emisor_nombre)}</b><span class="s">${cuitF(v.emisor_cuit)}</span>${esc(tipoTxt(v))} ${nroF(v.punto_venta,v.numero)}<br>${fAR(v.fecha)}, ${money(Number(v.importe_total))}<span class="s" style="margin-top:6px">Cliente: ${esc(s.cli?s.cli.razon_social:'')}${per?', período '+per.slice(5,7)+'/'+per.slice(0,4):''}</span></div>`:'';
-  return `<div class="msg ${s.k}">${esc(s.t)}${s.d&&s.d.length?'<br>'+s.d.map(esc).join('<br>'):''}</div>${card}
+  const L=s.leido&&!v?`<div class="card" style="margin-bottom:8px"><span class="s">Esto es lo que se leyó del QR</span>Emisor ${cuitF(s.leido.cuit)}<br>Tipo ${s.leido.tipoCmp}, N° ${nroF(s.leido.ptoVta,s.leido.nroCmp)}<br>Fecha ${fAR(s.leido.fecha)}, importe ${money(s.leido.importe)}</div>`:'';
+  return `<div class="msg ${s.k}">${esc(s.t)}${s.d&&s.d.length?'<br>'+s.d.map(esc).join('<br>'):''}</div>${s.raw?`<div class="s" style="word-break:break-all;margin-bottom:8px">Contenido leído: ${esc(s.raw)}</div>`:''}${L}${card}
   <div class="row">${s.confirm?`<button class="b" onclick="registrarQr()">${s.d&&s.d.length?'Registrar igual':'Marcar como recibida'}</button>`:''}<button class="g" onclick="seguirScan()">${s.confirm?'Descartar':'Seguir escaneando'}</button></div>`;
 }
 function renderScan(){const a=document.getElementById('scanres'),b=document.getElementById('scanlist');if(a)a.innerHTML=scanHtml();if(b)b.innerHTML=scanList()}
@@ -471,21 +475,32 @@ function beep(ok){
   try{const A=window.AudioContext||window.webkitAudioContext,a=new A(),o=a.createOscillator(),g=a.createGain();o.connect(g);g.connect(a.destination);o.frequency.value=ok?880:220;g.gain.value=.08;o.start();setTimeout(()=>{o.stop();a.close()},ok?130:260)}catch(e){}
   try{navigator.vibrate&&navigator.vibrate(ok?80:[120,60,120])}catch(e){}
 }
+async function pistaNoEncontrado(q){
+  const base=`No figura entre los comprobantes importados (emisor ${cuitF(q.cuit)}, tipo ${q.tipoCmp}, N° ${nroF(q.ptoVta,q.nroCmp)}).`;
+  const {data,error}=await sb.from('vouchers').select('tipo_cmp,punto_venta,numero').eq('emisor_cuit',q.cuit).limit(500);
+  if(error||!data)return base;
+  if(!data.length)return base+' Ese proveedor no aparece en ningún comprobante importado: puede que falte importar el Excel de ARCA del mes, o que la factura sea de un cliente al que no tenés acceso.';
+  const igual=data.filter(d=>Number(d.numero)===q.nroCmp);
+  if(igual.length)return base+` Hay comprobantes del mismo proveedor con ese número pero con otro tipo o punto de venta (${igual.map(d=>'tipo '+d.tipo_cmp+', pto. vta. '+d.punto_venta).join('; ')}). Revisalo en Comprobantes.`;
+  return base+` El proveedor sí aparece (${data.length} comprobante(s) importados) pero no esta factura: puede que ARCA todavía no la tenga cargada o que falte importar el Excel actualizado.`;
+}
 async function handleQr(text){
   if(QRS.proc)return;QRS.proc=true;
   try{
-    const r=parseAfipQr(text);if(!r.ok){beep(false);return setScan({k:'err',t:r.error})}
-    const q=r.data,{data,error}=await sb.from('vouchers').select('*, client_periods(periodo)').eq('emisor_cuit',q.cuit).eq('tipo_cmp',q.tipoCmp).eq('punto_venta',q.ptoVta).eq('numero',q.nroCmp);
-    if(error){beep(false);return setScan({k:'err',t:errTxt(error)})}
+    const r=parseAfipQr(text);
+    if(!r.ok){beep(false);return setScan({k:'err',t:r.error,raw:String(text).slice(0,160)})}
+    const q=r.data,S=o=>setScan({...o,leido:q});
+    const {data,error}=await sb.from('vouchers').select('*, client_periods(periodo)').eq('emisor_cuit',q.cuit).eq('tipo_cmp',q.tipoCmp).eq('punto_venta',q.ptoVta).eq('numero',q.nroCmp);
+    if(error){beep(false);return S({k:'err',t:errTxt(error)})}
     let hits=data;
     if(hits.length>1){const rc=String(q.raw.nroDocRec??'').replace(/\D/g,''),cl=ui.clients.find(c=>c.cuit===rc);hits=cl?hits.filter(h=>h.client_id===cl.id):[]}
-    if(!hits.length){beep(false);return setScan({k:'warn',t:data.length>1?'Esa factura figura en más de un cliente y no se pudo decidir cuál es. Marcala a mano en Comprobantes.':`No figura entre los comprobantes importados (emisor ${cuitF(q.cuit)}, tipo ${q.tipoCmp}, N° ${nroF(q.ptoVta,q.nroCmp)}). Puede que falte importar el Excel de ARCA de ese mes, o que sea de un cliente al que no tenés acceso.`})}
+    if(!hits.length){beep(false);return S({k:'warn',t:data.length>1?'Esa factura figura en más de un cliente y no se pudo decidir cuál es. Marcala a mano en Comprobantes.':await pistaNoEncontrado(q)})}
     const v=hits[0],cli=ui.clients.find(c=>c.id===v.client_id),d=[];
     if(v.fecha!==q.fecha)d.push(`Fecha: QR ${fAR(q.fecha)} vs ARCA ${fAR(v.fecha)}`);
     const imp=Number(v.importe_total);
     if(Math.abs(imp-q.importe)>0.01&&Math.abs(imp-q.importe*(q.ctz||1))>0.01)d.push(`Importe: QR ${money(q.importe)} vs ARCA ${money(imp)}`);
-    if(v.doc_status!=='no_recibida'){beep(false);return setScan({k:'info',t:`Ya figuraba como "${DOC[v.doc_status][0]}". No se cambió nada.`,v,cli})}
-    const o={k:d.length?'warn':'ok',t:d.length?'Se encontró el comprobante, pero hay diferencias:':'Comprobante encontrado.',v,q,d,cli,confirm:true},auto=document.getElementById('auto');
+    if(v.doc_status!=='no_recibida'){beep(false);return S({k:'info',t:`Ya figuraba como "${DOC[v.doc_status][0]}". No se cambió nada.`,v,cli})}
+    const o={k:d.length?'warn':'ok',t:d.length?'Se encontró el comprobante, pero hay diferencias:':'Comprobante encontrado.',v,q,d,cli,confirm:true,leido:q},auto=document.getElementById('auto');
     if(auto&&auto.checked&&!d.length){ui.scan=o;return await registrarQr()}
     setScan(o);
   }finally{QRS.proc=false}
@@ -506,15 +521,19 @@ async function registrarQr(){
 }
 async function startCam(){
   if(QRS.on)return;
-  if(!window.isSecureContext)return setScan({k:'err',t:'El navegador bloquea la cámara en vivo porque esta página no usa HTTPS. Usá "Sacar foto al QR" o el lector USB, o subí la app a un hosting con HTTPS.'});
-  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia)return setScan({k:'err',t:'Este navegador no permite usar la cámara. Probá con Chrome o Safari actualizados, o usá "Sacar foto al QR".'});
+  if(!window.isSecureContext)return setScan({k:'err',t:'El navegador bloquea la cámara en vivo porque esta página no usa HTTPS. Usá "Sacar foto" o "Elegir imagen", o abrí la app desde su dirección https. Tocá "Diagnóstico" para ver más detalles.'});
+  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia)return setScan({k:'err',t:'Este navegador no permite usar la cámara. Probá con Chrome o Safari actualizados (no el navegador integrado de WhatsApp o Instagram), o usá "Sacar foto".'});
   QRS.det=null;if('BarcodeDetector' in window){try{QRS.det=new BarcodeDetector({formats:['qr_code']})}catch(e){QRS.det=null}}
-  if(!QRS.det&&typeof jsQR==='undefined')return setScan({k:'err',t:'No se pudo cargar el lector de QR (¿sin internet?). Probá con "Sacar foto al QR".'});
-  try{QRS.stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}},audio:false})}
-  catch(e){return setScan({k:'err',t:e.name==='NotAllowedError'?'Permiso de cámara denegado. Habilitalo en el navegador (ícono del candado) y volvé a intentar.':e.name==='NotFoundError'?'No se encontró ninguna cámara.':e.name==='NotReadableError'?'La cámara está siendo usada por otra aplicación.':'No se pudo abrir la cámara: '+(e.message||e.name)})}
+  if(!QRS.det&&typeof jsQR==='undefined')return setScan({k:'err',t:'No se pudo cargar el lector de QR (¿sin internet?). Probá con "Sacar foto".'});
+  const pedir=c=>navigator.mediaDevices.getUserMedia(c);
+  try{
+    try{QRS.stream=await pedir({video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}},audio:false})}
+    catch(e){if(e.name==='OverconstrainedError'||e.name==='ConstraintNotSatisfiedError')QRS.stream=await pedir({video:true,audio:false});else throw e}
+  }catch(e){return setScan({k:'err',t:(e.name==='NotAllowedError'?'Permiso de cámara denegado. Habilitalo en el navegador (ícono del candado, junto a la dirección) y volvé a intentar.':e.name==='NotFoundError'?'No se encontró ninguna cámara.':e.name==='NotReadableError'?'La cámara está siendo usada por otra aplicación.':'No se pudo abrir la cámara: '+(e.message||e.name))+' (código: '+(e.name||'desconocido')+')'})}
+  try{const t=QRS.stream.getVideoTracks()[0],cap=t.getCapabilities?t.getCapabilities():{};if(cap.focusMode&&cap.focusMode.includes('continuous'))await t.applyConstraints({advanced:[{focusMode:'continuous'}]})}catch(e){}
   const v=document.getElementById('cam');if(!v){stopCam();return}
   v.srcObject=QRS.stream;try{await v.play()}catch(e){}
-  QRS.on=true;setScan({k:'info',t:'Cámara activa. Apuntá al QR de la factura.'});scanLoop();
+  QRS.on=true;setScan({k:'info',t:'Cámara activa. Acercá el QR hasta que ocupe buena parte de la imagen y mantenelo quieto un segundo.'});scanLoop();
 }
 function stopCam(){
   QRS.on=false;cancelAnimationFrame(QRS.raf);
@@ -522,37 +541,66 @@ function stopCam(){
   const v=document.getElementById('cam');if(v)v.srcObject=null;
 }
 function recibido(t){const now=Date.now();if(t!==QRS.last||now-QRS.lastAt>6000){QRS.last=t;QRS.lastAt=now;handleQr(t)}}
+let _fr=0;
 function scanLoop(){
   if(!QRS.on)return;
   const v=document.getElementById('cam'),c=document.getElementById('cv');
   if(v&&v.readyState===v.HAVE_ENOUGH_DATA&&v.videoWidth&&!(ui.scan&&ui.scan.confirm)&&!QRS.proc&&!QRS.busy){
     if(QRS.det){QRS.busy=true;QRS.det.detect(v).then(r=>{if(r[0]&&r[0].rawValue)recibido(r[0].rawValue)}).catch(()=>{}).finally(()=>{QRS.busy=false})}
     else if(c){
-      const k=Math.min(1,640/v.videoWidth);c.width=Math.round(v.videoWidth*k);c.height=Math.round(v.videoHeight*k);
-      const x=c.getContext('2d',{willReadFrequently:true});x.drawImage(v,0,0,c.width,c.height);
-      const im=x.getImageData(0,0,c.width,c.height),code=jsQR(im.data,c.width,c.height,{inversionAttempts:'dontInvert'});
-      if(code&&code.data)recibido(code.data);
+      _fr++;const vw=v.videoWidth,vh=v.videoHeight;let sx=0,sy=0,sw=vw,sh=vh,k=Math.min(1,1280/vw);
+      if(_fr%2===0){sw=Math.round(vw*.6);sh=Math.round(vh*.6);sx=Math.round((vw-sw)/2);sy=Math.round((vh-sh)/2);k=Math.min(1,1100/sw)} /* un cuadro completo y otro centrado en resolución nativa */
+      c.width=Math.round(sw*k);c.height=Math.round(sh*k);
+      const x=c.getContext('2d',{willReadFrequently:true});x.drawImage(v,sx,sy,sw,sh,0,0,c.width,c.height);
+      QRS.busy=true;
+      (async()=>{let t=await zxDecode(x,0,0,c.width,c.height);if(!t){const im=x.getImageData(0,0,c.width,c.height),code=jsQR(im.data,c.width,c.height,{inversionAttempts:'dontInvert'});t=code&&code.data}if(t)recibido(t)})().catch(()=>{}).finally(()=>{QRS.busy=false});
     }
   }
   QRS.raf=requestAnimationFrame(scanLoop);
 }
+const pausa=()=>new Promise(r=>setTimeout(r,0));
+const jsDecode=(ctx,x,y,w,h,inv)=>{const im=ctx.getImageData(x,y,w,h),c=jsQR(im.data,w,h,{inversionAttempts:inv?'attemptBoth':'dontInvert'});return c&&c.data||null};
+function mosaicos(W,H,n){const tw=Math.round(W/n*1.5),th=Math.round(H/n*1.5),o=[];for(let j=0;j<n;j++)for(let i=0;i<n;i++)o.push([Math.min(W-tw,Math.round(i*(W-tw)/(n-1))),Math.min(H-th,Math.round(j*(H-th)/(n-1))),tw,th]);return o}
+/** Lector rápido (ZXing en WebAssembly); si no cargó o falla, devuelve null y se usa el lector de respaldo. */
+async function zxDecode(ctx,x,y,w,h){
+  if(typeof ZXingWASM==='undefined')return null;
+  try{const r=await ZXingWASM.readBarcodes(ctx.getImageData(x,y,w,h),{formats:['QRCode'],tryHarder:true,tryRotate:true,tryDownscale:true,maxNumberOfSymbols:1});return (r[0]&&r[0].text)||null}catch(e){return null}
+}
+/** Busca un QR en una imagen: detector nativo si existe; si no, jsQR en alta resolución y por zonas (el QR de ARCA es muy denso y se pierde al achicar la foto). */
+async function qrDeImagen(bmp,progreso){
+  if('BarcodeDetector' in window){try{const r=await new BarcodeDetector({formats:['qr_code']}).detect(bmp);if(r[0]&&r[0].rawValue)return r[0].rawValue}catch(e){}}
+  if(typeof jsQR==='undefined')throw new Error('No se pudo cargar el lector de QR (¿sin internet?).');
+  const W0=bmp.width,H0=bmp.height,anchos=[...new Set([Math.min(W0,3200),Math.min(W0,1800)])];
+  for(const w of anchos){
+    const k=w/W0,cw=Math.round(W0*k),ch=Math.round(H0*k),c=document.createElement('canvas');c.width=cw;c.height=ch;
+    const x=c.getContext('2d',{willReadFrequently:true});x.drawImage(bmp,0,0,cw,ch);
+    if(progreso)progreso(`Buscando el QR en la imagen (${w}px)…`);await pausa();
+    let r=await zxDecode(x,0,0,cw,ch);if(r)return r;
+    r=jsDecode(x,0,0,cw,ch,true);if(r)return r;
+    for(const [tx,ty,tw,th] of mosaicos(cw,ch,3)){await pausa();r=jsDecode(x,tx,ty,tw,th,false);if(r)return r}
+  }
+  return null;
+}
 async function leerFoto(inp){
-  const f=inp.files[0];if(!f)return;
+  const f=inp.files[0];if(!f)return;setScan({k:'info',t:'Leyendo la imagen…'});
   try{
-    const bmp=await createImageBitmap(f);let txt=null;
-    if('BarcodeDetector' in window){try{const r=await new BarcodeDetector({formats:['qr_code']}).detect(bmp);if(r[0])txt=r[0].rawValue}catch(e){}}
-    if(!txt&&typeof jsQR!=='undefined'){
-      for(const mw of [1000,1600,600]){
-        const k=Math.min(1,mw/bmp.width),c=document.createElement('canvas');c.width=Math.round(bmp.width*k);c.height=Math.round(bmp.height*k);
-        const x=c.getContext('2d',{willReadFrequently:true});x.drawImage(bmp,0,0,c.width,c.height);
-        const im=x.getImageData(0,0,c.width,c.height),code=jsQR(im.data,c.width,c.height,{inversionAttempts:'attemptBoth'});
-        if(code){txt=code.data;break}
-      }
-    }
-    inp.value='';
-    if(!txt)return setScan({k:'warn',t:'No se encontró ningún QR en la foto. Acercate para que el QR ocupe buena parte de la imagen, con buena luz y sin reflejos.'});
+    const bmp=await createImageBitmap(f),txt=await qrDeImagen(bmp,t=>setScan({k:'info',t}));inp.value='';
+    if(!txt)return setScan({k:'warn',t:'No se encontró ningún QR en la imagen. Acercate hasta que el QR ocupe buena parte de la foto, con buena luz, sin reflejos ni sombras y bien enfocado. Si la foto sale borrosa, el QR de la factura no se puede leer.'});
     handleQr(txt);
-  }catch(e){setScan({k:'err',t:'No se pudo leer la foto: '+(e.message||e)})}
+  }catch(e){inp.value='';setScan({k:'err',t:'No se pudo leer la imagen: '+(e.message||e)})}
+}
+async function diagCam(){
+  const ua=navigator.userAgent,L=[];
+  L.push('Conexión segura (HTTPS): '+(window.isSecureContext?'sí':'NO, esta página está en '+location.protocol+'//'+(location.host||'archivo local')));
+  if(/FBAN|FBAV|Instagram|WhatsApp|Line\/|MicroMessenger|Messenger|TikTok/i.test(ua))L.push('AVISO: estás en el navegador integrado de otra aplicación. Abrí la página en Chrome o Safari.');
+  L.push('El navegador permite usar la cámara: '+(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia?'sí':'NO'));
+  L.push('Lector nativo de QR: '+('BarcodeDetector' in window?'sí':'no (se usa el lector de respaldo)'));
+  L.push('Lector rápido (ZXing) cargado: '+(typeof ZXingWASM!=='undefined'?'sí':'no (se usa el lector de respaldo)'));
+  L.push('Lector de respaldo cargado: '+(typeof jsQR!=='undefined'?'sí':'NO, revisá la conexión a internet'));
+  try{const p=await navigator.permissions.query({name:'camera'});L.push('Permiso de cámara: '+(p.state==='granted'?'permitido':p.state==='denied'?'BLOQUEADO, habilitalo con el candado de la barra de direcciones':'todavía no se pidió'))}catch(e){L.push('Permiso de cámara: no se puede consultar en este navegador')}
+  try{const d=await navigator.mediaDevices.enumerateDevices();L.push('Cámaras detectadas: '+d.filter(x=>x.kind==='videoinput').length)}catch(e){}
+  L.push('Navegador: '+ua.slice(0,110));
+  setScan({k:'info',t:'Diagnóstico de la cámara:',d:L});
 }
 
 /* ===== Vencimientos ===== */
@@ -608,16 +656,18 @@ async function loadCStats_old(){
   v.forEach(x=>{const o=m[x.client_id]||(m[x.client_id]={tot:0,fal:0});o.tot++;if(x.doc_status==='no_recibida')o.fal++});ui.cstats=m;
 }
 async function abrirFicha(id,tab,periodo){
-  ui.ficha={id,tab:tab||'resumen',loading:true,fresh:true,per:[],bs:[],ct:[],docs:[],rec:null,recPer:periodo||null};draw();
+  ui.ficha={id,tab:tab||'resumen',loading:true,fresh:true,per:[],bs:[],ct:[],docs:[],emp:[],pay:[],rec:null,recPer:periodo||null};draw();
   try{
     await loadDeadlines();await loadFil();
-    const [per,bs,ct,dc]=await Promise.all([
+    const [per,bs,ct,dc,em,ps]=await Promise.all([
       sb.from('v_period_stats').select('*').eq('client_id',id).order('periodo',{ascending:false}),
       sb.from('import_batches').select('*').eq('client_id',id).order('imported_at',{ascending:false}).limit(50),
       sb.from('client_contacts').select('*').eq('client_id',id).order('nombre'),
-      sb.from('client_documents').select('*').eq('client_id',id).order('subido_at',{ascending:false})]);
-    for(const r of [per,bs,ct,dc])if(r.error)throw r.error;
-    Object.assign(ui.ficha,{per:per.data,bs:bs.data,ct:ct.data,docs:dc.data,loading:false});
+      sb.from('client_documents').select('*').eq('client_id',id).order('subido_at',{ascending:false}),
+      sb.from('employees').select('*').eq('client_id',id).order('nombre'),
+      sb.from('payslips').select('*').eq('client_id',id)]);
+    for(const r of [per,bs,ct,dc,em,ps])if(r.error)throw r.error;
+    Object.assign(ui.ficha,{per:per.data,bs:bs.data,ct:ct.data,docs:dc.data,emp:em.data,pay:ps.data,loading:false});
   }catch(e){ui.ficha=null;flash(errTxt(e),'err');return draw()}
   if(ui.ficha.tab==='pedir')return initPedir();
   draw();
@@ -628,7 +678,7 @@ const fst=v=>({tot:v.length,fal:v.filter(x=>x.doc_status==='no_recibida').length
 const delC=(d,c)=>tieneImp(c,d.impuesto)&&d.terminaciones.includes(Number(c.cuit.slice(-1)));
 function vFicha(){
   const f=ui.ficha;if(!f)return'';const c=ui.clients.find(x=>x.id===f.id);if(!c)return'';
-  const T=[['resumen','Resumen'],['present','Presentaciones'],['pedir','Pedir facturas'],['datos','Datos'],['contactos','Contactos'],['comprobantes','Comprobantes'],['docs','Documentos'],['venc','Vencimientos'],['imports','Importaciones']],cls=f.fresh?'dr in':'dr';f.fresh=false;
+  const T=[['resumen','Resumen'],['present','Presentaciones'],['pedir','Pedir facturas'],['datos','Datos'],['contactos','Contactos'],['comprobantes','Comprobantes'],['docs','Documentos'],['sueldos','Sueldos'],['venc','Vencimientos'],['imports','Importaciones']],cls=f.fresh?'dr in':'dr';f.fresh=false;
   return `<div class="ov" onclick="cerrarFicha()"><aside class="${cls}" onclick="event.stopPropagation()" role="dialog" aria-label="Ficha de ${esc(c.razon_social)}">
   <div class="drh"><div class="term big">${c.cuit.slice(-1)}<small>termina en</small></div><div style="flex:1;min-width:0"><h2>${esc(c.razon_social)}</h2><div style="color:var(--mut)">${c.nombre_comercial?esc(c.nombre_comercial)+'<br>':''}CUIT ${cuitF(c.cuit)}${c.active===false?' (inactivo)':''}</div></div><div class="row" style="gap:8px"><button class="b" onclick="abrirArca()">Entrar a ARCA</button><button class="g" onclick="cerrarFicha()">Cerrar</button></div></div>
   <div class="tabs">${T.map(([k,t])=>`<button class="${f.tab===k?'on':''}" onclick="selTab('${k}')">${t}</button>`).join('')}</div>
@@ -687,6 +737,7 @@ function fTab(c,f){
     ${rows.length?rows.map(({p,s})=>`<tr><td>${p.periodo.slice(5,7)}/${p.periodo.slice(0,4)}</td><td>${s.tot}</td><td ${s.fal?'style="color:var(--redt);font-weight:600"':''}>${s.fal}</td><td>${s.sin}</td><td>${s.rev}</td><td><button class="g" onclick="abrirComp('${c.id}','${p.periodo.slice(0,7)}')">Abrir comprobantes</button></td></tr>`).join(''):'<tr><td colspan="6" style="color:var(--mut)">Todavía no se importó ningún período para este cliente.</td></tr>'}</tbody></table></div>`;
   }
   if(f.tab==='docs')return vDocs(c,f);
+  if(f.tab==='sueldos')return vSueldos(c,f);
   if(f.tab==='venc')return fVencTable(c,fVencRows(c,40,120));
   if(f.tab==='imports')return `<div class="tw"><table><thead><tr><th>Fecha</th><th>Archivo</th><th>Leídos</th><th>Nuevos</th><th>Repetidos</th><th>Rechazados</th></tr></thead><tbody>${f.bs.length?f.bs.map(b=>`<tr><td>${new Date(b.imported_at).toLocaleString('es-AR')}</td><td>${esc(b.file_name)}</td><td>${b.rows_read}</td><td>${b.rows_new}</td><td>${b.rows_duplicate}</td><td>${b.rows_rejected}</td></tr>`).join(''):'<tr><td colspan="6" style="color:var(--mut)">Sin importaciones para este cliente.</td></tr>'}</tbody></table></div>`;
   return '';
@@ -858,15 +909,15 @@ async function saveEncargado(e){
 
 /* ===== Presentaciones (IVA / IIBB) y acceso a ARCA ===== */
 const ARCA_URL='https://www.arca.gob.ar/';
-async function loadFil(){const {data,error}=await sb.from('tax_filings').select('*');if(error)throw error;ui.fil=data}
+async function loadFil(){const [a,b]=await Promise.all([sb.from('tax_filings').select('*'),sb.from('tax_filing_files').select('*')]);if(a.error)throw a.error;if(b.error)throw b.error;ui.fil=a.data;ui.ffil=b.data}
 /** Qué declaraciones se controlan para un cliente: IVA, y IIBB (provincial o Convenio Multilateral). */
-const OBLIG={IVA:{n:'IVA',s:'IVA',t:'m'},IIBB:{n:'IIBB',s:'IIBB',t:'m'},F931:{n:'Cargas sociales F.931',s:'F.931',t:'m'},GAN_ANT:{n:'Anticipos de Ganancias',s:'Anticipos',t:'m'},GAN_DDJJ:{n:'Ganancias, DDJJ anual',s:'Ganancias',t:'a'},BP:{n:'Bienes Personales',s:'BP',t:'a'}};
+const OBLIG={IVA:{n:'IVA',s:'IVA',t:'m',v:'presentado'},IIBB:{n:'IIBB',s:'IIBB',t:'m',v:'presentado'},F931:{n:'Cargas sociales F.931',s:'F.931',t:'m',v:'presentado'},GAN_ANT:{n:'Anticipos de Ganancias',s:'Anticipos',t:'m',v:'pagado'},GAN_DDJJ:{n:'Ganancias, DDJJ anual',s:'Ganancias',t:'a',v:'presentado'},BP:{n:'Bienes Personales',s:'BP',t:'a',v:'presentado'}};
 const tieneImp=(c,k)=>{const i=c.impuestos||[];return k==='GANANCIAS_PH'?['GANANCIAS_PH','GAN_ANT','GAN_DDJJ','BP'].some(x=>i.includes(x)):i.includes(k)};
 const tieneChk=(c,k)=>{const i=c.impuestos||[];return i.includes(k)||(i.includes('GANANCIAS_PH')&&(k==='GAN_ANT'||k==='GAN_DDJJ'))};
 /** Qué declaraciones se controlan para un cliente según los impuestos que tiene. */
 const aplica=c=>{const i=c.impuestos||[],r=[];if(i.includes('IVA'))r.push('IVA');if(i.includes('IIBB')||i.includes('CM'))r.push('IIBB');if(i.includes('F931'))r.push('F931');if(i.includes('GAN_ANT')||i.includes('GANANCIAS_PH'))r.push('GAN_ANT');if(i.includes('GAN_DDJJ')||i.includes('GANANCIAS_PH'))r.push('GAN_DDJJ');if(i.includes('BP'))r.push('BP');return r};
 function declChips(r,wp){
-  return r.fil.length?r.fil.map(x=>`<a href="#" onclick="abrirFicha('${r.c.id}','present');return false" class="tag" style="text-decoration:none;background:var(--${x.ok?'grn':'amb'});color:var(--${x.ok?'grnt':'ambt'});margin:0 4px 4px 0">${OBLIG[x.imp].s} ${x.ok?'presentado':'pendiente'}</a>`).join(''):'<span class="s">sin IVA ni IIBB cargados</span>';
+  return r.fil.length?r.fil.map(x=>`<a href="#" onclick="abrirFicha('${r.c.id}','present');return false" class="tag" style="text-decoration:none;background:var(--${x.ok?'grn':'amb'});color:var(--${x.ok?'grnt':'ambt'});margin:0 4px 4px 0">${OBLIG[x.imp].s} ${x.ok?OBLIG[x.imp].v:'pendiente'}</a>`).join(''):'<span class="s">sin IVA ni IIBB cargados</span>';
 }
 const hoyISO=()=>isoLocal(new Date());
 const nuevaFecha=iso=>new Date(iso+'T12:00:00').toISOString();
@@ -874,14 +925,20 @@ function ejerciciosCerrados(cierre,n){
   const h=new Date(),now=h.getFullYear()*12+h.getMonth()+1;let cur=h.getFullYear()*12+cierre;if(cur>=now)cur-=12;const out=[];
   for(let i=0;i<n;i++){const yy=Math.floor((cur-1)/12),mm=((cur-1)%12)+1;out.push(yy+'-'+String(mm).padStart(2,'0'));cur-=12}return out;
 }
+const CANC={'':'Forma de cancelación',VEP:'VEP completo',COMP:'Compensación',VEP_COMP:'VEP + compensación'};
+const ADJ=[['PRESENTACION','Presentación'],['VEP','VEP'],['COMPENSACION','Compensación']];
 function cel(c,imp,per){
-  const x=ui.fil.find(z=>z.client_id===c.id&&z.periodo.slice(0,7)===per&&z.impuesto===imp),k=imp+'_'+per;
-  if(!x)return `<div class="cel"><input type="date" class="sm" id="pf_${k}" value="${hoyISO()}" title="Fecha de presentación"><button class="b sm" onclick="marcarPres('${imp}','${per}')">Marcar presentado</button></div>`;
-  const fd=x.presentado_at?isoLocal(new Date(x.presentado_at)):'';
-  return `<div class="cel"><span class="tag" style="background:var(--grn);color:var(--grnt)">Presentado</span>
-  <input type="date" class="sm" value="${fd}" title="Fecha de presentación (se puede cambiar)" onchange="cambiarFechaPres('${imp}','${per}',this.value)">
+  const x=ui.fil.find(z=>z.client_id===c.id&&z.periodo.slice(0,7)===per&&z.impuesto===imp),k=imp+'_'+per,ob=OBLIG[imp];
+  const opts=sel=>Object.entries(CANC).map(([v,t])=>`<option value="${v}" ${sel===v?'selected':''}>${t}</option>`).join('');
+  if(!x)return `<div class="cel"><input type="date" class="sm" id="pf_${k}" value="${hoyISO()}" title="Fecha"><select class="sm" id="pc_${k}" title="Cómo se canceló">${opts('')}</select><button class="b sm" onclick="marcarPres('${imp}','${per}')">Marcar ${ob.v}</button></div>`;
+  const fd=x.presentado_at?isoLocal(new Date(x.presentado_at)):'',files=ui.ffil.filter(f=>f.filing_id===x.id);
+  const slots=ADJ.map(([t,et])=>{const f=files.find(z=>z.tipo===t);return f?`<span class="row" style="gap:2px"><button class="g sm" onclick="verArchivo('${f.path}')" title="${esc(f.nombre_archivo)}">${et}</button><button class="g sm" onclick="quitarArch('${f.id}')" title="Quitar">×</button></span>`:`<label class="g sm">+ ${et}<input type="file" accept="application/pdf,.pdf" hidden onchange="adjArch('${t}','${imp}','${per}',this)"></label>`}).join('');
+  return `<div class="cel"><span class="tag" style="background:var(--grn);color:var(--grnt)">${ob.v==='pagado'?'Pagado':'Presentado'}</span>
+  <input type="date" class="sm" value="${fd}" title="Fecha (se puede cambiar)" onchange="cambiarFechaPres('${imp}','${per}',this.value)">
+  <select class="sm" title="Cómo se canceló" onchange="cambiarCancel('${imp}','${per}',this.value)">${opts(x.cancelacion||'')}</select>
   ${x.nota?`<span class="s">${esc(x.nota)}</span>`:''}
-  <div class="row" style="gap:4px">${x.archivo_path?`<button class="g sm" onclick="verArchivo('${x.archivo_path}')">Ver PDF</button><button class="g sm" onclick="quitarPdf('${imp}','${per}')">Quitar PDF</button>`:`<label class="g sm">Adjuntar PDF<input type="file" accept="application/pdf,.pdf" hidden onchange="adjPres('${imp}','${per}',this)"></label>`}<button class="g sm" onclick="notaPres('${imp}','${per}')">Nota</button><button class="g sm" onclick="deshacerPres('${imp}','${per}')">Deshacer</button></div></div>`;
+  <div class="row" style="gap:4px">${slots}</div>
+  <div class="row" style="gap:4px"><button class="g sm" onclick="notaPres('${imp}','${per}')">Nota</button><button class="g sm" onclick="deshacerPres('${imp}','${per}')">Deshacer</button></div></div>`;
 }
 function vPresent(c,f){
   const ap=aplica(c);
@@ -895,14 +952,15 @@ function vPresent(c,f){
   return h;
 }
 async function marcarPres(imp,per){
-  const c=ui.clients.find(x=>x.id===ui.ficha.id),inp=document.getElementById(`pf_${imp}_${per}`),fecha=inp&&inp.value;
-  if(!fecha){flash('Elegí la fecha de presentación.','err');return draw()}
+  const c=ui.clients.find(x=>x.id===ui.ficha.id),inp=document.getElementById(`pf_${imp}_${per}`),cs=document.getElementById(`pc_${imp}_${per}`),fecha=inp&&inp.value;
+  if(!fecha){flash('Elegí la fecha.','err');return draw()}
   const nota=prompt(`${OBLIG[imp].n} (${per.slice(5)}/${per.slice(0,4)}) de ${c.razon_social}.\nNota opcional (por ejemplo, el número de presentación):`,'');
   if(nota===null)return;
-  const {error}=await sb.from('tax_filings').insert({client_id:c.id,periodo:per+'-01',impuesto:imp,presentado_by:me.id,presentado_at:nuevaFecha(fecha),nota:nota.trim()||null});
-  if(error)flash(errTxt(error),'err');else{try{await loadFil();flash(`${OBLIG[imp].n} ${per.slice(5)}/${per.slice(0,4)} marcado como presentado el ${fAR(fecha)}.`)}catch(e){flash(errTxt(e),'err')}}
+  const {error}=await sb.from('tax_filings').insert({client_id:c.id,periodo:per+'-01',impuesto:imp,presentado_by:me.id,presentado_at:nuevaFecha(fecha),nota:nota.trim()||null,cancelacion:(cs&&cs.value)||null});
+  if(error)flash(errTxt(error),'err');else{try{await loadFil();flash(`${OBLIG[imp].n} ${per.slice(5)}/${per.slice(0,4)} marcado como ${OBLIG[imp].v} el ${fAR(fecha)}.`)}catch(e){flash(errTxt(e),'err')}}
   draw();
 }
+function cambiarCancel(imp,per,v){return updPres(imp,per,{cancelacion:v||null},'Forma de cancelación actualizada.')}
 async function updPres(imp,per,cambios,okMsg){
   const {data,error}=await sb.from('tax_filings').update({...cambios,modificado_by:me.id,modificado_at:new Date().toISOString()}).eq('client_id',ui.ficha.id).eq('periodo',per+'-01').eq('impuesto',imp).select('id');
   if(error)flash(errTxt(error),'err');else if(!data.length)flash('No se pudo actualizar: la presentación ya no existe o no tenés permiso.','err');else{try{await loadFil();flash(okMsg)}catch(e){flash(errTxt(e),'err')}}
@@ -911,9 +969,9 @@ async function updPres(imp,per,cambios,okMsg){
 function cambiarFechaPres(imp,per,v){if(!v){flash('La fecha no puede quedar vacía.','err');return draw()}return updPres(imp,per,{presentado_at:nuevaFecha(v)},`Fecha de presentación actualizada: ${fAR(v)}.`)}
 function notaPres(imp,per){const x=ui.fil.find(z=>z.client_id===ui.ficha.id&&z.periodo.slice(0,7)===per&&z.impuesto===imp),n=prompt('Nota de esta presentación:',(x&&x.nota)||'');if(n===null)return;return updPres(imp,per,{nota:n.trim()||null},'Nota guardada.')}
 async function deshacerPres(imp,per){
-  const x=ui.fil.find(z=>z.client_id===ui.ficha.id&&z.periodo.slice(0,7)===per&&z.impuesto===imp);
-  if(!confirm(`¿Quitar la marca de presentado de ${OBLIG[imp].n} ${per.slice(5)}/${per.slice(0,4)}?${x&&x.archivo_path?'\nTambién se elimina el PDF adjunto.':''}`))return;
-  if(x&&x.archivo_path){const r=await sb.storage.from('clientes').remove([x.archivo_path]);if(r.error){flash(errTxt(r.error),'err');return draw()}}
+  const x=ui.fil.find(z=>z.client_id===ui.ficha.id&&z.periodo.slice(0,7)===per&&z.impuesto===imp),files=x?ui.ffil.filter(f=>f.filing_id===x.id):[];
+  if(!confirm(`¿Quitar la marca de ${OBLIG[imp].n} ${per.slice(5)}/${per.slice(0,4)}?${files.length?`\nTambién se eliminan ${files.length} archivo(s) adjunto(s).`:''}`))return;
+  if(files.length){const r=await sb.storage.from('clientes').remove(files.map(f=>f.path));if(r.error){flash(errTxt(r.error),'err');return draw()}}
   const {error}=await sb.from('tax_filings').delete().eq('client_id',ui.ficha.id).eq('periodo',per+'-01').eq('impuesto',imp);
   if(error)flash(errTxt(error),'err');else{try{await loadFil();flash('Marca quitada.')}catch(e){flash(errTxt(e),'err')}}
   draw();
@@ -949,17 +1007,22 @@ async function esPdf(f){
   if(await f.slice(0,5).text()!=='%PDF-')return 'El archivo no parece un PDF válido.';
   return null;
 }
-async function adjPres(imp,per,inp){
+async function adjArch(tipo,imp,per,inp){
   const f=inp.files[0];inp.value='';const e=await esPdf(f);if(e){flash(e,'err');return draw()}
-  const path=`${ui.ficha.id}/ddjj/${imp}-${per}.pdf`,up=await sb.storage.from('clientes').upload(path,f,{contentType:'application/pdf',upsert:true});
+  const cid=ui.ficha.id,x=ui.fil.find(z=>z.client_id===cid&&z.periodo.slice(0,7)===per&&z.impuesto===imp);
+  if(!x){flash('La marca ya no existe.','err');return draw()}
+  const path=`${cid}/ddjj/${imp}-${per}-${tipo.toLowerCase()}.pdf`,up=await sb.storage.from('clientes').upload(path,f,{contentType:'application/pdf',upsert:true});
   if(up.error){flash('No se pudo subir el PDF: '+errTxt(up.error),'err');return draw()}
-  return updPres(imp,per,{archivo_path:path,archivo_nombre:f.name,archivo_at:new Date().toISOString()},'Declaración jurada adjuntada.');
+  const {error}=await sb.from('tax_filing_files').upsert({filing_id:x.id,client_id:cid,tipo,nombre_archivo:f.name,path,size_bytes:f.size,subido_by:me.id},{onConflict:'filing_id,tipo'});
+  if(error)flash(errTxt(error),'err');else{try{await loadFil();flash('Archivo adjuntado.')}catch(z){flash(errTxt(z),'err')}}
+  draw();
 }
-async function quitarPdf(imp,per){
-  const x=ui.fil.find(z=>z.client_id===ui.ficha.id&&z.periodo.slice(0,7)===per&&z.impuesto===imp);
-  if(!x||!x.archivo_path||!confirm('¿Quitar el PDF adjunto? Se elimina el archivo.'))return;
-  const r=await sb.storage.from('clientes').remove([x.archivo_path]);if(r.error){flash(errTxt(r.error),'err');return draw()}
-  return updPres(imp,per,{archivo_path:null,archivo_nombre:null,archivo_at:null},'PDF quitado.');
+async function quitarArch(id){
+  const a=ui.ffil.find(z=>z.id===id);if(!a||!confirm('¿Quitar este adjunto? Se elimina el archivo.'))return;
+  const r=await sb.storage.from('clientes').remove([a.path]);if(r.error){flash(errTxt(r.error),'err');return draw()}
+  const {error}=await sb.from('tax_filing_files').delete().eq('id',id);
+  if(error)flash(errTxt(error),'err');else{try{await loadFil();flash('Adjunto quitado.')}catch(z){flash(errTxt(z),'err')}}
+  draw();
 }
 /** Abre un archivo privado con un enlace temporal de 2 minutos. */
 async function verArchivo(path){
@@ -1000,6 +1063,144 @@ async function quitarDoc(id){
   const {error}=await sb.from('client_documents').delete().eq('id',id);
   if(error)flash(errTxt(error),'err');else{try{await recargarDocs();flash('Documento quitado.')}catch(x){flash(errTxt(x),'err')}}
   draw();
+}
+
+/* ===== Portal de recibos de sueldo ===== */
+const TIPOS_REC=['Mensual','SAC (aguinaldo)','Vacaciones','Liquidación final','Otro'];
+const TIPO_SLUG={'Mensual':'mensual','SAC (aguinaldo)':'sac','Vacaciones':'vacaciones','Liquidación final':'liquidacion','Otro':'otro'};
+const MSG_REC='Hola {nombre}, ¿cómo estás? Te enviamos tu recibo de sueldo de {periodo} de {empresa}. Podés descargarlo acá: {link}\n\nEl enlace vence en {horas} horas. Cualquier duda, avisanos. Estudio Theiler.';
+const MSG_REC_ARCH='Hola {nombre}, ¿cómo estás? Te paso tu recibo de sueldo de {periodo} de {empresa}. Cualquier duda, avisanos. Estudio Theiler.';
+const mesAnio=per=>MESES[Number(per.slice(5,7))-1]+' de '+per.slice(0,4);
+const sueState=f=>f.sue||(f.sue={periodo:workPeriod(),tipo:'Mensual',horas:24,msg:MSG_REC,editEmp:null});
+function armarRec(tpl,c,e,per,link,horas){
+  let m=tpl.replace(/\{nombre\}/g,e.nombre.trim().split(/\s+/)[0]).replace(/\{periodo\}/g,mesAnio(per)).replace(/\{empresa\}/g,c.razon_social).replace(/\{horas\}/g,horas);
+  if(link)m=tpl.includes('{link}')?m.replace(/\{link\}/g,link):m+'\n'+link;else m=m.replace(/\{link\}/g,'');
+  return m.trim();
+}
+const normN=x=>String(x).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+/** Empareja un archivo con un empleado por CUIL (11 dígitos en el nombre) o por nombre y apellido. */
+function empDeArchivo(nombre,act){
+  const base=nombre.replace(/\.[^.]+$/,''),dig=(base.match(/\d{11}/)||[])[0];
+  if(dig){const m=act.filter(e=>e.cuil===dig);if(m.length===1)return m[0]}
+  const n=' '+normN(base)+' ',m=act.filter(e=>normN(e.nombre).split(' ').every(w=>n.includes(' '+w+' ')));
+  return m.length===1?m[0]:null;
+}
+function vSueldos(c,f){
+  const s=sueState(f),edit=f.emp.find(e=>e.id===s.editEmp),act=f.emp.filter(e=>e.activo),pays=f.pay.filter(p=>p.periodo.slice(0,7)===s.periodo&&p.tipo===s.tipo),puedeCompartir=typeof navigator.canShare==='function';
+  const waTxt=e=>{if(!e.whatsapp)return '<span class="s">Sin WhatsApp</span>';const w=waNum(e.whatsapp);return esc(e.whatsapp)+(w&&!w.ok?'<span class="s" style="color:var(--redt)">Revisá el número</span>':'')};
+  const form=`<form class="card" style="margin-bottom:12px" onsubmit="return saveEmp(event)"><b>${edit?'Editar empleado':'Agregar empleado'}</b><div class="fgrid" style="margin-top:8px">
+  <label>Nombre y apellido<input name="nombre" required value="${esc(edit&&edit.nombre)}"></label>
+  <label>CUIL (opcional)<input name="cuil" inputmode="numeric" placeholder="20-12345678-9" value="${edit&&edit.cuil?cuitF(edit.cuil):''}"></label>
+  <label>Celular de WhatsApp<input name="whatsapp" inputmode="tel" placeholder="3537 412345" value="${esc(edit&&edit.whatsapp)}"></label>
+  <label>Cargo (opcional)<input name="cargo" value="${esc(edit&&edit.cargo)}"></label>
+  <div class="full row"><button class="b">${edit?'Guardar cambios':'Agregar empleado'}</button>${edit?'<button type="button" class="g" onclick="ui.ficha.sue.editEmp=null;draw()">Cancelar</button>':''}</div></div></form>`;
+  const empT=`<div class="tw" style="margin-bottom:22px"><table><thead><tr><th>Empleado</th><th>CUIL</th><th>WhatsApp</th><th>Estado</th><th></th></tr></thead><tbody>${f.emp.length?f.emp.map(e=>`<tr style="${e.activo?'':'opacity:.55'}"><td>${esc(e.nombre)}<span class="s">${esc(e.cargo)}</span></td><td>${e.cuil?cuitF(e.cuil):''}</td><td>${waTxt(e)}</td><td>${e.activo?'Activo':'De baja'}</td><td style="white-space:nowrap"><button class="g sm" onclick="ui.ficha.sue.editEmp='${e.id}';draw()">Editar</button> <button class="g sm" onclick="bajaEmp('${e.id}')">${e.activo?'Dar de baja':'Reactivar'}</button> <button class="dng sm" onclick="quitarEmp('${e.id}')">Quitar</button></td></tr>`).join(''):'<tr><td colspan="5" style="color:var(--mut)">Todavía no hay empleados. Agregá el primero con su nombre y WhatsApp.</td></tr>'}</tbody></table></div>`;
+  const filas=act.map(e=>{
+    const p=pays.find(x=>x.employee_id===e.id),w=waNum(e.whatsapp),ok=w&&w.ok;
+    const sub=lbl=>`<label class="g sm">${lbl}<input type="file" accept="application/pdf,.pdf" hidden onchange="subirRecibo('${e.id}',this)"></label>`;
+    return `<tr><td>${esc(e.nombre)}<span class="s">${e.cuil?cuitF(e.cuil):''}</span></td>
+    <td>${p?`<span class="tag" style="background:var(--grn);color:var(--grnt)">Cargado</span><span class="s">${esc(p.nombre_archivo)}</span><div class="row" style="gap:4px;margin-top:4px"><button class="g sm" onclick="verArchivo('${p.path}')">Ver</button>${sub('Reemplazar')}<button class="g sm" onclick="quitarRecibo('${p.id}')">Quitar</button></div>`:`<span class="tag" style="background:var(--amb);color:var(--ambt)">Falta</span> ${sub('Subir PDF')}`}</td>
+    <td>${p?(ok?`<div class="row" style="gap:4px"><button class="b sm" onclick="enviarReciboWa('${p.id}')">WhatsApp con enlace</button>${puedeCompartir?`<button class="g sm" onclick="compartirRecibo('${p.id}')">Compartir archivo</button>`:''}<button class="g sm" onclick="descargarRecibo('${p.id}')">Descargar</button></div>${p.wa_preparado_at?`<span class="s">WhatsApp preparado el ${new Date(p.wa_preparado_at).toLocaleDateString('es-AR')}</span>`:''}`:`<span class="s">${e.whatsapp?'Revisá el WhatsApp del empleado':'Cargá el WhatsApp del empleado'}</span><button class="g sm" onclick="descargarRecibo('${p.id}')">Descargar</button>`):'<span class="s">Subí primero el recibo</span>'}</td></tr>`}).join('');
+  return `<h3 style="margin-top:0">Empleados</h3>${form}${empT}
+  <h3>Recibos de ${mesAnio(s.periodo+'-01')}</h3>
+  <div class="card row" style="margin-bottom:12px">
+   <label>Período<br><input type="month" value="${s.periodo}" onchange="ui.ficha.sue.periodo=this.value;draw()"></label>
+   <label>Tipo de recibo<br><select onchange="ui.ficha.sue.tipo=this.value;draw()">${TIPOS_REC.map(t=>`<option ${s.tipo===t?'selected':''}>${t}</option>`).join('')}</select></label>
+   <label>El enlace vence en<br><select onchange="ui.ficha.sue.horas=Number(this.value)">${[[24,'24 horas'],[72,'3 días'],[168,'7 días']].map(([h,t])=>`<option value="${h}" ${s.horas===h?'selected':''}>${t}</option>`).join('')}</select></label>
+   <label class="g">Subir varios PDF a la vez<input type="file" accept="application/pdf,.pdf" multiple hidden onchange="subirVarios(this)"></label></div>
+  <p class="s" style="margin-bottom:10px">Para subir varios juntos, cada archivo tiene que llevar en su nombre el CUIL o el nombre y apellido del empleado.</p>
+  <div class="tw" style="margin-bottom:14px"><table><thead><tr><th>Empleado</th><th>Recibo</th><th>Enviar por WhatsApp</th></tr></thead><tbody>${act.length?filas:'<tr><td colspan="3" style="color:var(--mut)">No hay empleados activos.</td></tr>'}</tbody></table></div>
+  <label>Mensaje con enlace (podés editarlo; {nombre}, {periodo}, {empresa}, {link} y {horas} se completan solos)<textarea rows="5" oninput="ui.ficha.sue.msg=this.value">${esc(s.msg)}</textarea></label>
+  <p class="s" style="margin-top:8px">"WhatsApp con enlace" arma un enlace privado al recibo que funciona hasta que vence: quien lo tenga puede abrirlo. WhatsApp no deja adjuntar archivos desde un enlace; con "Compartir archivo" (celular) o "Descargar" lo adjuntás vos. La app no sabe si el mensaje se envió: solo anota que lo preparaste.</p>`;
+}
+async function recargarSueldos(){
+  const id=ui.ficha.id,[em,ps]=await Promise.all([sb.from('employees').select('*').eq('client_id',id).order('nombre'),sb.from('payslips').select('*').eq('client_id',id)]);
+  if(em.error)throw em.error;if(ps.error)throw ps.error;ui.ficha.emp=em.data;ui.ficha.pay=ps.data;
+}
+async function saveEmp(e){
+  e.preventDefault();const fd=new FormData(e.target),f=ui.ficha,s=sueState(f),t=k=>String(fd.get(k)||'').trim()||null,cuil=String(fd.get('cuil')||'').replace(/\D/g,''),bad=m=>{flash(m,'err');draw();return false};
+  if(cuil&&cuil.length!==11)return bad('El CUIL debe tener 11 dígitos (o dejalo vacío).');
+  if(t('whatsapp')){const w=waNum(t('whatsapp'));if(!w||!w.ok)return bad('Revisá el WhatsApp: código de área + número, sin 0 ni 15 (por ejemplo 3537 412345).')}
+  const row={client_id:f.id,nombre:String(fd.get('nombre')).trim(),cuil:cuil||null,whatsapp:t('whatsapp'),cargo:t('cargo')};
+  const {data,error}=await (s.editEmp?sb.from('employees').update(row).eq('id',s.editEmp).select('id'):sb.from('employees').insert(row).select('id'));
+  if(error)flash(/cuil_uniq|duplicate/i.test(error.message)?'Ya hay un empleado con ese CUIL en este cliente.':errTxt(error),'err');
+  else if(s.editEmp&&!data.length)flash('No se pudo guardar el empleado.','err');
+  else{s.editEmp=null;try{await recargarSueldos();flash('Empleado guardado.')}catch(x){flash(errTxt(x),'err')}}
+  draw();return false;
+}
+async function bajaEmp(id){
+  const e=ui.ficha.emp.find(x=>x.id===id),{data,error}=await sb.from('employees').update({activo:!e.activo}).eq('id',id).select('id');
+  if(error)flash(errTxt(error),'err');else if(!data.length)flash('No se pudo actualizar.','err');else{try{await recargarSueldos();flash(e.activo?'Empleado dado de baja.':'Empleado reactivado.')}catch(x){flash(errTxt(x),'err')}}
+  draw();
+}
+async function quitarEmp(id){
+  const e=ui.ficha.emp.find(x=>x.id===id),ps=ui.ficha.pay.filter(p=>p.employee_id===id);
+  if(!confirm(`¿Eliminar a ${e.nombre}?${ps.length?`\nSe eliminan también sus ${ps.length} recibo(s) y los archivos.`:''}\nSi solo dejó de trabajar, conviene darlo de baja.`))return;
+  if(ps.length){const r=await sb.storage.from('clientes').remove(ps.map(p=>p.path));if(r.error){flash(errTxt(r.error),'err');return draw()}}
+  const {error}=await sb.from('employees').delete().eq('id',id);
+  if(error)flash(errTxt(error),'err');else{try{await recargarSueldos();flash('Empleado eliminado.')}catch(x){flash(errTxt(x),'err')}}
+  draw();
+}
+/** Sube el PDF y registra el recibo del empleado para el período y tipo elegidos. Devuelve un mensaje de error o null. */
+async function guardarRecibo(e,file){
+  const err=await esPdf(file);if(err)return err;
+  const s=sueState(ui.ficha),path=`${ui.ficha.id}/recibos/${e.id}/${s.periodo}-${TIPO_SLUG[s.tipo]}.pdf`;
+  const up=await sb.storage.from('clientes').upload(path,file,{contentType:'application/pdf',upsert:true});if(up.error)return 'No se pudo subir: '+errTxt(up.error);
+  const {error}=await sb.from('payslips').upsert({employee_id:e.id,client_id:ui.ficha.id,periodo:s.periodo+'-01',tipo:s.tipo,nombre_archivo:file.name,path,size_bytes:file.size,subido_by:me.id,subido_at:new Date().toISOString(),wa_preparado_at:null,wa_preparado_by:null},{onConflict:'employee_id,periodo,tipo'});
+  return error?errTxt(error):null;
+}
+async function subirRecibo(empId,inp){
+  const f=inp.files[0];inp.value='';const e=ui.ficha.emp.find(x=>x.id===empId),msg=await guardarRecibo(e,f);
+  if(msg)flash(msg,'err');else{try{await recargarSueldos();flash(`Recibo de ${e.nombre} cargado.`)}catch(x){flash(errTxt(x),'err')}}
+  draw();
+}
+async function subirVarios(inp){
+  const files=[...inp.files];inp.value='';const act=ui.ficha.emp.filter(e=>e.activo),ok=[],mal=[],vistos=new Set();
+  for(const f of files){
+    const e=empDeArchivo(f.name,act);
+    if(!e){mal.push(f.name+' (sin coincidencia)');continue}
+    if(vistos.has(e.id)){mal.push(f.name+' (ya hay otro archivo de '+e.nombre+')');continue}
+    vistos.add(e.id);const m=await guardarRecibo(e,f);m?mal.push(f.name+' ('+m+')'):ok.push(e.nombre);
+  }
+  try{await recargarSueldos()}catch(x){flash(errTxt(x),'err');return draw()}
+  flash(`Se cargaron ${ok.length} recibo(s).${mal.length?' No se cargaron: '+mal.join('; ')+'.':''}`,mal.length?(ok.length?'warn':'err'):'ok');draw();
+}
+async function quitarRecibo(id){
+  const p=ui.ficha.pay.find(x=>x.id===id);if(!p||!confirm('¿Quitar este recibo? Se elimina el archivo.'))return;
+  const r=await sb.storage.from('clientes').remove([p.path]);if(r.error){flash(errTxt(r.error),'err');return draw()}
+  const {error}=await sb.from('payslips').delete().eq('id',id);
+  if(error)flash(errTxt(error),'err');else{try{await recargarSueldos();flash('Recibo quitado.')}catch(x){flash(errTxt(x),'err')}}
+  draw();
+}
+async function marcarPrep(id){
+  const {error}=await sb.from('payslips').update({wa_preparado_at:new Date().toISOString(),wa_preparado_by:me.id}).eq('id',id).select('id');
+  if(!error){try{await recargarSueldos()}catch(x){}}
+  draw();
+}
+/** Abre WhatsApp con el mensaje y un enlace privado y temporal al recibo. */
+async function enviarReciboWa(id){
+  const f=ui.ficha,s=sueState(f),p=f.pay.find(x=>x.id===id),e=f.emp.find(x=>x.id===p.employee_id),c=ui.clients.find(x=>x.id===f.id),w=waNum(e.whatsapp);
+  if(!w||!w.ok){flash(`Revisá el WhatsApp de ${e.nombre}: código de área + número, sin 0 ni 15.`,'err');return draw()}
+  const win=window.open('about:blank','_blank');
+  const {data,error}=await sb.storage.from('clientes').createSignedUrl(p.path,s.horas*3600,{download:p.nombre_archivo});
+  if(error||!data){if(win)win.close();flash('No se pudo generar el enlace: '+(error?errTxt(error):'sin respuesta'),'err');return draw()}
+  const url='https://wa.me/'+w.num+'?text='+encodeURIComponent(armarRec(s.msg,c,e,p.periodo.slice(0,7),data.signedUrl,s.horas));
+  if(!win){flash('El navegador bloqueó la ventana emergente. Permitila para esta página e intentá de nuevo.','warn');return draw()}
+  win.location.href=url;await marcarPrep(id);
+}
+async function descargarRecibo(id){
+  const p=ui.ficha.pay.find(x=>x.id===id),{data,error}=await sb.storage.from('clientes').createSignedUrl(p.path,120,{download:p.nombre_archivo});
+  if(error||!data){flash('No se pudo descargar: '+(error?errTxt(error):'sin respuesta'),'err');return draw()}
+  const a=document.createElement('a');a.href=data.signedUrl;a.download=p.nombre_archivo;document.body.appendChild(a);a.click();a.remove();
+}
+async function compartirRecibo(id){
+  const f=ui.ficha,p=f.pay.find(x=>x.id===id),e=f.emp.find(x=>x.id===p.employee_id),c=ui.clients.find(x=>x.id===f.id);
+  try{
+    const {data,error}=await sb.storage.from('clientes').createSignedUrl(p.path,120);if(error||!data)throw error||new Error('sin respuesta');
+    const file=new File([await (await fetch(data.signedUrl)).blob()],p.nombre_archivo,{type:'application/pdf'});
+    if(!navigator.canShare||!navigator.canShare({files:[file]})){flash('Este dispositivo no permite compartir archivos desde el navegador. Usá "WhatsApp con enlace" o "Descargar".','warn');return draw()}
+    await navigator.share({files:[file],text:armarRec(MSG_REC_ARCH,c,e,p.periodo.slice(0,7),null,0),title:p.nombre_archivo});await marcarPrep(id);
+  }catch(x){if(x.name!=='AbortError'){flash('No se pudo compartir: '+(x.message||x),'err');draw()}}
 }
 init();
 </script>
