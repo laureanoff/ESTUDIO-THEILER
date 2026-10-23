@@ -162,7 +162,7 @@ function planImport(parsed,meta,existing,ctx){
 
 
 /* ===== Supabase ===== */
-const APP_VERSION='25/10/2026, avisos, cumplimiento, informes y reclamos';
+const APP_VERSION='26/10/2026, liquidaciones de granos, hacienda y leche';
 const SUPABASE_URL='https://tugdqcoxcpsiynlvnqdu.supabase.co';
 const SUPABASE_KEY='sb_publishable_2-96VeZrsNNftRXkzA1l_A_YG7ThJrL'; // clave pública: los permisos los da la base (RLS)
 const sb=(typeof supabase!=='undefined')?supabase.createClient(SUPABASE_URL,SUPABASE_KEY):null;
@@ -1241,7 +1241,7 @@ function irSueldos(cid,per){ui.cid=cid;ui.sueCfg=ui.sueCfg||{periodo:workPeriod(
 const NC_SET=new Set([3,8,13,53,203,208,213]),esNC=t=>NC_SET.has(Number(t));
 const sgnVal=(t,x)=>{const n=Number(x)||0;return esNC(t)?-Math.abs(n):n};
 const TIPOS_CMP=[[1,'Factura A'],[6,'Factura B'],[11,'Factura C'],[51,'Factura M'],[2,'Nota de Débito A'],[7,'Nota de Débito B'],[12,'Nota de Débito C'],[3,'Nota de Crédito A'],[8,'Nota de Crédito B'],[13,'Nota de Crédito C'],[53,'Nota de Crédito M'],[201,'Factura de Crédito MiPyME A'],[203,'Nota de Crédito MiPyME A']];
-const tipoNombre=t=>Number(t)===9001?'Liquidación primaria de granos':Number(t)===9002?'Liquidación de venta (hacienda)':(TIPOS_CMP.find(x=>x[0]===Number(t))||[0,'Tipo '+t])[1];
+const tipoNombre=t=>Number(t)===9001?'Liquidación primaria de granos':Number(t)===9002?'Liquidación de venta (hacienda)':Number(t)===9003?'Liquidación única de leche':(TIPOS_CMP.find(x=>x[0]===Number(t))||[0,'Tipo '+t])[1];
 const ALIC=[21,10.5,27,5,2.5,0];
 /** Desglose por alícuota a partir de las columnas originales de ARCA ("Neto Grav. IVA 21%", "IVA 21%"). */
 function alicDeRaw(raw){
@@ -1833,14 +1833,26 @@ function vAdmin(){
 }
 window.addEventListener('beforeunload',e=>{if(ui.bk&&ui.bk.corriendo){e.preventDefault();e.returnValue=''}});
 
-/* ===== Liquidaciones de granos y de venta de hacienda (PDF) ===== */
+/* ===== Liquidaciones de granos, hacienda y leche (PDF) ===== */
 /* No hay Excel de ARCA para estas liquidaciones: se guarda el PDF y se leen los importes del texto del PDF.
    La lectura es ASISTIDA: nunca se guarda nada sin que la persona revise los importes contra el PDF. */
-const LIQ={liq_granos:{cod:9001,nombre:'Liquidación primaria de granos'},liq_venta:{cod:9002,nombre:'Liquidación de venta (hacienda)'}};
-const LIQ_MONTO=/-?\d{1,3}(?:\.\d{3})+,\d{2}|-?\d+,\d{2}|-?\d{1,3}(?:,\d{3})+\.\d{2}|-?\d+\.\d{2}(?!\d)/g;
-const liqNum=s=>{s=s.trim();const neg=s.startsWith('-');s=s.replace('-','');const v=/,\d{2}$/.test(s)?Number(s.replace(/\./g,'').replace(',','.')):Number(s.replace(/,/g,''));return neg?-v:v};
+const LIQ={liq_granos:{cod:9001,nombre:'Liquidación primaria de granos'},liq_venta:{cod:9002,nombre:'Liquidación de venta (hacienda)'},liq_leche:{cod:9003,nombre:'Liquidación única de leche'}};
 const liqNorm=s=>String(s).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
 const liqPlata=n=>Math.round((n+Number.EPSILON)*100)/100;
+/** Importes con dos decimales, en formato argentino (1.234,56) o inglés (1,234.56). Ignora porcentajes y números sin decimales. */
+function liqMontos(s){
+  const t=String(s).replace(/\d{1,3}(?:[.,]\d{1,3})?\s*%/g,' '),out=[],re=/-?\d[\d.,]*\d|-?\d/g;let m;
+  while((m=re.exec(t))){const k=m[0];let v=null;
+    if(/^-?\d{1,3}(,\d{3})+\.\d{2}$/.test(k))v=Number(k.replace(/,/g,''));
+    else if(/^-?\d{1,3}(\.\d{3})+,\d{2}$/.test(k))v=Number(k.replace(/\./g,'').replace(',','.'));
+    else if(/^-?\d+\.\d{2}$/.test(k))v=Number(k);
+    else if(/^-?\d+,\d{2}$/.test(k))v=Number(k.replace(',','.'));
+    if(v!==null&&isFinite(v))out.push(v)}
+  return out;
+}
+const liqUlt=a=>a.length?a[a.length-1]:null;
+const liqBuscar=(L,re,desde)=>{for(let i=desde||0;i<L.length;i++)if(re.test(liqNorm(L[i])))return i;return -1};
+const liqTasa=(neto,iva)=>{if(!(neto>0))return null;const t=iva/neto*100;return [10.5,21,27,5,2.5].find(x=>Math.abs(x-t)<0.05)||null};
 
 function liqLineas(items){
   const filas=[];
@@ -1858,80 +1870,148 @@ async function pdfTexto(file){
   return lineas;
 }
 
-/** Busca neto gravado, IVA, total, fecha, número y contraparte. Valida: IVA = neto x alícuota y neto + IVA = total. */
-function liqExtraer(lineas,cuitCliente){
+/* ---- Reconocer el tipo de liquidación por su título ---- */
+function liqPerfil(L){
+  const t=liqNorm(L.join(' '));
+  if(/liquidacion primaria de granos/.test(t))return 'liq_granos';
+  if(/liquidacion unica|comercial impositiva/.test(t))return 'liq_leche';
+  if(/cuenta de venta y liquido producto|hacienda/.test(t))return 'liq_venta';
+  return null;
+}
+const liqFecha=(L,re)=>{const i=liqBuscar(L,re||/fecha/);const s=i>=0?(L[i].match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/)||[])[0]:null;return s?pDate(s):null};
+
+/* ---- Lectura genérica (cuando no se reconoce el tipo): busca importes con etiquetas típicas y los valida entre sí ---- */
+function liqGenerico(lineas,cuitCliente){
   const RATES=[10.5,21,27,5,2.5],cand=[],avisos=[];
   lineas.forEach((l,i)=>{
-    const n=liqNorm(l),sinPct=l.replace(/\d{1,2}(?:[.,]\d{1,2})?\s*%/g,' '),m=(sinPct.match(LIQ_MONTO)||[]).map(liqNum).filter(x=>isFinite(x));if(!m.length)return;
-    const roles=[];
-    if(/neto\s*gravado|importe\s*neto|subtotal|base\s*imponible|total\s*bruto|importe\s*bruto|precio\s*neto|valor\s*(de\s*(la\s*)?)?(operacion|hacienda|granos|venta)|total\s*operacion|operacion\s*gravada|\bneto\b/.test(n)&&!/a\s*(cobrar|pagar)|retenc|percepc|deduc/.test(n))roles.push('neto');
+    const n=liqNorm(l),m=liqMontos(l);if(!m.length)return;const roles=[];
+    if(/neto\s*gravado|importe\s*neto|subtotal|base\s*imponible|total\s*bruto|importe\s*bruto|precio\s*neto|total\s*operacion|operacion\s*gravada|\bneto\b/.test(n)&&!/a\s*(cobrar|pagar)|retenc|percepc|deduc/.test(n))roles.push('neto');
     if(/\biva\b/.test(n)&&!/retenc|percepc|rg\s*\d|inscripto|exento|no\s*responsable/.test(n))roles.push('iva');
-    if((/importe\s*total|total\s*liquidacion|total\s*general|total\s*a\s*(pagar|cobrar)|neto\s*a\s*(cobrar|pagar)|liquido\s*(final|producto|a\s*cobrar)?|total\s*comprobante|^total\b|\btotal\s*[:$]?\s*[\d.-]/.test(n))&&!/iva|retenc|deduc|percepc|gastos|comision/.test(n))roles.push('total');
+    if((/importe\s*total|total\s*liquidacion|total\s*general|total\s*a\s*(pagar|cobrar)|total\s*comprobante|^total\b|\btotal\s*[:$]?\s*[\d.-]/.test(n))&&!/iva|retenc|deduc|percepc|gastos|comision/.test(n))roles.push('total');
     const a=n.match(/(\d{1,2}(?:[.,]\d{1,2})?)\s*%/);
     if(roles.length)cand.push({i,linea:l,montos:m,roles,alic:a?Number(a[1].replace(',','.')):null});
   });
   const netos=cand.filter(c=>c.roles.includes('neto')),ivas=cand.filter(c=>c.roles.includes('iva')),tots=cand.filter(c=>c.roles.includes('total'));
   let mejor=null;
   for(const cn of netos)for(const nv of cn.montos)for(const ci of ivas)for(const iv of ci.montos){
-    const tasas=ci.alic?[ci.alic]:cn.alic?[cn.alic]:RATES;
-    for(const t of tasas){
-      if(nv>0&&iv>0&&Math.abs(nv*t/100-iv)<=Math.max(1,nv*0.0005)){
-        let tot=null;for(const ct of tots)for(const tv of ct.montos)if(Math.abs(nv+iv-tv)<=1.5)tot=tv;
-        const score=(tot!==null?2:0)+(ci.alic?1:0);
-        if(!mejor||score>mejor.score)mejor={neto:nv,iva:iv,alic:t,total:tot,score}}}}
-  const r={neto:null,iva:null,alic:null,total:null,confianza:'baja',avisos,candidatos:cand.slice(0,16).map(c=>({linea:c.linea.slice(0,110),montos:c.montos.slice(0,4),roles:c.roles}))};
-  if(mejor){Object.assign(r,{neto:mejor.neto,iva:mejor.iva,alic:mejor.alic,total:mejor.total,confianza:mejor.total!==null?'alta':'media'});
-    if(mejor.total===null){r.total=liqPlata(mejor.neto+mejor.iva);avisos.push('No se encontró el total en el PDF: se calculó como neto más IVA.')}}
-  else{
-    const pick=(arr,f)=>{const c=arr[0];return c?f(c.montos):null};
-    r.neto=pick(netos,m=>Math.max(...m));r.iva=pick(ivas,m=>Math.max(...m));r.total=pick(tots,m=>Math.max(...m));r.alic=(ivas[0]&&ivas[0].alic)||null;
-    avisos.push('No se pudo confirmar que el IVA coincida con el neto por la alícuota: revisá los importes con mucho cuidado.')}
-  // fecha
-  const fechas=[];lineas.forEach(l=>{const re=/(\d{1,2})\/(\d{1,2})\/(\d{4})/g;let x;while((x=re.exec(l)))fechas.push({f:pDate(x[0]),pref:/fecha|emision|emitid/.test(liqNorm(l))})});
-  const fv=fechas.filter(x=>x.f);r.fecha=(fv.find(x=>x.pref)||fv[0]||{}).f||null;
-  // número: punto de venta y número, o COE de 12 dígitos
+    for(const t of (ci.alic?[ci.alic]:cn.alic?[cn.alic]:RATES)){
+      if(nv>0&&iv>0&&Math.abs(nv*t/100-iv)<=Math.max(1,nv*0.0005)){let tot=null;for(const ct of tots)for(const tv of ct.montos)if(Math.abs(nv+iv-tv)<=1.5)tot=tv;
+        const score=(tot!==null?2:0)+(ci.alic?1:0);if(!mejor||score>mejor.score)mejor={neto:nv,iva:iv,alic:t,total:tot,score}}}}
+  const r={neto:null,iva:null,alic:null,total:null,avisos,candidatos:cand.slice(0,16).map(c=>({linea:c.linea.slice(0,110),montos:c.montos.slice(0,4),roles:c.roles}))};
+  if(mejor){Object.assign(r,{neto:mejor.neto,iva:mejor.iva,alic:mejor.alic,total:mejor.total});if(mejor.total===null){r.total=liqPlata(mejor.neto+mejor.iva);avisos.push('No se encontró el total en el PDF: se calculó como neto más IVA.')}}
+  else{const pick=(arr)=>arr[0]?Math.max(...arr[0].montos):null;r.neto=pick(netos);r.iva=pick(ivas);r.total=pick(tots);r.alic=(ivas[0]&&ivas[0].alic)||null}
+  const todasF=(lineas.join(' ').match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/)||[])[0];
+  r.fecha=liqFecha(lineas)||(todasF?pDate(todasF):null);
   r.pv=null;r.num=null;
   for(const l of lineas){const m=l.match(/(\d{4,5})\s*[-–]\s*(\d{8})\b/);if(m){r.pv=Number(m[1]);r.num=Number(m[2]);break}}
-  if(r.num===null)for(const l of lineas){const m=liqNorm(l).match(/coe\D{0,12}(\d{12})/);if(m){r.pv=0;r.num=Number(m[1]);r.coe=true;break}}
-  // contraparte: primer CUIT que no sea el del cliente
-  const cuits=[];lineas.forEach((l,i)=>{const re=/\b(20|23|24|27|30|33|34)[- ]?(\d{8})[- ]?(\d)\b/g;let x;while((x=re.exec(l))){const c=x[1]+x[2]+x[3];if(c!==cuitCliente&&!cuits.some(y=>y.c===c))cuits.push({c,i,l})}});
+  if(r.num===null)for(const l of lineas){const m=liqNorm(l).match(/c\.?o\.?e\.?\D{0,12}(\d{12})/);if(m){r.pv=0;r.num=Number(m[1]);r.coe=true;break}}
+  const cuits=[];lineas.forEach((l,i)=>{const re=/\b(20|23|24|27|30|33|34)[- .]?(\d{8})[- .]?(\d)\b/g;let x;while((x=re.exec(l))){const c=x[1]+x[2]+x[3];if(c!==cuitCliente&&!cuits.some(y=>y.c===c))cuits.push({c,i,l})}});
   r.cuit=cuits[0]?cuits[0].c:null;
   if(cuits[0]){const t=cuits[0].l.split(/cuit/i)[0].replace(/^.*?:\s*/,'').trim();if(t.length>=3&&t.length<=70&&!/\d{6,}/.test(t))r.nombre=t}
-  if(!lineas.length)avisos.unshift('El PDF no tiene texto que se pueda leer (parece una imagen escaneada). Cargá los importes a mano.');
+  return r;
+}
+
+/* ---- Lectura específica de cada tipo ---- */
+/** Liquidación primaria de granos: el cliente es el VENDEDOR. IVA de la operación = débito fiscal; trae retenciones de IVA y Ganancias. */
+function liqGranos(L,cuitCli,razonCli){
+  const d={},ret=[],info=[];
+  const iC=liqBuscar(L,/c\.?o\.?e\.?\s*:/);if(iC>=0){const m=L[iC].match(/(\d{12})/);if(m){d.pv=0;d.num=Number(m[1]);d.coe=true}}
+  d.fecha=liqFecha(L,/condiciones de la operacion/)||liqFecha(L,/fecha/);
+  const iH=liqBuscar(L,/subtotal.*importe iva|subtotal.*alicuota/);
+  if(iH>=0&&L[iH+1]){const v=liqMontos(L[iH+1]);if(v.length>=4){d.neto=v[1];d.iva=v[2];d.total=v[3]}const t=L[iH+1].match(/\$\s?[\d.,]+\s+(\d{1,2}(?:[.,]\d{1,2})?)\s+\$/);d.alic=t?Number(t[1].replace(',','.')):liqTasa(d.neto,d.iva)}
+  const rg=liqBuscar(L,/ret\.?\s*ganancias/);if(rg>=0){const v=liqMontos(L[rg]);if(v.length)ret.push({tipo:'retencion',impuesto:'GANANCIAS',importe:liqUlt(v),etq:'Retención de Ganancias'})}
+  const ri=liqBuscar(L,/retencion iva/);if(ri>=0){const v=liqMontos(L[ri]);if(v.length)ret.push({tipo:'retencion',impuesto:'IVA',importe:liqUlt(v),etq:'Retención de IVA'})}
+  const pe=liqBuscar(L,/total percepciones/);if(pe>=0){const v=liqMontos(L[pe]);if(v.length>=2&&v[1]>0)ret.push({tipo:'percepcion',impuesto:'IVA',importe:v[1],etq:'Percepciones'})}
+  const iD=liqBuscar(L,/concepto detalle.*deducciones/),iR=liqBuscar(L,/^retenciones$/,iD>=0?iD:0);
+  if(iD>=0&&iR>iD){let s=0;for(let i=iD+1;i<iR;i++){const v=liqMontos(L[i]);if(v.length>=3)s+=v[v.length-2]}if(s>0)info.push(`El IVA de las deducciones (comisión y gastos) es de ${money(liqPlata(s))}: es crédito fiscal y entra por el Libro IVA de compras.`)}
+  const rg4=liqBuscar(L,/iva rg 4310/);if(rg4>=0){const m=L[rg4].match(/IVA RG 4310\/2018:\s*\$\s*([\d.,]+)/i);if(m){const v=liqMontos(m[1]);if(v.length)info.push(`IVA RG 4310/2018: ${money(v[0])} (informativo: se paga aparte, no es una retención).`)}}
+  const iT=liqBuscar(L,/^comprador vendedor/),rs=[];for(let i=Math.max(0,iT);i<L.length&&rs.length<2;i++)if(/^razon social/.test(liqNorm(L[i])))rs.push(i);
+  if(rs.length){const mio=razonCli?liqNorm(razonCli).slice(0,14):'',pri=rs.find(i=>!mio||!liqNorm(L[i]).includes(mio));if(pri!==undefined){let n=L[pri].replace(/^[^:]*:\s*/,'').trim();const sig=L[rs[rs.length-1]+1];if(sig&&!/^(domicilio|localidad|c\.u\.i\.t|i\.v\.a|ingresos|razon|actuo)/.test(liqNorm(sig))&&sig.length<60)n+=' '+sig.trim();d.nombre=n}}
+  const tOp=liqBuscar(L,/total operacion/),totalOp=tOp>=0?liqMontos(L[tOp])[0]:null;
+  return {datos:d,retenciones:ret,info,cruce:()=>totalOp===null||totalOp===undefined||d.total===undefined?null:Math.abs(totalOp-d.total)<=1.5};
+}
+/** Cuenta de venta y líquido producto (hacienda): el cliente es el productor. IVA s/bruto = débito; IVA s/gastos = crédito. */
+function liqHacienda(L,cuitCli){
+  const d={},info=[];
+  const iN=liqBuscar(L,/(\d{4,5})\s*-\s*(\d{8})/);if(iN>=0){const m=L[iN].match(/(\d{4,5})\s*-\s*(\d{8})/);d.pv=Number(m[1]);d.num=Number(m[2])}
+  const iF=L.findIndex(l=>/^fecha\s+\d{1,2}\/\d{1,2}\/\d{4}/i.test(l));d.fecha=iF>=0?pDate(L[iF].match(/\d{1,2}\/\d{1,2}\/\d{4}/)[0]):liqFecha(L,/fecha/);
+  const g=re=>{const i=liqBuscar(L,re);if(i<0)return null;const v=liqMontos(L[i].replace(/^.*datos adicionales:.*?(importe bruto)/i,'$1'));return v.length?liqUlt(v):null};
+  const bruto=g(/importe bruto/),ivaB=g(/iva s\/bruto/),gastos=g(/total gastos/),ivaG=g(/iva s\/gastos/),netoF=g(/importe neto/);
+  if(bruto!==null&&ivaB!==null){d.neto=bruto;d.iva=ivaB;d.total=liqPlata(bruto+ivaB);d.alic=liqTasa(bruto,ivaB)}
+  const iC=L.findIndex(l=>/\b\d{11}\s*-\s*[^\d]+?\s+\d/.test(l)&&/kg|cabez/i.test(l));
+  if(iC>=0){const m=L[iC].match(/\b(\d{11})\s*-\s*([^\d]+?)\s+\d/);if(m&&m[1]!==cuitCli){d.cuit=m[1];d.nombre=m[2].trim()}}
+  if(gastos!==null&&ivaG!==null)info.push(`La comisión y los gastos suman ${money(gastos)} con IVA de ${money(ivaG)}: es crédito fiscal y entra por el Libro IVA de compras.`);
+  const cr=(bruto!==null&&netoF!==null)?Math.abs(bruto+(ivaB||0)-(gastos||0)-(ivaG||0)-netoF)<=1.5:null;
+  return {datos:d,retenciones:[],info,cruce:()=>cr};
+}
+/** Liquidación única comercial impositiva (leche): el cliente es el tambero. Total liquidación = neto gravado; la percepción de IVA es a favor. */
+function liqLeche(L,cuitCli){
+  const d={},ret=[],info=[];
+  d.fecha=liqFecha(L,/fecha comprobante/)||liqFecha(L,/fecha/);
+  const iN=liqBuscar(L,/n\u00b0?:?\s*\d{4,5}\s*-\s*\d{8}/);if(iN>=0){const m=L[iN].match(/(\d{4,5})\s*-\s*(\d{8})/);if(m){d.pv=Number(m[1]);d.num=Number(m[2])}}
+  const iT=liqBuscar(L,/^total liquidacion/);if(iT>=0){const v=liqMontos(L[iT]);if(v.length)d.neto=liqUlt(v)}
+  const iA=liqBuscar(L,/alicuota iva.*importe iva/);if(iA>=0){const v=liqMontos(L[iA]);if(v.length>=2){d.alic=v[0];d.iva=liqUlt(v)}}
+  if(d.neto!==undefined&&d.iva!==undefined)d.total=liqPlata(d.neto+d.iva);
+  const iP=liqBuscar(L,/percepcion de iva/);if(iP>=0){const v=liqMontos(L[iP]);if(v.length){const imp=liqUlt(v);if(imp>0)ret.push({tipo:'percepcion',impuesto:'IVA',importe:imp,etq:'Percepción de IVA'+(v.length>=3?' ('+String(v[1]).replace('.',',')+'%)':'')})}}
+  const iNL=liqBuscar(L,/^neto liquidacion/),netoLiq=iNL>=0?liqUlt(liqMontos(L[iNL])):null,percep=ret.reduce((a,x)=>a+x.importe,0);
+  const iE=liqBuscar(L,/razon social:.*cuit/);if(iE>=0){const m=L[iE].match(/Raz[oó]n Social:\s*(.+?)\s+CUIT:\s*(\d{11})/i);if(m&&m[2]!==cuitCli){d.nombre=m[1].trim();d.cuit=m[2]}}
+  const cr=(d.neto!==undefined&&d.iva!==undefined&&netoLiq!==null)?Math.abs(d.neto+d.iva-percep-netoLiq)<=1.5:null;
+  if(netoLiq!==null)info.push(`El "Neto liquidación" del PDF (${money(netoLiq)}) ya descuenta la percepción de IVA: para el IVA se usa el "Total liquidación" como neto gravado.`);
+  return {datos:d,retenciones:ret,info,cruce:()=>cr};
+}
+
+/** Lectura completa: reconoce el tipo, lee por tipo y valida (IVA = neto x alícuota; el total cierra; el PDF menciona al cliente). */
+function liqExtraer(lineas,cuitCliente,razonCliente){
+  const perfil=liqPerfil(lineas),gen=liqGenerico(lineas,cuitCliente),fn={liq_granos:liqGranos,liq_venta:liqHacienda,liq_leche:liqLeche}[perfil];
+  const r={...gen,perfil,retenciones:[],info:[],avisos:[...gen.avisos]};let cruce=null;
+  if(fn){const e=fn(lineas,cuitCliente,razonCliente);for(const [k,v] of Object.entries(e.datos))if(v!==null&&v!==undefined)r[k]=v;r.retenciones=e.retenciones||[];r.info=e.info||[];cruce=e.cruce?e.cruce():null;r.avisos=[]}
+  const okIva=r.neto>0&&r.iva>=0&&r.alic!==null&&r.alic!==undefined&&Math.abs(r.neto*r.alic/100-r.iva)<=Math.max(1,r.neto*0.0005);
+  const okTot=r.total!==null&&r.total!==undefined&&Math.abs(r.neto+r.iva-r.total)<=1.5;
+  r.confianza=okIva&&okTot&&cruce!==false?'alta':okIva?'media':'baja';
+  if(!fn&&r.confianza==='alta'&&gen.avisos.some(x=>/No se encontró el total/.test(x)))r.confianza='media';
+  if(fn&&cruce===false)r.avisos.push('El PDF tiene importes que no cierran entre sí: revisá el documento.');
+  if(!okIva)r.avisos.push('No se pudo confirmar que el IVA coincida con el neto por la alícuota: revisá los importes con mucho cuidado.');
+  if(!fn&&r.total!==null&&!okTot&&okIva)r.avisos.push('El total del PDF no coincide con neto más IVA.');
+  if(cuitCliente&&!lineas.join(' ').replace(/[-. ]/g,'').includes(cuitCliente))r.avisos.push('El PDF no menciona el CUIT del cliente elegido ('+cuitF(cuitCliente)+'): verificá que sea el cliente correcto.');
+  if(!lineas.length)r.avisos.unshift('El PDF no tiene texto que se pueda leer (parece una imagen escaneada). Cargá los importes a mano.');
   return r;
 }
 
 /* ---- Interfaz: se usa dentro de la sección Ventas ---- */
-const LQ=()=>ui.vta.liq||(ui.vta.liq={abierta:false,tipo:'liq_granos',datos:null,file:null,cand:[],avisos:[],confianza:null,leyendo:false});
-function liqAbrir(){const L=LQ();L.abierta=!L.abierta;if(!L.abierta){L.datos=null;L.file=null;L.cand=[];L.avisos=[]}draw()}
+const LQ=()=>ui.vta.liq||(ui.vta.liq={abierta:false,tipo:'liq_granos',datos:null,file:null,cand:[],avisos:[],info:[],ret:[],perfil:null,confianza:null,leyendo:false});
+function liqAbrir(){const L=LQ();L.abierta=!L.abierta;if(!L.abierta){L.datos=null;L.file=null;L.cand=[];L.avisos=[];L.info=[];L.ret=[]}draw()}
 async function liqPdf(inp){
   const L=LQ(),f=inp.files[0];inp.value='';if(!f)return;{const ex=exentoMsg(ui.vta.cid);if(ex){flash(ex,'err');return draw()}}
   const e=await esPdf(f);if(e){flash(e,'err');return draw()}
-  L.file=f;L.leyendo=true;L.avisos=[];L.cand=[];L.datos={fecha:'',pv:'',num:'',neto:'',iva:'',alic:'10.5',total:'',cuit:'',nombre:''};draw();
-  const cliente=ui.clients.find(c=>c.id===ui.vta.cid);
+  L.file=f;L.leyendo=true;L.avisos=[];L.info=[];L.ret=[];L.cand=[];L.perfil=null;L.datos={fecha:'',pv:'',num:'',neto:'',iva:'',alic:'10.5',total:'',cuit:'',nombre:''};draw();
+  const cliente=ui.clients.find(c=>c.id===ui.vta.cid),s=x=>x===null||x===undefined?'':String(x);
   try{
-    const lineas=await pdfTexto(f),r=liqExtraer(lineas,cliente?cliente.cuit:'');
-    L.datos={fecha:r.fecha||'',pv:r.pv===null?'':String(r.pv),num:r.num===null?'':String(r.num),neto:r.neto===null?'':String(r.neto),iva:r.iva===null?'':String(r.iva),alic:String(r.alic||L.datos.alic),total:r.total===null?'':String(r.total),cuit:r.cuit||'',nombre:r.nombre||''};
-    L.cand=r.candidatos;L.avisos=r.avisos;L.confianza=r.confianza;
+    const lineas=await pdfTexto(f),r=liqExtraer(lineas,cliente?cliente.cuit:'',cliente?cliente.razon_social:'');
+    L.datos={fecha:r.fecha||'',pv:s(r.pv),num:s(r.num),neto:s(r.neto),iva:s(r.iva),alic:String(r.alic||L.datos.alic),total:s(r.total),cuit:r.cuit||'',nombre:r.nombre||''};
+    L.cand=r.candidatos||[];L.avisos=r.avisos;L.info=r.info||[];L.confianza=r.confianza;L.perfil=r.perfil;
+    L.ret=(r.retenciones||[]).map(x=>({...x,sel:true}));
+    if(r.perfil)L.tipo=r.perfil;
   }catch(x){L.avisos=['No se pudo leer el PDF: '+(x.message||x)+' Cargá los importes a mano.'];L.confianza='baja'}
   L.leyendo=false;draw();
 }
 function liqCampo(k,v){const L=LQ();if(L.datos)L.datos[k]=String(v).trim()}
-function liqTipo(v){LQ().tipo=v}
+function liqTipo(v){LQ().tipo=v;draw()}
+function liqRetSel(i,v){LQ().ret[i].sel=v;draw()}
 function liqUsar(k,v){const L=LQ();L.datos[k]=String(v);draw()}
 function liqCalcIva(){const L=LQ(),n=pNum(L.datos.neto),a=Number(L.datos.alic);if(n===null){flash('Cargá primero el neto gravado.','err');return draw()}L.datos.iva=String(liqPlata(n*a/100));L.datos.total=String(liqPlata(n+n*a/100));draw()}
 function liqForm(){
   const L=LQ();if(!L.abierta)return '';const d=L.datos,col={alta:'ok',media:'warn',baja:'err'};
   const inp=(k,t,ph,extra)=>`<label>${t}<input value="${esc(d?d[k]:'')}" ${extra||''} placeholder="${ph||''}" onchange="liqCampo('${k}',this.value)"></label>`;
-  return `<div class="card" style="margin-bottom:14px"><b>Cargar liquidación de granos u hacienda (PDF)</b>
+  return `<div class="card" style="margin-bottom:14px"><b>Cargar liquidación de granos, hacienda o leche (PDF)</b>
   <p class="s" style="margin:4px 0 10px">Se guarda el PDF y se leen los importes del texto del PDF. Siempre revisá los importes contra el documento antes de guardar: la lectura puede equivocarse.</p>
-  <div class="fgrid"><label>Tipo de liquidación<select onchange="liqTipo(this.value)"><option value="liq_granos" ${L.tipo==='liq_granos'?'selected':''}>${LIQ.liq_granos.nombre}</option><option value="liq_venta" ${L.tipo==='liq_venta'?'selected':''}>${LIQ.liq_venta.nombre}</option></select></label>
+  <div class="fgrid"><label>Tipo de liquidación<select onchange="liqTipo(this.value)">${Object.entries(LIQ).map(([k,v])=>`<option value="${k}" ${L.tipo===k?'selected':''}>${v.nombre}</option>`).join('')}</select></label>
   <label>Archivo PDF<input type="file" accept="application/pdf,.pdf" onchange="liqPdf(this)"></label></div>
   ${L.leyendo?'<div class="msg info" style="margin-top:10px">Leyendo el PDF…</div>':''}
-  ${d&&!L.leyendo?`${L.confianza?`<div class="msg ${col[L.confianza]}" style="margin-top:10px">Lectura del PDF: confianza <b>${L.confianza}</b>. ${L.confianza==='alta'?'El IVA coincide con el neto por la alícuota y el total cierra.':L.confianza==='media'?'El IVA coincide con el neto por la alícuota, pero no se pudo confirmar el total.':'No se pudieron confirmar los importes.'}</div>`:''}
-    ${L.avisos.map(a=>`<div class="msg warn">${esc(a)}</div>`).join('')}
+  ${d&&!L.leyendo?`${L.perfil?`<div class="msg info" style="margin-top:10px">Se reconoció: <b>${LIQ[L.perfil].nombre}</b>.</div>`:''}${L.confianza?`<div class="msg ${col[L.confianza]}" style="margin-top:10px">Lectura del PDF: confianza <b>${L.confianza}</b>. ${L.confianza==='alta'?'El IVA coincide con el neto por la alícuota y el total cierra.':L.confianza==='media'?'El IVA coincide con el neto por la alícuota, pero el total no cierra del todo.':'No se pudieron confirmar los importes.'}</div>`:''}
+    ${L.avisos.map(a=>`<div class="msg warn">${esc(a)}</div>`).join('')}${L.info.map(a=>`<div class="msg info">${esc(a)}</div>`).join('')}
     <div class="fgrid" style="margin-top:10px">${inp('fecha','Fecha (AAAA-MM-DD)','2026-09-15')}${inp('pv','Punto de venta (0 si solo tiene COE)','0')}${inp('num','Número de liquidación o COE','')}
-      ${inp('neto','Neto gravado','0,00')}<label>Alícuota de IVA<select onchange="liqCampo('alic',this.value)">${ALIC.map(a=>`<option value="${a}" ${Number(d.alic)===a?'selected':''}>${String(a).replace('.',',')}%</option>`).join('')}</select></label>${inp('iva','IVA','0,00')}${inp('total','Total (opcional)','')}${inp('cuit','CUIT del comprador (opcional)','')}${inp('nombre','Nombre del comprador (opcional)','')}</div>
+      ${inp('neto','Neto gravado','0,00')}<label>Alícuota de IVA<select onchange="liqCampo('alic',this.value)">${ALIC.map(a=>`<option value="${a}" ${Number(d.alic)===a?'selected':''}>${String(a).replace('.',',')}%</option>`).join('')}</select></label>${inp('iva','IVA','0,00')}${inp('total','Total con IVA (opcional)','')}${inp('cuit','CUIT de la contraparte (opcional)','')}${inp('nombre','Nombre de la contraparte (opcional)','')}</div>
+    ${L.ret.length?`<div class="card" style="margin-top:10px"><b>Retenciones y percepciones que figuran en el PDF</b><p class="s" style="margin:4px 0 8px">Las de IVA bajan el IVA a pagar en el IVA aproximado. Si ya las cargaste desde "Mis Retenciones", destildalas.</p>${L.ret.map((x,i)=>`<label style="display:flex;gap:8px;align-items:center;margin:4px 0"><input type="checkbox" style="margin:0" ${x.sel?'checked':''} onchange="liqRetSel(${i},this.checked)"> ${esc(x.etq)} (${x.impuesto==='IVA'?'IVA':'Ganancias'}): <b>${money(x.importe)}</b></label>`).join('')}</div>`:''}
     <div class="row" style="margin-top:10px"><button class="g" onclick="liqCalcIva()">Calcular IVA y total desde el neto</button><button class="b" onclick="liqGuardar()">Guardar liquidación</button><button class="g" onclick="liqAbrir()">Cancelar</button></div>
     ${L.cand.length?`<details style="margin-top:12px"><summary class="s" style="cursor:pointer">Importes encontrados en el PDF (tocá para usar uno)</summary><div class="tw" style="margin-top:8px"><table><tbody>${L.cand.map(c=>`<tr><td class="s" style="min-width:240px">${esc(c.linea)}</td><td>${c.montos.map(m=>`<div style="white-space:nowrap">${money(m)} <button class="g sm" onclick="liqUsar('neto','${m}')">Neto</button> <button class="g sm" onclick="liqUsar('iva','${m}')">IVA</button> <button class="g sm" onclick="liqUsar('total','${m}')">Total</button></div>`).join('')}</td></tr>`).join('')}</tbody></table></div></details>`:''}`:''}</div>`;
 }
@@ -1944,16 +2024,24 @@ async function liqGuardar(){
   if(neto===null||!(neto>0)||iva===null||iva<0)return bad('Cargá el neto gravado (mayor a cero) y el IVA.');
   if(total===null||!(total>0))total=liqPlata(neto+iva);
   if(Math.abs(neto*alic/100-iva)>Math.max(1,neto*0.0005)&&!confirm(`El IVA (${money(iva)}) no coincide con el neto por ${String(alic).replace('.',',')}% (${money(neto*alic/100)}).\n¿Guardar igual?`))return;
-  const cli=ui.clients.find(c=>c.id===v.cid),tipo=LIQ[L.tipo];
-  const safe=L.file.name.normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^A-Za-z0-9._-]+/g,'_').slice(-80),path=`${v.cid}/ventas/${crypto.randomUUID()}-${safe}`;
+  const tipo=LIQ[L.tipo],safe=L.file.name.normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^A-Za-z0-9._-]+/g,'_').slice(-80),path=`${v.cid}/ventas/${crypto.randomUUID()}-${safe}`;
   const up=await sb.storage.from('clientes').upload(path,L.file,{contentType:'application/pdf',upsert:false});
   if(up.error)return bad('No se pudo subir el PDF: '+errTxt(up.error));
   const a=String(alic).replace('.',','),raw={['Neto Grav. IVA '+a+'%']:neto};if(alic>0)raw['IVA '+a+'%']=iva;
+  let msgRet='';
   try{
     const {data:p,error:e1}=await sb.from('client_periods').upsert({client_id:v.cid,periodo:fecha.slice(0,7)+'-01'},{onConflict:'client_id,periodo'}).select('id').single();if(e1)throw e1;
-    const {error}=await sb.from('sales_invoices').insert({client_id:v.cid,period_id:p.id,fecha,tipo_cmp:tipo.cod,punto_venta:pv,numero:num,receptor_cuit:String(d.cuit||'').replace(/\D/g,'')||null,receptor_nombre:d.nombre||null,neto_gravado:neto,no_gravado:0,exento:0,otros_tributos:0,iva,importe_total:total,origen:'manual',raw,clase:L.tipo,archivo_path:path,archivo_nombre:L.file.name,datos_extraidos:{confianza:L.confianza,avisos:L.avisos},created_by:me.id});
+    const {error}=await sb.from('sales_invoices').insert({client_id:v.cid,period_id:p.id,fecha,tipo_cmp:tipo.cod,punto_venta:pv,numero:num,receptor_cuit:String(d.cuit||'').replace(/\D/g,'')||null,receptor_nombre:d.nombre||null,neto_gravado:neto,no_gravado:0,exento:0,otros_tributos:0,iva,importe_total:total,origen:'manual',raw,clase:L.tipo,archivo_path:path,archivo_nombre:L.file.name,datos_extraidos:{confianza:L.confianza,perfil:L.perfil,avisos:L.avisos,retenciones:(L.ret||[]).filter(x=>x.sel).map(x=>({tipo:x.tipo,impuesto:x.impuesto,importe:x.importe}))},created_by:me.id});
     if(error)throw error;
-    v.periodo=fecha.slice(0,7);L.abierta=false;L.datos=null;L.file=null;L.cand=[];L.avisos=[];await loadVentas();flash(`${tipo.nombre} guardada. Ya cuenta en el IVA aproximado de ${v.periodo.slice(5)}/${v.periodo.slice(0,4)}.`);
+    // retenciones y percepciones tildadas: se cargan para el IVA aproximado (sin repetir las que ya estén)
+    const sel=(L.ret||[]).filter(x=>x.sel&&x.importe>0);
+    if(sel.length){
+      const per=fecha.slice(0,7)+'-01',ex=await fetchAll((aa,bb)=>sb.from('iva_retenciones').select('tipo,impuesto,importe,comprobante').eq('client_id',v.cid).eq('periodo',per).range(aa,bb));
+      const nuevas=sel.filter(x=>!ex.some(e=>e.tipo===x.tipo&&e.impuesto===x.impuesto&&Math.abs(Number(e.importe)-x.importe)<0.005)),omit=sel.length-nuevas.length;
+      if(nuevas.length){const {error:e3}=await sb.from('iva_retenciones').insert(nuevas.map(x=>({client_id:v.cid,periodo:per,fecha,tipo:x.tipo,impuesto:x.impuesto,agente_cuit:String(d.cuit||'').replace(/\D/g,'')||null,agente_nombre:d.nombre||null,comprobante:String(num),importe:x.importe,origen:'importado',created_by:me.id})));if(e3)throw e3}
+      msgRet=` Se cargaron ${nuevas.length} retención(es) o percepción(es)${omit?` y se omitieron ${omit} que ya estaban`:''}.`;
+    }
+    v.periodo=fecha.slice(0,7);L.abierta=false;L.datos=null;L.file=null;L.cand=[];L.avisos=[];L.info=[];L.ret=[];await loadVentas();flash(`${tipo.nombre} guardada. Ya cuenta en el IVA aproximado de ${v.periodo.slice(5)}/${v.periodo.slice(0,4)}.${msgRet}`);
   }catch(x){await sb.storage.from('clientes').remove([path]);flash(/duplicate/i.test(x.message||'')?'Ya cargaste una liquidación con ese punto de venta y número.':errTxt(x),'err')}
   draw();
 }
@@ -1967,7 +2055,8 @@ const LIBRO_COLS={naturaleza:['naturaleza'],fechaLibro:['fecha'],tipo:['comproba
   neto:['neto','neto gravado'],nograv:['no gravado'],interno:['imp interno','impuestos internos'],pivas:['percep iva','percepcion iva'],piibb:['percep iibb','percepcion iibb'],ivam:['iva monto','monto iva','importe iva'],ivap:['iva pct','alicuota','alicuota iva'],total:['total']};
 const lbNorm=s=>norm(String(s??'').replace(/%/g,' pct '));
 const lbTipo=s=>String(s??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/\s+/g,' ').trim();
-const lbCod=n=>LIBRO_TIPOS[n]!==undefined?LIBRO_TIPOS[n]:9100;
+const lbCod=n=>LIBRO_TIPOS[n]!==undefined?LIBRO_TIPOS[n]:(/LIQUIDACION|\bLIQ\b|\bLPG\b|\bCOE\b/.test(n)?9102:9100);
+const lbNum=c=>c.coe?'COE '+c.numero:nroF(c.pv,c.numero);
 const lbNombreTipo=c=>c.tipo_cmp>=9100?(c.tipoTxt||'Otro comprobante'):c.tipoTxt;
 
 function parseLibroIva(rows){
@@ -1983,11 +2072,11 @@ function parseLibroIva(rows){
     if(mc){pie={cantidad:+mc[1],neto:pNum(r[ix.neto]),iva:pNum(r[ix.ivam]),total:pNum(r[ix.total])};continue}
     if(r.every(c=>String(c??'').trim()===''))continue;
     const tipoTxt=lbTipo(r[ix.tipo]);if(!tipoTxt)continue;filas++;
-    const mn=String(r[ix.numero]??'').trim().match(/^(\d+)\s*-\s*(\d+)$/),cuit=String(r[ix.cuit]??'').replace(/\D/g,''),fc=pDate(r[ix.fcomp!==undefined?ix.fcomp:ix.fechaLibro]),p=[];
+    const numS=String(r[ix.numero]??'').trim(),mn0=numS.match(/^(\d+)\s*-\s*(\d+)$/),dig=numS.replace(/\D/g,''),coe=!mn0&&dig.length>=6&&dig.length<=15,mn=mn0?[0,mn0[1],mn0[2]]:(coe?[0,'0',dig]:null),cuit=String(r[ix.cuit]??'').replace(/\D/g,''),fc=pDate(r[ix.fcomp!==undefined?ix.fcomp:ix.fechaLibro]),p=[];
     if(!mn)p.push('número inválido');if(cuit.length!==11)p.push('CUIT inválido');if(!fc)p.push('fecha inválida');
     if(p.length){errores.push({fila:i+1,mensaje:p.join(', ')});continue}
     const key=tipoTxt+'|'+(+mn[1])+'-'+(+mn[2])+'|'+cuit;let g=grupos.get(key);
-    if(!g){g={clave:key,tipoTxt,tipo_cmp:lbCod(tipoTxt),pv:+mn[1],numero:+mn[2],cuit,proveedor:String(r[ix.prov]??'').trim()||null,fecha:fc,naturaleza:ix.naturaleza!==undefined?String(r[ix.naturaleza]??'').trim():'',neto:0,nograv:0,interno:0,pivas:0,piibb:0,iva:0,total:0,filasTotal:0,rates:{}};grupos.set(key,g)}
+    if(!g){g={clave:key,tipoTxt,tipo_cmp:lbCod(tipoTxt),pv:+mn[1],numero:+mn[2],coe,cuit,proveedor:String(r[ix.prov]??'').trim()||null,fecha:fc,naturaleza:ix.naturaleza!==undefined?String(r[ix.naturaleza]??'').trim():'',neto:0,nograv:0,interno:0,pivas:0,piibb:0,iva:0,total:0,filasTotal:0,rates:{}};grupos.set(key,g)}
     const n=k=>ix[k]!==undefined?(pNum(r[ix[k]])||0):0;
     g.neto+=n('neto');g.nograv+=n('nograv');g.interno+=n('interno');g.pivas+=n('pivas');g.piibb+=n('piibb');g.iva+=n('ivam');
     const tv=pNum(r[ix.total]);if(tv!==null){g.total+=tv;g.filasTotal++}
@@ -1998,7 +2087,7 @@ function parseLibroIva(rows){
   const comprobantes=[...grupos.values()].map(g=>{
     sumas.neto+=g.neto;sumas.iva+=g.iva;sumas.total+=g.total;
     const nc=esNC(g.tipo_cmp),f=v=>liqPlata(nc?Math.abs(v):v),otros=g.interno+g.pivas+g.piibb,sinTotal=g.filasTotal===0,total=sinTotal?g.neto+g.nograv+otros+g.iva:g.total;
-    const c={clave:g.clave,tipoTxt:g.tipoTxt,tipo_cmp:g.tipo_cmp,pv:g.pv,numero:g.numero,cuit:g.cuit,proveedor:g.proveedor,fecha:g.fecha,naturaleza:g.naturaleza,nc,
+    const c={clave:g.clave,tipoTxt:g.tipoTxt,tipo_cmp:g.tipo_cmp,pv:g.pv,numero:g.numero,coe:g.coe,cuit:g.cuit,proveedor:g.proveedor,fecha:g.fecha,naturaleza:g.naturaleza,nc,
       neto:f(g.neto),nograv:f(g.nograv),otros:f(otros),pivas:f(g.pivas),piibb:f(g.piibb),interno:f(g.interno),iva:f(g.iva),total:f(total),
       cierra:Math.abs(g.neto+g.nograv+otros+g.iva-total)<=1.5,repetidoEnLibro:g.filasTotal>1,sinTotal};
     const raw={'Origen':'Libro IVA Compras','Tipo':g.tipoTxt,'Naturaleza':g.naturaleza,'Neto Gravado Total':c.neto,'Neto No Gravado':c.nograv,'Impuestos Internos':f(g.interno),'Percepción IVA':c.pivas,'Percepción IIBB':c.piibb,'Total IVA':c.iva,'Imp. Total':c.total};
@@ -2031,7 +2120,7 @@ function libroCard(){
   <div class="row"><label style="flex:1;min-width:220px">Excel del Libro IVA Compras (.xls / .xlsx)<br><input type="file" id="lfile" accept=".xls,.xlsx" style="width:100%"></label><button class="b" onclick="libroPrevisualizar()">Ver vista previa del Libro</button></div></div>`;
 }
 async function libroPrevisualizar(){
-  const f=$('lfile').files[0],cid=$('icl').value,periodo=$('iper').value;ui.cid=cid;ui.periodo=periodo;const bad=m=>{flash(m,'err');draw()};{const ex=exentoMsg(cid);if(ex)return bad(ex)}
+  const f=$('lfile').files[0],cid=$('icl').value,periodo=$('iper').value;ui.cid=cid;ui.periodo=periodo;const bad=m=>{flash(m,'err');draw()};
   if(!/^\d{4}-\d{2}$/.test(periodo))return bad('Elegí el período.');
   if(!f)return bad('Subí el Excel del Libro IVA Compras.');
   if(!/\.xlsx?$/i.test(f.name))return bad('El archivo debe ser .xls o .xlsx.');
@@ -2059,8 +2148,8 @@ function vLibroPreview(){
   if(pie&&pie.cantidad!==lib.comprobantes.length)warn.push(`El pie del Libro dice ${pie.cantidad} comprobantes y se leyeron ${lib.comprobantes.length}.`);
   if(pie&&pie.total!==null&&Math.abs(pie.total-lib.sumas.total)>1)warn.push(`El total del pie (${money(pie.total)}) no coincide con la suma de las filas (${money(lib.sumas.total)}).`);
   if(lib.errores.length)warn.push(`${lib.errores.length} fila(s) no se pudieron leer: ${lib.errores.slice(0,6).map(e=>'fila '+e.fila+' ('+e.mensaje+')').join(', ')}.`);
-  const dud=c=>[c.nc?'<span class="tag" style="background:var(--org);color:var(--orgt)">nota de crédito</span>':'',c.tipo_cmp>=9100?'<span class="tag" style="background:var(--blu);color:var(--blut)">sin código ARCA</span>':'',!c.cierra?'<span class="tag" style="background:var(--red);color:var(--redt)">el total no cierra</span>':'',c.repetidoEnLibro?'<span class="tag" style="background:var(--red);color:var(--redt)">repetido en el Libro</span>':'',c.sinTotal?'<span class="tag" style="background:var(--amb);color:var(--ambt)">sin total</span>':''].join(' ');
-  const fila=(x,i)=>{const c=x.c;return `<tr><td><input type="checkbox" ${L.sel.has(i)?'checked':''} onchange="libToggle(${i},this.checked)"></td><td>${fAR(c.fecha)}</td><td>${esc(lbNombreTipo(c))}<span class="s">${nroF(c.pv,c.numero)}</span></td><td>${esc(c.proveedor||'')}<span class="s">${cuitF(c.cuit)}</span></td><td>${money(c.neto)}</td><td>${money(c.iva)}</td><td>${money(c.total)}</td><td>${dud(c)}${x.tipo==='posible'?`<span class="s">Ya hay uno con otro tipo: ${x.alt.map(a=>'tipo '+a.tipo_cmp).join(', ')}</span>`:''}</td></tr>`};
+  const dud=c=>[c.nc?'<span class="tag" style="background:var(--org);color:var(--orgt)">nota de crédito</span>':'',c.tipo_cmp>=9100?'<span class="tag" style="background:var(--blu);color:var(--blut)">sin código ARCA</span>':'',c.coe?'<span class="tag" style="background:var(--blu);color:var(--blut)">número = COE</span>':'',!c.cierra?'<span class="tag" style="background:var(--red);color:var(--redt)">el total no cierra</span>':'',c.repetidoEnLibro?'<span class="tag" style="background:var(--red);color:var(--redt)">repetido en el Libro</span>':'',c.sinTotal?'<span class="tag" style="background:var(--amb);color:var(--ambt)">sin total</span>':''].join(' ');
+  const fila=(x,i)=>{const c=x.c;return `<tr><td><input type="checkbox" ${L.sel.has(i)?'checked':''} onchange="libToggle(${i},this.checked)"></td><td>${fAR(c.fecha)}</td><td>${esc(lbNombreTipo(c))}<span class="s">${lbNum(c)}</span></td><td>${esc(c.proveedor||'')}<span class="s">${cuitF(c.cuit)}</span></td><td>${money(c.neto)}</td><td>${money(c.iva)}</td><td>${money(c.total)}</td><td>${dud(c)}${x.tipo==='posible'?`<span class="s">Ya hay uno con otro tipo: ${x.alt.map(a=>'tipo '+a.tipo_cmp).join(', ')}</span>`:''}</td></tr>`};
   const tabla=(tipo,titulo,vacio)=>{const items=L.cand.map((x,i)=>[x,i]).filter(([x])=>x.tipo===tipo);return `<h3>${titulo} (${items.length})</h3>${items.length?`<div class="row" style="margin-bottom:6px"><button class="g sm" onclick="libTodos('${tipo}',true)">Marcar todos</button><button class="g sm" onclick="libTodos('${tipo}',false)">Desmarcar todos</button></div><div class="tw" style="margin-bottom:14px"><table><thead><tr><th></th><th>Fecha</th><th>Comprobante</th><th>Proveedor</th><th>Neto</th><th>IVA</th><th>Total</th><th>Aviso</th></tr></thead><tbody>${items.map(([x,i])=>fila(x,i)).join('')}</tbody></table></div>`:`<div class="card" style="color:var(--mut);margin-bottom:14px">${vacio}</div>`}`};
   const sumSel=[...L.sel].reduce((a,i)=>{const c=L.cand[i].c;return {iva:a.iva+sgnVal(c.tipo_cmp,c.iva),neto:a.neto+sgnVal(c.tipo_cmp,c.neto)}},{iva:0,neto:0});
   return `<h2>Vista previa del Libro IVA: ${esc(L.file)}</h2>
