@@ -162,7 +162,7 @@ function planImport(parsed,meta,existing,ctx){
 
 
 /* ===== Supabase ===== */
-const APP_VERSION='24/10/2026, Libro IVA, anticipos y filtros';
+const APP_VERSION='25/10/2026, avisos, cumplimiento, informes y reclamos';
 const SUPABASE_URL='https://tugdqcoxcpsiynlvnqdu.supabase.co';
 const SUPABASE_KEY='sb_publishable_2-96VeZrsNNftRXkzA1l_A_YG7ThJrL'; // clave pública: los permisos los da la base (RLS)
 const sb=(typeof supabase!=='undefined')?supabase.createClient(SUPABASE_URL,SUPABASE_KEY):null;
@@ -211,7 +211,7 @@ async function loadClients(){const {data,error}=await sb.from('clients').select(
 async function logout(){await sb.auth.signOut()}
 
 /* ===== Navegación y carga de datos ===== */
-const TABS=[['inicio','Inicio'],['vencimientos','Vencimientos'],['clientes','Clientes'],['importar','Importar compras'],['escanear','Escanear QR'],['comprobantes','Comprobantes de compra'],['ventas','Ventas'],['iva','IVA aproximado'],['anticipos','Anticipos'],['sueldos','Sueldos']];
+const TABS=[['inicio','Inicio'],['avisos','Avisos'],['cumplimiento','Cumplimiento'],['vencimientos','Vencimientos'],['clientes','Clientes'],['importar','Importar compras'],['escanear','Escanear QR'],['comprobantes','Comprobantes de compra'],['ventas','Ventas'],['iva','IVA aproximado'],['reclamos','Reclamos'],['anticipos','Anticipos'],['sueldos','Sueldos']];
 async function show(t){
   if(t==='admin'&&!isAdmin()){flash('Esa sección es solo para administradores.','err');t='inicio'}
   stopCam();ui.tab=t;ui.hist=null;ui.scan=null;
@@ -220,6 +220,9 @@ async function show(t){
     if(t==='clientes')await loadCStats();
     if(t==='ventas')await loadVentas();
     if(t==='iva')await loadIva();
+    if(t==='cumplimiento'){await loadDash();await loadDeadlines();await loadCum()}
+    if(t==='avisos'){await loadDash();await loadDeadlines();await loadCfg();await loadSched()}
+    if(t==='reclamos'){await loadDash();await loadSched()}
     if(t==='anticipos'||t==='vencimientos'){await loadDeadlines();await loadFil()}
     if(t==='sueldos'){await loadSueldosAll();setSd(ui.clients.find(c=>c.id===ui.cid&&c.active!==false)?ui.cid:(ui.clients.find(c=>c.active!==false)||{}).id)}
     if(t==='inicio')await loadDash();
@@ -235,21 +238,21 @@ async function loadVouchers(){
   ui.vs=await fetchAll((a,b)=>sb.from('vouchers').select('*').eq('period_id',p.id).order('fecha').order('numero').range(a,b));
 }
 function draw(){
-  $('nav').innerHTML='<h1>Estudio Theiler</h1>'+TABS.concat(isAdmin()?[['admin','Administración']]:[]).map(([k,t])=>`<button class="${ui.tab===k?'on':''}" onclick="show('${k}')">${t}</button>`).join('')+
+  $('nav').innerHTML='<h1>Estudio Theiler</h1>'+TABS.concat(isAdmin()?[['admin','Administración']]:[]).map(([k,t])=>`<button class="${ui.tab===k?'on':''}" onclick="show('${k}')">${t}${navBadge(k)}</button>`).join('')+
    `<div class="me">${esc(prof.username||prof.full_name||me.email)}<br>${esc(prof.role)}<br><button class="g" onclick="logout()">Cerrar sesión</button><br><span style="display:block;margin-top:10px;font-size:11px;opacity:.7">Versión: ${APP_VERSION}</span></div>`;
   const m=ui.msg?`<div class="msg ${ui.msg.k}">${esc(ui.msg.t)}</div>`:'';ui.msg=null;window._fm=m;
-  $('main').innerHTML=(ui.ficha?'':m)+({inicio:vInicio,clientes:vClientes,importar:vImportar,escanear:vEscanear,comprobantes:vComp,vencimientos:vVenc,anticipos:vAnticipos,sueldos:vSueldosPage,ventas:vVentas,iva:vIva,admin:vAdmin})[ui.tab]()+vFicha();
+  $('main').innerHTML=(ui.ficha?'':m)+({inicio:vInicio,clientes:vClientes,importar:vImportar,escanear:vEscanear,comprobantes:vComp,vencimientos:vVenc,anticipos:vAnticipos,sueldos:vSueldosPage,ventas:vVentas,iva:vIva,admin:vAdmin,cumplimiento:vCumplimiento,avisos:vAvisos,reclamos:vReclamos})[ui.tab]()+vFicha();
   document.body.style.overflow=ui.ficha?'hidden':'';
 }
 function vInicio(){
   const R=dashRows(),wp=workPeriod(),lab=wp.slice(5)+'/'+wp.slice(0,4);
   const sum=k=>R.reduce((a,r)=>a+r[k],0),venc7=R.filter(r=>r.nxt&&diasHasta(r.nxt.fecha)<=7).length;
   const K=[['Clientes activos',R.length],['Sin importar el Excel',R.filter(r=>r.state==='sin_importar').length],['Comprobantes sin pasar',sum('pend')],['Facturas faltantes',sum('fal')],['Vencen en 7 días',venc7],['Declaraciones sin presentar',R.reduce((a,r)=>a+r.fil.filter(x=>!x.ok).length,0)]];
-  const ST={sin_importar:['Sin importar','amb'],pendiente:['Sin pasar','blu'],faltan:['Faltan facturas','org'],al_dia:['Al día','grn']};
+  const ST={sin_importar:['Sin importar','amb'],pendiente:['Sin pasar','blu'],faltan:['Faltan facturas','org'],al_dia:['Al día','grn'],exento:['IVA exento (en 0)','blu']};
   const SH={IVA:'IVA',CM:'IIBB CM',F931:'F.931',GANANCIAS_PH:'Ganancias',GAN_ANT:'Anticipos Gcias.',GAN_DDJJ:'Ganancias',BP:'B. Personales',MONOTRIBUTO:'Monotributo',OTRO:'Otro'};
   const urg=n=>n<=2?'var(--redt)':n<=7?'var(--ambt)':'var(--mut)';
   const prox=R.filter(r=>r.nxt&&diasHasta(r.nxt.fecha)<=14).sort((a,b)=>a.nxt.fecha<b.nxt.fecha?-1:1);
-  return `<h2>Inicio</h2>${bkRecordatorio()}
+  return `<h2>Inicio</h2>${bkRecordatorio()}${avisosResumen()}
   <div class="row" style="margin-bottom:14px;align-items:center"><label>Período de trabajo<br>${mesPick(wp,`ui.wp=this.value;draw()`)}</label><span class="s" style="max-width:420px">Por defecto es el mes anterior, que es el que se declara ahora. Los totales de la tabla corresponden a ${lab}.</span></div>
   <div class="grid" style="margin-bottom:22px">${K.map(([t,n])=>`<div class="card kpi"><b>${n}</b><span>${t}</span></div>`).join('')}</div>
   <div class="row" style="align-items:flex-start;gap:20px">
@@ -258,18 +261,18 @@ function vInicio(){
   ${R.length?R.map(r=>`<tr ${r.state==='al_dia'?'style="opacity:.6"':''}><td><a href="#" style="color:var(--tx);font-weight:600;text-decoration:none" onclick="abrirFicha('${r.c.id}');return false">${esc(r.c.razon_social)}</a><span class="s">termina en ${r.c.cuit.slice(-1)}</span></td>
   <td><span class="tag" style="background:var(--${ST[r.state][1]});color:var(--${ST[r.state][1]}t)">${ST[r.state][0]}</span></td><td>${r.cur?r.pend:'-'}</td><td ${r.fal?'style="color:var(--redt);font-weight:600"':''}>${r.cur?r.fal:'-'}</td>
   <td>${declChips(r,wp)}</td>
-  <td style="white-space:nowrap">${r.state==='sin_importar'?`<button class="g" onclick="ui.cid='${r.c.id}';ui.periodo='${wp}';show('importar')">Importar</button>`:r.fal?`<button class="b" onclick="abrirFicha('${r.c.id}','pedir','${wp}')">Pedir facturas</button>`:`<button class="g" onclick="abrirComp('${r.c.id}','${wp}')">Abrir</button>`}</td></tr>`).join(''):'<tr><td colspan="6" style="color:var(--mut)">Todavía no hay clientes activos. Agregalos en "Clientes".</td></tr>'}</tbody></table></div></div>
+  <td style="white-space:nowrap">${r.state==='exento'?`<button class="g" onclick="abrirFicha('${r.c.id}','present')">Presentaciones</button>`:r.state==='sin_importar'?`<button class="g" onclick="ui.cid='${r.c.id}';ui.periodo='${wp}';show('importar')">Importar</button>`:r.fal?`<button class="b" onclick="abrirFicha('${r.c.id}','pedir','${wp}')">Pedir facturas</button>`:`<button class="g" onclick="abrirComp('${r.c.id}','${wp}')">Abrir</button>`}</td></tr>`).join(''):'<tr><td colspan="6" style="color:var(--mut)">Todavía no hay clientes activos. Agregalos en "Clientes".</td></tr>'}</tbody></table></div></div>
   <div style="flex:1;min-width:280px"><h3 style="margin-top:0">Vencen pronto</h3>
   ${prox.length?`<div class="card" style="padding:6px 16px">${prox.map(r=>{const n=diasHasta(r.nxt.fecha);return `<div style="padding:11px 0;border-bottom:1px solid var(--bd)"><div style="font-weight:600">${esc(r.c.razon_social)}</div><div style="display:flex;justify-content:space-between;gap:10px"><span class="s" style="font-size:13px">${SH[r.nxt.impuesto]||''}, ${fAR(r.nxt.fecha).slice(0,5)}</span><span style="font-size:13px;color:${urg(n)};font-weight:600">${cuando(n)}</span></div></div>`}).join('')}</div>`:`<div class="card" style="color:var(--mut)">${R.some(r=>(r.c.impuestos||[]).length)?'Ningún cliente tiene vencimientos en los próximos 14 días según lo cargado.':'Marcá los impuestos de cada cliente para ver sus vencimientos acá.'}</div>`}
   <p class="s" style="margin-top:10px">Las fechas están "A confirmar" hasta que las verifiques en ARCA (pantalla Vencimientos).</p></div></div>`;
 }
 const workPeriod=()=>{if(ui.wp)return ui.wp;const d=new Date();d.setDate(1);d.setMonth(d.getMonth()-1);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')};
 function dashRows(){
-  const wp=workPeriod(),ord={sin_importar:0,pendiente:1,faltan:2,al_dia:3};
+  const wp=workPeriod(),ord={sin_importar:0,pendiente:1,faltan:2,al_dia:3,exento:4};
   return ui.clients.filter(c=>c.active!==false).map(c=>{
     const cur=ui.pst.find(r=>r.client_id===c.id&&r.periodo.slice(0,7)===wp),nxt=ui.dl.filter(d=>diasHasta(d.fecha)>=0&&delC(d,c)).sort((a,b)=>a.fecha<b.fecha?-1:1)[0];
     const pend=cur?cur.sin_pasar:0,fal=cur?cur.faltan:0;
-    return {c,cur,nxt,pend,fal,fil:aplica(c).filter(k=>OBLIG[k].t==='m').map(imp=>({imp,ok:!!ui.fil.find(f=>f.client_id===c.id&&f.periodo.slice(0,7)===wp&&f.impuesto===imp)})),state:!cur?'sin_importar':pend>0?'pendiente':fal>0?'faltan':'al_dia'};
+    return {c,cur,nxt,pend,fal,fil:aplica(c).filter(k=>OBLIG[k].t==='m').map(imp=>({imp,ok:!!ui.fil.find(f=>f.client_id===c.id&&f.periodo.slice(0,7)===wp&&f.impuesto===imp)})),state:esExento(c)?'exento':!cur?'sin_importar':pend>0?'pendiente':fal>0?'faltan':'al_dia'};
   }).sort((a,b)=>ord[a.state]-ord[b.state]||(a.nxt&&b.nxt?(a.nxt.fecha<b.nxt.fecha?-1:1):a.nxt?-1:b.nxt?1:0));
 }
 function _vInicioViejo(){return vInicio0()+vProx()}
@@ -289,8 +292,8 @@ function vImportar(){
   if(!ui.clients.length)return `<h2>Importar compras (Excel de ARCA)</h2><div class="card">No hay clientes disponibles.</div>`;
   if(ui.lib)return vLibroPreview();
   if(ui.pend)return vPreview();
-  return `<h2>Importar compras (Excel de ARCA)</h2><div class="card row" style="max-width:640px">
-  <label>Cliente<br><select id="icl" onchange="ui.cid=this.value">${clientOpts()}</select></label>
+  return `<h2>Importar compras (Excel de ARCA)</h2><div id="exbanner">${exentoAviso(ui.cid)}</div><div class="card row" style="max-width:640px">
+  <label>Cliente<br><select id="icl" onchange="ui.cid=this.value;exBanner(this.value)">${clientOpts()}</select></label>
   <label>Período<br>${mesPick(ui.periodo,`ui.periodo=this.value`,'iper')}</label>
   <label style="flex:1;min-width:220px">Archivo de "Mis Comprobantes Recibidos" (.xls / .xlsx)<br><input type="file" id="ifile" accept=".xls,.xlsx"></label>
   <button class="b" onclick="previsualizar()">Ver vista previa</button></div>
@@ -302,6 +305,7 @@ function vImportar(){
 async function previsualizar(){
   const f=$('ifile').files[0],cid=$('icl').value,periodo=$('iper').value;ui.cid=cid;ui.periodo=periodo;
   const bad=m=>{flash(m,'err');draw()};
+  {const ex=exentoMsg(cid);if(ex)return bad(ex)}
   if(!/^\d{4}-\d{2}$/.test(periodo))return bad('Elegí el período.');
   if(!f)return bad('Subí el archivo Excel.');
   if(!/\.xlsx?$/i.test(f.name))return bad('El archivo debe ser .xls o .xlsx.');
@@ -646,7 +650,7 @@ async function loadCStats(){
   const m={};data.forEach(r=>{const o=m[r.client_id]||(m[r.client_id]={tot:0,fal:0});o.tot+=r.total;o.fal+=r.faltan});ui.cstats=m;
 }
 const SEL_IVA=['Responsable Inscripto','Monotributista','IVA Exento','No responsable'];
-async function loadDash(){const {data,error}=await sb.from('v_period_stats').select('*');if(error)throw error;ui.pst=data;await loadFil()}
+async function loadDash(){const {data,error}=await sb.from('v_period_stats').select('*');if(error)throw error;ui.pst=data;await loadFil();await loadCfg();try{await loadSched()}catch(e){}}
 async function loadCStats_old(){
   const v=await fetchAll((a,b)=>sb.from('vouchers').select('client_id,doc_status').range(a,b)),m={};
   v.forEach(x=>{const o=m[x.client_id]||(m[x.client_id]={tot:0,fal:0});o.tot++;if(x.doc_status==='no_recibida')o.fal++});ui.cstats=m;
@@ -684,7 +688,7 @@ function fTab(c,f){
   if(f.tab==='resumen'){
     const s=sumSt(f.per);
     return `<div class="grid">${[['Comprobantes',s.tot],['Sin factura recibida',s.fal],['Liquidados sin factura',s.sin],['Por revisar',s.rev]].map(([t,n])=>`<div class="card kpi"><b>${n}</b><span>${t}</span></div>`).join('')}</div>
-    ${infoCliente(c)}${fDeclMatriz(c)}<h3>Próximos vencimientos</h3>${fVencTable(c,fVencRows(c,6,60))}
+    ${infoCliente(c)}${fDeclMatriz(c)}${infCard(c.id)}<div style="margin:10px 0"><button class="g" onclick="informeIva('${c.id}',workPeriod())">Informe mensual del cliente (PDF)</button></div><h3>Próximos vencimientos</h3>${fVencTable(c,fVencRows(c,6,60))}
     ${c.observaciones?`<h3>Observaciones internas</h3><div class="card">${esc(c.observaciones)}</div>`:''}`;
   }
   if(f.tab==='datos'){
@@ -797,6 +801,7 @@ async function initPedir(){
   const f=ui.ficha,wp=workPeriod(),has=f.per.find(p=>p.periodo.slice(0,7)===(f.recPer||wp));
   const per=has?has.periodo.slice(0,7):(f.per[0]?f.per[0].periodo.slice(0,7):null);
   f.rec={periodo:per,rev:false,det:false,fmt:'pdf',rows:[],msg:'',dirty:false,cid:null,loading:!!per};draw();
+  try{await loadSched()}catch(e){}
   if(per)await loadRec();
 }
 async function loadRec(){
@@ -813,6 +818,7 @@ function recOpt(k,v){const r=ui.ficha.rec;r[k]=v;if(k==='periodo'||k==='rev'){r.
 function rebuildMsg(){const f=ui.ficha,r=f.rec,c=ui.clients.find(x=>x.id===f.id);r.msg=buildMsg(c,contactoPedir(f),r.periodo,r.rows,r.det,r.fmt)}
 function vPedir(c,f){
   const r=f.rec,ed=canEdit();
+  if(esExento(c))return '<div class="msg info">'+esc(exentoMsg(c.id))+'</div>';
   if(!f.per.length)return '<div class="card">Este cliente todavía no tiene comprobantes importados. Importá primero el Excel de ARCA.</div><div style="margin-top:12px"><button class="b" onclick="ui.cid=\''+c.id+'\';ui.ficha=null;show(\'importar\')">Importar Excel de ARCA</button></div>';
   if(!r)return '<div class="msg info">Preparando…</div>';
   const ct=contactoPedir(f),w=ct?waNum(ct.whatsapp):null;
@@ -826,7 +832,7 @@ function vPedir(c,f){
   <div class="card" style="margin-bottom:14px"><b>Para quién</b>${f.ct.filter(x=>x.whatsapp).length?`<div class="row" style="margin:8px 0 6px"><label>Contacto<br><select onchange="ui.ficha.rec.cid=this.value;recOpt('cid',this.value)">${f.ct.filter(x=>x.whatsapp).map(x=>`<option value="${x.id}" ${ct&&x.id===ct.id?'selected':''}>${esc(x.nombre)}${x.is_entrega?' (entrega las facturas)':''}</option>`).join('')}</select></label><span class="s">WhatsApp: ${esc(ct.whatsapp)}${w&&!w.ok?' <b style="color:var(--redt)">Revisá el número: código de área + número, sin 0 ni 15.</b>':''}</span></div>`:`<div class="s" style="margin:6px 0 10px">Todavía no cargaste el celular del encargado de enviar las facturas.</div>${encargadoForm(f,ed)}`}</div>
   <label>Mensaje (podés editarlo antes de enviar)<textarea rows="11" oninput="ui.ficha.rec.msg=this.value;ui.ficha.rec.dirty=true">${esc(r.msg)}</textarea></label>
   <div class="row" style="margin:12px 0"><button class="b" onclick="waAbrir()">Abrir WhatsApp y descargar el archivo</button>${typeof navigator.canShare==='function'?'<button class="b" onclick="waCompartir()">Compartir archivo y mensaje (celular)</button>':''}<button class="g" onclick="soloArchivo()">Solo descargar el archivo</button><button class="g" onclick="copiarMsg()">Copiar mensaje</button></div>
-  <p class="s">El archivo trae solo las facturas que faltan. En la compu: se descarga y se abre el chat con el mensaje listo; arrastrá el archivo al chat. En el celular: "Compartir" te deja elegir WhatsApp con el archivo ya cargado, pero ahí elegís vos el chat. La app no sabe si el mensaje se envió y no deja registro.</p>
+  <p class="s">El archivo trae solo las facturas que faltan. En la compu: se descarga y se abre el chat con el mensaje listo; arrastrá el archivo al chat. En el celular: "Compartir" te deja elegir WhatsApp con el archivo ya cargado, pero ahí elegís vos el chat. La app no sabe si el mensaje se envió: registralo abajo con la fecha en que lo mandaste.</p>${recBloque(c,f)}
   <div class="tw"><table><thead><tr><th>Fecha</th><th>Proveedor</th><th>Comprobante</th><th>Importe</th></tr></thead><tbody>${r.rows.map(v=>`<tr><td>${fAR(v.fecha)}</td><td>${esc(v.emisor_nombre)}<span class="s">${cuitF(v.emisor_cuit)}</span></td><td>${esc(tipoTxt(v))}<span class="s">${nroF(v.punto_venta,v.numero)}</span></td><td>${money(Number(v.importe_total))}</td></tr>`).join('')}</tbody></table></div>`
   :'<div class="msg ok">No hay facturas faltantes en este período según lo marcado. No hace falta pedir nada.</div>'}`;
 }
@@ -1262,7 +1268,7 @@ function vVentas(){
   const v=ui.vta;if(!ui.clients.some(c=>c.active!==false))return '<h2>Ventas</h2><div class="card">No hay clientes disponibles.</div>';
   if(v.pend)return vVentasPreview();
   const R=v.rows,deb=R.reduce((a,x)=>a+sgnVal(x.tipo_cmp,x.iva),0),neto=R.reduce((a,x)=>a+sgnVal(x.tipo_cmp,x.neto_gravado),0),tot=R.reduce((a,x)=>a+sgnVal(x.tipo_cmp,x.importe_total),0);
-  return `<h2>Ventas (facturas emitidas)</h2>
+  return `<h2>Ventas (facturas emitidas)</h2>${exentoAviso(v.cid)}
   <div class="card row" style="margin-bottom:12px"><label>Cliente<br><select onchange="ui.cid=this.value;show('ventas')">${clientOpts()}</select></label>
   <label>Período<br>${mesPick(v.periodo,`ui.vta.periodo=this.value;show('ventas')`)}</label>
   <label style="flex:1;min-width:230px">Excel de "Mis Comprobantes Emitidos" (.xls / .xlsx)<br><input type="file" id="vfile" accept=".xls,.xlsx" style="width:100%"></label>
@@ -1294,7 +1300,7 @@ const _n=(f,k)=>pNum(f.elements[k].value)||0;
 function calcTotalVenta(f){f.elements.total.value=(_n(f,'neto')+_n(f,'iva')+_n(f,'nograv')+_n(f,'exento')+_n(f,'otros')).toFixed(2)}
 function calcVenta(f){f.elements.iva.value=(Math.round(_n(f,'neto')*Number(f.elements.alic.value))/100).toFixed(2);calcTotalVenta(f)}
 async function ventasAgregar(e){
-  e.preventDefault();const fd=new FormData(e.target),v=ui.vta,bad=m=>{flash(m,'err');draw();return false};
+  e.preventDefault();const fd=new FormData(e.target),v=ui.vta,bad=m=>{flash(m,'err');draw();return false};if(exentoMsg(v.cid))return bad(exentoMsg(v.cid));
   const fecha=String(fd.get('fecha')),pv=pNum(fd.get('pv')),num=pNum(fd.get('num')),tipo=Number(fd.get('tipo')),n=k=>pNum(String(fd.get(k)))||0;
   if(!pDate(fecha))return bad('La fecha no es válida.');
   if(pv===null||!Number.isInteger(pv)||pv<=0||num===null||!Number.isInteger(num)||num<=0)return bad('El punto de venta y el número tienen que ser enteros positivos.');
@@ -1318,6 +1324,7 @@ async function ventasQuitar(id){
 }
 async function ventasPrevisualizar(){
   const f=$('vfile').files[0],v=ui.vta,c=ui.clients.find(x=>x.id===v.cid),bad=m=>{flash(m,'err');draw()};
+  if(esExento(c))return bad(exentoMsg(c.id));
   if(!f)return bad('Subí el archivo Excel.');
   if(!/\.xlsx?$/i.test(f.name))return bad('El archivo debe ser .xls o .xlsx.');
   if(f.size>10*1048576)return bad('El archivo supera los 10 MB.');
@@ -1370,52 +1377,6 @@ async function loadIva(){
   const {data,error}=await sb.from('v_iva_periodo').select('*').eq('periodo',P.periodo+'-01');if(error)throw error;P.rows=data;
 }
 function desglose(rows){const o={};for(const r of rows)for(const [k,x] of Object.entries(alicDeRaw(r.raw))){const t=o[k]||(o[k]={neto:0,iva:0});t.neto+=sgnVal(r.tipo_cmp,x.neto);t.iva+=sgnVal(r.tipo_cmp,x.iva)}return o}
-async function ivaDetalle(cid){
-  const P=ui.ivaP;P.cid=cid;P.det={loading:true};draw();
-  try{
-    const pr=await sb.from('client_periods').select('id').eq('client_id',cid).eq('periodo',P.periodo+'-01').maybeSingle();if(pr.error)throw pr.error;
-    let ven=[],com=[];
-    if(pr.data)[ven,com]=await Promise.all([fetchAll((a,b)=>sb.from('sales_invoices').select('tipo_cmp,iva,neto_gravado,raw').eq('period_id',pr.data.id).range(a,b)),fetchAll((a,b)=>sb.from('vouchers').select('tipo_cmp,iva,neto_gravado,raw').eq('period_id',pr.data.id).neq('proc_status','excluido').range(a,b))]);
-    const aj=await sb.from('iva_ajustes').select('*').eq('client_id',cid).eq('periodo',P.periodo+'-01').maybeSingle();if(aj.error)throw aj.error;
-    P.det={ven,com,aj:aj.data||{saldo_tecnico_anterior:0,saldo_libre_disp:0,retenciones_percepciones:0,pagos_a_cuenta:0}};
-  }catch(e){P.det=null;P.cid=null;flash(errTxt(e),'err')}
-  draw();
-}
-async function ivaAjuste(campo,val){
-  const P=ui.ivaP,a=P.det.aj;a[campo]=pNum(val)||0;draw();
-  const {error}=await sb.from('iva_ajustes').upsert({client_id:P.cid,periodo:P.periodo+'-01',saldo_tecnico_anterior:Number(a.saldo_tecnico_anterior)||0,saldo_libre_disp:Number(a.saldo_libre_disp)||0,retenciones_percepciones:Number(a.retenciones_percepciones)||0,pagos_a_cuenta:Number(a.pagos_a_cuenta)||0,modificado_by:me.id,modificado_at:new Date().toISOString()},{onConflict:'client_id,periodo'});
-  if(error){flash('No se pudo guardar el ajuste: '+errTxt(error),'err');draw()}
-}
-function vIva(){
-  const P=ui.ivaP,act=ui.clients.filter(c=>c.active!==false);
-  if(!act.length)return '<h2>IVA aproximado</h2><div class="card">No hay clientes disponibles.</div>';
-  const filas=act.map(c=>{const r=P.rows.find(x=>x.client_id===c.id);return {c,r,deb:r?Number(r.iva_ventas):0,cred:r?Number(r.iva_compras):0}}).filter(x=>x.r||tieneImp(x.c,'IVA'));
-  const lab=P.periodo.slice(5)+'/'+P.periodo.slice(0,4);
-  const aviso=r=>{const a=[];if(!r||!r.cant_ventas)a.push('sin ventas cargadas');if(!r||!r.cant_compras)a.push('sin compras');if(r&&r.compras_sin_iva)a.push(r.compras_sin_iva+' compra(s) sin IVA');return a.length?`<span class="s" style="color:var(--ambt)">${a.join(', ')}</span>`:''};
-  return `<h2>IVA aproximado</h2>
-  <div class="card row" style="margin-bottom:12px"><label>Período<br>${mesPick(P.periodo,`ui.ivaP.periodo=this.value;show('iva')`)}</label>
-  <span class="s" style="max-width:520px">Es una estimación: IVA de las ventas menos IVA de las compras de ${lab}. Las notas de crédito restan y los comprobantes de compra marcados como excluidos no cuentan. No reemplaza la liquidación.</span></div>
-  <div class="tw" style="margin-bottom:18px"><table><thead><tr><th>Cliente</th><th>IVA ventas (débito)</th><th>IVA compras (crédito)</th><th>Saldo aproximado</th><th></th></tr></thead><tbody>
-  ${filas.length?filas.map(({c,r,deb,cred})=>{const s=deb-cred;return `<tr><td>${esc(c.razon_social)}${aviso(r)}</td><td>${money(deb)}</td><td>${money(cred)}</td><td><b>${money(Math.abs(s))}</b><span class="s">${s>0?'a pagar':s<0?'a favor':'sin saldo'}</span></td><td><button class="g sm" onclick="ivaDetalle('${c.id}')">Ver detalle</button></td></tr>`}).join(''):'<tr><td colspan="5" style="color:var(--mut)">Ningún cliente tiene IVA marcado ni comprobantes en este período.</td></tr>'}</tbody></table></div>
-  ${P.cid?vIvaDetalle(ui.clients.find(c=>c.id===P.cid)):''}`;
-}
-function vIvaDetalle(c){
-  const P=ui.ivaP,d=P.det;if(!d)return '';if(d.loading)return '<div class="msg info">Calculando…</div>';
-  const deb=d.ven.reduce((a,x)=>a+sgnVal(x.tipo_cmp,x.iva),0),cred=d.com.reduce((a,x)=>a+sgnVal(x.tipo_cmp,x.iva),0),saldo=deb-cred,a=d.aj;
-  const ant=Number(a.saldo_tecnico_anterior)||0,lib=Number(a.saldo_libre_disp)||0,ret=Number(a.retenciones_percepciones)||0,pag=Number(a.pagos_a_cuenta)||0,neto=saldo-ant-lib-ret-pag;
-  const dv=desglose(d.ven),dc=desglose(d.com),keys=[...new Set([...Object.keys(dv),...Object.keys(dc)])].sort((x,y)=>Number(x)-Number(y));
-  const restoV=deb-Object.values(dv).reduce((s,x)=>s+x.iva,0),restoC=cred-Object.values(dc).reduce((s,x)=>s+x.iva,0);
-  const campo=(k,t,v)=>`<label>${t}<input inputmode="decimal" value="${v?String(v).replace('.',','):''}" placeholder="0" onchange="ivaAjuste('${k}',this.value)"></label>`;
-  return `<div class="card" style="padding:20px"><h3 style="margin-top:0;font-size:20px">${esc(c.razon_social)}, ${P.periodo.slice(5)}/${P.periodo.slice(0,4)}</h3>
-  <div class="grid" style="margin-bottom:14px"><div class="card kpi"><b>${money(deb)}</b><span>IVA ventas, débito fiscal (${d.ven.length} facturas)</span></div><div class="card kpi"><b>${money(cred)}</b><span>IVA compras, crédito fiscal (${d.com.length} comprobantes)</span></div><div class="card kpi"><b>${money(saldo)}</b><span>${saldo>=0?'Saldo técnico a pagar antes de ajustes':'Saldo técnico a favor del período'}</span></div></div>
-  ${!d.ven.length?'<div class="msg warn">No hay ventas cargadas en este período: el débito fiscal figura en cero. Cargalas en la sección Ventas.</div>':''}${!d.com.length?'<div class="msg warn">No hay comprobantes de compra en este período.</div>':''}
-  <h3>Ajustes que no salen de las facturas</h3><p class="s" style="margin-bottom:8px">Completalos si corresponde. Se guardan solos para este cliente y período.</p>
-  <div class="fgrid" style="margin-bottom:14px">${campo('saldo_tecnico_anterior','Saldo técnico a favor del período anterior',ant)}${campo('saldo_libre_disp','Saldo de libre disponibilidad',lib)}${campo('retenciones_percepciones','Retenciones y percepciones de IVA sufridas',ret)}${campo('pagos_a_cuenta','Pagos a cuenta',pag)}</div>
-  <div class="card" style="margin-bottom:14px;background:var(--${neto>0?'amb':'grn'});border-color:var(--${neto>0?'ambt':'grnt'})"><span class="s">Resultado aproximado</span><div style="font:700 28px 'Bricolage Grotesque',system-ui,sans-serif">${neto>0?'IVA a pagar: ':'Sin IVA a pagar. Saldo a favor: '}${money(Math.abs(neto))}</div><span class="s">${money(deb)} de débito, menos ${money(cred)} de crédito${ant||lib||ret||pag?`, menos ${money(ant+lib+ret+pag)} de ajustes`:''}.</span></div>
-  <h3>Desglose por alícuota</h3>
-  ${keys.length?`<div class="tw"><table><thead><tr><th>Alícuota</th><th>Ventas, neto</th><th>Ventas, IVA</th><th>Compras, neto</th><th>Compras, IVA</th></tr></thead><tbody>${keys.map(k=>`<tr><td>${String(k).replace('.',',')}%</td><td>${money((dv[k]||{neto:0}).neto)}</td><td>${money((dv[k]||{iva:0}).iva)}</td><td>${money((dc[k]||{neto:0}).neto)}</td><td>${money((dc[k]||{iva:0}).iva)}</td></tr>`).join('')}${Math.abs(restoV)>0.01||Math.abs(restoC)>0.01?`<tr><td>Sin desglose</td><td></td><td>${money(restoV)}</td><td></td><td>${money(restoC)}</td></tr>`:''}</tbody></table></div>`:'<div class="card" style="color:var(--mut)">Sin desglose por alícuota: los datos cargados no traen las columnas por alícuota.</div>'}
-  <p class="s" style="margin-top:12px">No incluye prorrateo de crédito fiscal, ajustes de períodos anteriores, ni otros conceptos de la declaración jurada. Las percepciones y retenciones tienen que cargarse a mano en los ajustes.</p></div>`;
-}
 /* ===== Administración: copia de seguridad completa =====
    Todo ocurre en el navegador del administrador: no pasa por Vercel ni por ningún servidor propio, así que no hay
    límite de tiempo ni de tamaño de respuesta de funciones. El ZIP se escribe en streaming (disco) para no llenar la memoria.
@@ -1944,7 +1905,7 @@ function liqExtraer(lineas,cuitCliente){
 const LQ=()=>ui.vta.liq||(ui.vta.liq={abierta:false,tipo:'liq_granos',datos:null,file:null,cand:[],avisos:[],confianza:null,leyendo:false});
 function liqAbrir(){const L=LQ();L.abierta=!L.abierta;if(!L.abierta){L.datos=null;L.file=null;L.cand=[];L.avisos=[]}draw()}
 async function liqPdf(inp){
-  const L=LQ(),f=inp.files[0];inp.value='';if(!f)return;
+  const L=LQ(),f=inp.files[0];inp.value='';if(!f)return;{const ex=exentoMsg(ui.vta.cid);if(ex){flash(ex,'err');return draw()}}
   const e=await esPdf(f);if(e){flash(e,'err');return draw()}
   L.file=f;L.leyendo=true;L.avisos=[];L.cand=[];L.datos={fecha:'',pv:'',num:'',neto:'',iva:'',alic:'10.5',total:'',cuit:'',nombre:''};draw();
   const cliente=ui.clients.find(c=>c.id===ui.vta.cid);
@@ -1975,7 +1936,7 @@ function liqForm(){
     ${L.cand.length?`<details style="margin-top:12px"><summary class="s" style="cursor:pointer">Importes encontrados en el PDF (tocá para usar uno)</summary><div class="tw" style="margin-top:8px"><table><tbody>${L.cand.map(c=>`<tr><td class="s" style="min-width:240px">${esc(c.linea)}</td><td>${c.montos.map(m=>`<div style="white-space:nowrap">${money(m)} <button class="g sm" onclick="liqUsar('neto','${m}')">Neto</button> <button class="g sm" onclick="liqUsar('iva','${m}')">IVA</button> <button class="g sm" onclick="liqUsar('total','${m}')">Total</button></div>`).join('')}</td></tr>`).join('')}</tbody></table></div></details>`:''}`:''}</div>`;
 }
 async function liqGuardar(){
-  const L=LQ(),d=L.datos,v=ui.vta,bad=m=>{flash(m,'err');draw()};
+  const L=LQ(),d=L.datos,v=ui.vta,bad=m=>{flash(m,'err');draw()};if(exentoMsg(v.cid))return bad(exentoMsg(v.cid));
   if(!L.file||!d)return bad('Elegí primero el PDF.');
   const fecha=d.fecha,pv=pNum(d.pv||'0'),num=pNum(d.num),neto=pNum(d.neto),iva=pNum(d.iva),alic=Number(d.alic);let total=pNum(d.total);
   if(!pDate(fecha))return bad('La fecha no es válida (formato AAAA-MM-DD).');
@@ -2070,7 +2031,7 @@ function libroCard(){
   <div class="row"><label style="flex:1;min-width:220px">Excel del Libro IVA Compras (.xls / .xlsx)<br><input type="file" id="lfile" accept=".xls,.xlsx" style="width:100%"></label><button class="b" onclick="libroPrevisualizar()">Ver vista previa del Libro</button></div></div>`;
 }
 async function libroPrevisualizar(){
-  const f=$('lfile').files[0],cid=$('icl').value,periodo=$('iper').value;ui.cid=cid;ui.periodo=periodo;const bad=m=>{flash(m,'err');draw()};
+  const f=$('lfile').files[0],cid=$('icl').value,periodo=$('iper').value;ui.cid=cid;ui.periodo=periodo;const bad=m=>{flash(m,'err');draw()};{const ex=exentoMsg(cid);if(ex)return bad(ex)}
   if(!/^\d{4}-\d{2}$/.test(periodo))return bad('Elegí el período.');
   if(!f)return bad('Subí el Excel del Libro IVA Compras.');
   if(!/\.xlsx?$/i.test(f.name))return bad('El archivo debe ser .xls o .xlsx.');
@@ -2187,7 +2148,7 @@ function vVenc(){
   return `<h2>Vencimientos</h2><div class="msg warn">Estas fechas se tomaron de calendarios publicados y se cruzaron entre varias fuentes; no se leen directamente de ARCA. Confirmá cada fecha contra el calendario oficial y actualizala si ARCA prorroga. "Fecha a confirmar" habla de la fecha, no de si el cliente presentó: eso se ve en la columna de presentación.</div>
   <div class="card row" style="margin-bottom:12px;align-items:end"><label>Cliente<br><select onchange="ui.vcli=this.value;draw()"><option value="">Todos los clientes</option>${ui.clients.map(c=>`<option value="${c.id}" ${sel===c.id?'selected':''}>${esc(c.razon_social)}</option>`).join('')}</select></label>
   <label>Ver<br><select onchange="ui.vdias=this.value;draw()">${[['30','Próximos 30 días'],['60','Próximos 60 días'],['0','Todo lo cargado']].map(([k,t])=>`<option value="${k}" ${ui.vdias===k?'selected':''}>${t}</option>`).join('')}</select></label>
-  ${canEdit()&&sinConf.length?`<button class="b" onclick="verifTodos([${sinConf.map(({d})=>`'${d.id}'`).join(',')}])">Confirmar las ${sinConf.length} fechas que se ven</button>`:''}</div>
+  ${canEdit()&&sinConf.length?`<button class="b" onclick="verifTodos([${sinConf.map(({d})=>`'${d.id}'`).join(',')}])">${sinConf.length===1?'Confirmar la fecha que se ve':'Confirmar las '+sinConf.length+' fechas que se ven'}</button>`:''}</div>
   <div class="tw"><table><thead><tr><th>Vence</th><th>Obligación</th><th>Terminaciones</th><th>Clientes y presentación</th><th>Fecha</th></tr></thead><tbody>
   ${rows.length?rows.map(({d,a})=>{const x=diasHasta(d.fecha),ps=a.map(c=>({c,p:presDeVenc(c,d)})),mapea=ps.length&&ps[0].p.k!=='na',ok=ps.filter(z=>z.p.k==='ok').length;
     return `<tr><td style="white-space:nowrap">${fAR(d.fecha)}<span class="s">${diaSem(d.fecha)} · ${cuando(x)}</span></td><td>${esc(d.descripcion)}${d.periodo?`<span class="s">período ${esc(d.periodo)}</span>`:''}</td><td>${d.terminaciones.length===10?'Todas':d.terminaciones.join(', ')}</td><td>${a.length?(mapea?`<span class="s" style="margin-bottom:4px">Presentaron ${ok} de ${a.length}</span>`:'')+ps.map(({c,p})=>`<div>${esc(c.razon_social)} ${presTag(p)}</div>`).join(''):'<span class="s">Ningún cliente con este impuesto</span>'}</td><td>${confTag(d)}${canEdit()?`<br><button class="g sm" style="margin-top:4px" onclick="toggleVerif('${d.id}',${!d.verificado})">${d.verificado?'Desmarcar':'Confirmar fecha'}</button>`:''}</td></tr>`}).join(''):'<tr><td colspan="5" style="color:var(--mut)">No hay vencimientos en este rango.</td></tr>'}</tbody></table></div>
@@ -2199,9 +2160,9 @@ async function toggleVerif(id,v){
   draw();
 }
 async function verifTodos(ids){
-  if(!ids.length||!confirm(`¿Confirmar las ${ids.length} fechas que se ven? Hacelo solo si ya las contrastaste con el calendario oficial.`))return;
+  if(!ids.length||!confirm(`¿Confirmar ${ids.length===1?'la fecha que se ve':'las '+ids.length+' fechas que se ven'}? Hacelo solo si ya las contrastaste con el calendario oficial.`))return;
   const {data,error}=await sb.from('tax_deadlines').update({verificado:true,verificado_por:me.id,verificado_at:new Date().toISOString()}).in('id',ids).select('id');
-  if(error)flash(errTxt(error),'err');else{await loadDeadlines();flash(`Se confirmaron ${data.length} fechas.`)}
+  if(error)flash(errTxt(error),'err');else{await loadDeadlines();flash(data.length===1?'Se confirmó 1 fecha.':`Se confirmaron ${data.length} fechas.`)}
   draw();
 }
 
@@ -2226,7 +2187,7 @@ function clCard(c){
   const st=ui.cstats[c.id]||{tot:0,fal:0};
   return `<div class="card cl ${c.active===false?'off':''}" tabindex="0" role="button" onclick="abrirFicha('${c.id}')" onkeydown="if(event.key==='Enter')abrirFicha('${c.id}')">
     <div class="term">${c.cuit.slice(-1)}<small>termina en</small></div><h3>${esc(c.razon_social)}</h3><div class="s" style="font-size:13px">CUIT ${cuitF(c.cuit)}${c.active===false?' (inactivo)':''}</div>
-    <div class="chips">${(c.impuestos||[]).map(k=>`<span class="chip">${CL_SH[k]||esc(k)}</span>`).join('')}</div>
+    <div class="chips">${esExento(c)?'<span class="chip">IVA exento</span>':''}${(c.impuestos||[]).map(k=>`<span class="chip">${CL_SH[k]||esc(k)}</span>`).join('')}</div>
     <div class="clf"><span>${st.tot} comprobantes</span><span class="${st.fal?'bad':''}">${st.fal} sin factura</span></div></div>`;
 }
 function clGrid(){
@@ -2249,6 +2210,392 @@ function vClientes(){
    <label style="display:flex;gap:8px;align-items:center;white-space:nowrap"><input type="checkbox" style="margin:0" ${f.falt?'checked':''} onchange="ui.cf.falt=this.checked;clRender()"> Con facturas faltantes</label>
    <button class="g" onclick="clLimpiar()">Limpiar</button><span class="s" id="clcount" style="align-self:center">${g.n===ui.clients.length?g.n+' clientes':g.n+' de '+ui.clients.length+' clientes'}</span></div>
   <div class="cl-grid" id="clgrid">${g.html}</div>`;
+}
+
+/* ===== Clientes IVA exento: se presenta todo en cero, no se cargan compras ni ventas ===== */
+const esExento=c=>!!c&&/exent/i.test(c.condicion_iva||'');
+const exentoMsg=cid=>{const c=ui.clients.find(x=>x.id===cid);return esExento(c)?`${c.razon_social} es IVA Exento: presenta todo en cero y no se cargan compras ni ventas. Si cambió su condición, actualizala en la pestaña Datos del cliente.`:null};
+const exentoAviso=cid=>{const m=exentoMsg(cid);return m?`<div class="msg info" style="margin-bottom:12px">${esc(m)}</div>`:''};
+function exBanner(cid){const el=document.getElementById('exbanner');if(el)el.innerHTML=exentoAviso(cid)}
+
+/* ===== IVA aproximado: cálculo ===== */
+/** Orden de la liquidación: saldo técnico del período; se compensa con el saldo técnico a favor anterior; lo que queda se cancela con
+    el saldo de libre disponibilidad anterior, las retenciones/percepciones sufridas y los pagos a cuenta. Lo que sobra pasa al mes siguiente. */
+function ivaCalcular(p){
+  const r2=x=>Math.round((x+Number.EPSILON)*100)/100,ST=r2((p.deb||0)-(p.cred||0)),stAnt=Math.max(0,p.stAnt||0),sldAnt=Math.max(0,p.sldAnt||0),ret=Math.max(0,p.retPerc||0),pag=Math.max(0,p.pagos||0);
+  let usadoST=0,base=0,stNuevo;
+  if(ST<0)stNuevo=r2(stAnt-ST);else{usadoST=Math.min(stAnt,ST);base=r2(ST-usadoST);stNuevo=r2(stAnt-usadoST)}
+  const aplicables=r2(sldAnt+ret+pag),consumido=Math.min(base,aplicables);
+  return {saldoTecnico:ST,usadoST:r2(usadoST),base,aplicables,consumido:r2(consumido),aPagar:r2(base-consumido),stNuevo,sldNuevo:r2(aplicables-consumido)};
+}
+const ivaSum=rows=>rows.reduce((a,x)=>a+sgnVal(x.tipo_cmp,x.iva),0);
+function ivaResultado(d){
+  const deb=ivaSum(d.ven),cred=ivaSum(d.com),percLibro=d.com.reduce((a,x)=>a+sgnVal(x.tipo_cmp,Number(x.raw&&x.raw['Percepción IVA'])||0),0),
+    retIva=d.ret.filter(x=>x.impuesto==='IVA').reduce((a,x)=>a+Number(x.importe),0),incl=!d.aj.excluir_percep_libro,extra=Number(d.aj.retenciones_percepciones||0),retTotal=retIva+(incl?percLibro:0)+extra;
+  return {deb,cred,percLibro,retIva,incl,extra,retTotal,...ivaCalcular({deb,cred,stAnt:Number(d.aj.saldo_tecnico_anterior||0),sldAnt:Number(d.aj.saldo_libre_disp||0),retPerc:retTotal,pagos:Number(d.aj.pagos_a_cuenta||0)})};
+}
+/** Carga lo necesario de un cliente y mes. Si todavía no hay ajustes de ese mes, los saldos "anteriores" salen del cierre del mes anterior. */
+async function ivaCargar(cid,per){
+  const pr=await sb.from('client_periods').select('id').eq('client_id',cid).eq('periodo',per+'-01').maybeSingle();if(pr.error)throw pr.error;
+  let ven=[],com=[];
+  if(pr.data)[ven,com]=await Promise.all([fetchAll((a,b)=>sb.from('sales_invoices').select('tipo_cmp,iva,neto_gravado,raw').eq('period_id',pr.data.id).range(a,b)),fetchAll((a,b)=>sb.from('vouchers').select('tipo_cmp,iva,neto_gravado,raw').eq('period_id',pr.data.id).neq('proc_status','excluido').range(a,b))]);
+  const [aj,prev,ret]=await Promise.all([sb.from('iva_ajustes').select('*').eq('client_id',cid).eq('periodo',per+'-01').maybeSingle(),sb.from('iva_ajustes').select('*').eq('client_id',cid).eq('periodo',antPrevPer(per)+'-01').maybeSingle(),sb.from('iva_retenciones').select('*').eq('client_id',cid).eq('periodo',per+'-01').order('fecha')]);
+  for(const r of [aj,prev,ret])if(r.error)throw r.error;
+  let ajuste=aj.data,prefill=false;const cierrePrev=prev.data&&prev.data.cierre_saldo_tecnico!==null&&prev.data.cierre_saldo_tecnico!==undefined;
+  if(!ajuste){ajuste={saldo_tecnico_anterior:cierrePrev?Number(prev.data.cierre_saldo_tecnico):0,saldo_libre_disp:cierrePrev?Number(prev.data.cierre_saldo_libre||0):0,retenciones_percepciones:0,pagos_a_cuenta:0,excluir_percep_libro:false};prefill=cierrePrev}
+  return {cid,per,ven,com,aj:ajuste,prev:prev.data,prefill,ret:ret.data};
+}
+async function ivaDetalle(cid){
+  const P=ui.ivaP;P.cid=cid;P.det={loading:true};P.retImp=null;draw();
+  try{P.det=await ivaCargar(cid,P.periodo)}catch(e){P.det=null;P.cid=null;flash(errTxt(e),'err')}
+  draw();
+}
+async function ivaGuardarAj(extra){
+  const P=ui.ivaP,a=P.det.aj,n=k=>Number(a[k])||0;
+  const row={client_id:P.cid,periodo:P.periodo+'-01',saldo_tecnico_anterior:n('saldo_tecnico_anterior'),saldo_libre_disp:n('saldo_libre_disp'),retenciones_percepciones:n('retenciones_percepciones'),pagos_a_cuenta:n('pagos_a_cuenta'),excluir_percep_libro:!!a.excluir_percep_libro,modificado_by:me.id,modificado_at:new Date().toISOString(),...(extra||{})};
+  const {error}=await sb.from('iva_ajustes').upsert(row,{onConflict:'client_id,periodo'});
+  if(error){flash('No se pudo guardar: '+errTxt(error),'err');return false}
+  P.det.prefill=false;return true;
+}
+async function ivaAjuste(campo,val){const a=ui.ivaP.det.aj;a[campo]=pNum(val)||0;draw();if(!await ivaGuardarAj())draw()}
+async function ivaTogglePerc(v){ui.ivaP.det.aj.excluir_percep_libro=!v;draw();if(!await ivaGuardarAj())draw()}
+async function ivaCerrar(){
+  const P=ui.ivaP,d=P.det,r=ivaResultado(d);
+  if(!confirm(`¿Cerrar ${P.periodo.slice(5)}/${P.periodo.slice(0,4)}?\nPasan al mes siguiente: saldo técnico a favor ${money(r.stNuevo)} y saldo de libre disponibilidad ${money(r.sldNuevo)}.`))return;
+  const ok=await ivaGuardarAj({cierre_saldo_tecnico:r.stNuevo,cierre_saldo_libre:r.sldNuevo,cierre_a_pagar:r.aPagar,cerrado_at:new Date().toISOString(),cerrado_por:me.id});
+  if(ok){Object.assign(d.aj,{cierre_saldo_tecnico:r.stNuevo,cierre_saldo_libre:r.sldNuevo,cierre_a_pagar:r.aPagar,cerrado_at:new Date().toISOString()});flash('Mes cerrado: los saldos pasan solos al mes siguiente.')}
+  draw();
+}
+
+/* ---- Retenciones y percepciones: carga a mano e importación con mapeo de columnas ---- */
+const RET_COLS={fecha:['fecha','fecha retencion','fecha percepcion','fecha de retencion','fecha de percepcion','fecha comprobante','fecha operacion','fecha de operacion'],
+  importe:['importe','importe retenido','importe retencion','importe percepcion','importe percibido','monto','monto retenido','importe retenido percibido','importe retencion percepcion','importe retenido o percibido'],
+  impuesto:['impuesto','descripcion impuesto','desc impuesto','codigo impuesto','tributo','descripcion del impuesto'],
+  agente_cuit:['cuit agente','cuit agente de retencion','cuit retenedor','cuit agente retencion','cuit del agente','cuit agente retencion percepcion','cuit'],
+  agente_nombre:['denominacion agente','denominacion agente de retencion','denominacion','razon social','agente de retencion','agente','razon social agente'],
+  comprobante:['numero comprobante','nro comprobante','numero de comprobante','comprobante','numero','nro','numero de retencion'],
+  tipo:['tipo','tipo retencion percepcion','tipo de operacion','retencion percepcion','operacion']};
+const RET_ETQ={fecha:'Fecha',importe:'Importe',impuesto:'Impuesto',agente_cuit:'CUIT del agente',agente_nombre:'Nombre del agente',comprobante:'N° de comprobante',tipo:'Tipo (retención o percepción)'};
+/** Reconoce una columna por su nombre: primero por la lista exacta y, si no, por palabras clave (tolera "N° Comprobante", "Fecha Retención", etc.). */
+function retCampoDe(h){
+  const k=norm(h);if(!k)return null;
+  for(const [f,al] of Object.entries(RET_COLS))if(al.includes(k))return {f,p:3};
+  if(/fecha/.test(k))return {f:'fecha',p:1};
+  if(/importe|monto/.test(k))return {f:'importe',p:/retenid|percibid|retencion|percepcion/.test(k)?2:1};
+  if(/impuesto|tributo/.test(k))return {f:'impuesto',p:1};
+  if(/cuit/.test(k))return {f:'agente_cuit',p:1};
+  if(/denominacion|razon social|nombre/.test(k))return {f:'agente_nombre',p:1};
+  if(/comprobante|numero|^nro/.test(k))return {f:'comprobante',p:1};
+  if(/^tipo/.test(k))return {f:'tipo',p:1};
+  return null;
+}
+function retDetectar(rows){
+  let best=null;
+  for(let i=0;i<Math.min(rows.length,20);i++){const m={},pr={};(rows[i]||[]).forEach((c,j)=>{const x=retCampoDe(c);if(!x)return;if(m[x.f]===undefined||x.p>pr[x.f]){m[x.f]=j;pr[x.f]=x.p}});const n=Object.keys(m).length;if(m.importe!==undefined&&m.fecha!==undefined&&(!best||n>best.n))best={h:i,m,n}}
+  return best;
+}
+/** Arma el plan de importación con el mapeo elegido: filtra por impuesto y por mes, y omite lo que ya está cargado. */
+function retPlan(R,existentes){
+  const {rows,h,m}=R,out={nuevos:[],ya:[],fuera:[],otros:0,errores:0},k=x=>[x.fecha,x.tipo,x.agente_cuit||'',x.comprobante||'',x.importe.toFixed(2)].join('|'),vistos=new Set(existentes.map(k));
+  const filtro=norm(R.filtro||'');
+  for(let i=h+1;i<rows.length;i++){
+    const r=rows[i]||[];if(r.every(c=>String(c??'').trim()===''))continue;
+    const g=f=>m[f]!==undefined&&m[f]!==''?r[m[f]]:null,fecha=pDate(g('fecha')),imp=pNum(g('importe'));
+    if(!fecha||imp===null){out.errores++;continue}
+    if(filtro&&m.impuesto!==undefined&&m.impuesto!==''&&!norm(g('impuesto')).includes(filtro)){out.otros++;continue}
+    const t=m.tipo!==undefined&&m.tipo!==''?(/percep/i.test(String(g('tipo')))?'percepcion':'retencion'):R.tipo;
+    const x={fecha,tipo:t,impuesto:'IVA',agente_cuit:String(g('agente_cuit')??'').replace(/\D/g,'')||null,agente_nombre:g('agente_nombre')?String(g('agente_nombre')).trim():null,comprobante:g('comprobante')!==null?String(g('comprobante')).trim():null,importe:Math.abs(imp)};
+    if(fecha.slice(0,7)!==R.per){out.fuera.push(x);continue}
+    if(vistos.has(k(x))){out.ya.push(x);continue}
+    vistos.add(k(x));out.nuevos.push(x);
+  }
+  return out;
+}
+async function retArchivo(){
+  const f=$('rfile').files[0],P=ui.ivaP,bad=m=>{flash(m,'err');draw()};
+  if(!f)return bad('Subí el Excel o CSV de retenciones y percepciones.');
+  if(!/\.(xlsx?|csv)$/i.test(f.name))return bad('El archivo debe ser .xls, .xlsx o .csv.');
+  if(f.size>10*1048576)return bad('El archivo supera los 10 MB.');
+  if(typeof XLSX==='undefined')return bad('No se pudo cargar el lector de Excel (¿sin conexión a internet?).');
+  let rows;try{const wb=XLSX.read(await f.arrayBuffer(),{type:'array',cellDates:false,raw:true});rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,raw:true,defval:null})}catch(e){return bad('No se pudo abrir el archivo: ¿está dañado?')}
+  const det=retDetectar(rows);
+  P.retImp={file:f.name,rows,h:det?det.h:0,m:det?{...det.m}:{},detectado:!!det,filtro:'IVA',tipo:'retencion',per:P.periodo};
+  draw();
+}
+function retMapa(campo,val){const R=ui.ivaP.retImp;if(val==='')delete R.m[campo];else R.m[campo]=Number(val);draw()}
+async function retConfirmar(){
+  const P=ui.ivaP,R=P.retImp,plan=retPlan(R,P.det.ret);if(!plan.nuevos.length)return;
+  const rowsDb=plan.nuevos.map(x=>({client_id:P.cid,periodo:P.periodo+'-01',fecha:x.fecha,tipo:x.tipo,impuesto:'IVA',agente_cuit:x.agente_cuit,agente_nombre:x.agente_nombre,comprobante:x.comprobante,importe:x.importe,origen:'importado',created_by:me.id}));
+  try{for(let i=0;i<rowsDb.length;i+=200){const {error}=await sb.from('iva_retenciones').insert(rowsDb.slice(i,i+200));if(error)throw error}
+    P.retImp=null;P.det=await ivaCargar(P.cid,P.periodo);flash(`Se cargaron ${rowsDb.length} retenciones y percepciones de IVA.`)}catch(e){flash('No se pudo guardar: '+errTxt(e),'err')}
+  draw();
+}
+async function retAgregar(e){
+  e.preventDefault();const fd=new FormData(e.target),P=ui.ivaP,imp=pNum(String(fd.get('imp'))),fecha=String(fd.get('fecha')),bad=m=>{flash(m,'err');draw();return false};
+  if(!pDate(fecha))return bad('La fecha no es válida.');if(fecha.slice(0,7)!==P.periodo)return bad('La fecha tiene que ser del mes '+P.periodo.slice(5)+'/'+P.periodo.slice(0,4)+'.');
+  if(imp===null||!(imp>0))return bad('El importe tiene que ser mayor a cero.');
+  const {error}=await sb.from('iva_retenciones').insert({client_id:P.cid,periodo:P.periodo+'-01',fecha,tipo:String(fd.get('tipo')),impuesto:'IVA',agente_cuit:String(fd.get('cuit')||'').replace(/\D/g,'')||null,agente_nombre:String(fd.get('nom')||'').trim()||null,comprobante:String(fd.get('comp')||'').trim()||null,importe:imp,origen:'manual',created_by:me.id});
+  if(error)flash(errTxt(error),'err');else{try{P.det=await ivaCargar(P.cid,P.periodo);flash('Retención o percepción agregada.')}catch(x){flash(errTxt(x),'err')}}
+  draw();return false;
+}
+async function retQuitar(id){
+  if(!confirm('¿Quitar esta retención o percepción?'))return;const P=ui.ivaP,{error}=await sb.from('iva_retenciones').delete().eq('id',id);
+  if(error)flash(errTxt(error),'err');else{try{P.det=await ivaCargar(P.cid,P.periodo);flash('Quitada.')}catch(x){flash(errTxt(x),'err')}}draw();
+}
+
+/* ---- Pantallas ---- */
+function vIva(){
+  const P=ui.ivaP,act=ui.clients.filter(c=>c.active!==false);
+  if(!act.length)return '<h2>IVA aproximado</h2><div class="card">No hay clientes disponibles.</div>';
+  const filas=act.map(c=>{const r=P.rows.find(x=>x.client_id===c.id);return {c,r,deb:r?Number(r.iva_ventas):0,cred:r?Number(r.iva_compras):0}}).filter(x=>x.r||tieneImp(x.c,'IVA')||esExento(x.c));
+  const lab=P.periodo.slice(5)+'/'+P.periodo.slice(0,4);
+  const aviso=(c,r)=>{if(esExento(c))return '<span class="s">IVA exento: se presenta en cero</span>';const a=[];if(!r||!r.cant_ventas)a.push('sin ventas cargadas');if(!r||!r.cant_compras)a.push('sin compras');if(r&&r.compras_sin_iva)a.push(r.compras_sin_iva+' compra(s) sin IVA');return a.length?`<span class="s" style="color:var(--ambt)">${a.join(', ')}</span>`:''};
+  return `<h2>IVA aproximado</h2>
+  <div class="card row" style="margin-bottom:12px"><label>Período<br>${mesPick(P.periodo,`ui.ivaP.periodo=this.value;show('iva')`)}</label>
+  <span class="s" style="max-width:560px">Es una estimación: IVA de las ventas menos IVA de las compras de ${lab}, con los saldos y las retenciones y percepciones que cargues. Las notas de crédito restan y los comprobantes de compra excluidos no cuentan. No reemplaza la liquidación.</span></div>
+  <div class="tw" style="margin-bottom:18px"><table><thead><tr><th>Cliente</th><th>IVA ventas (débito)</th><th>IVA compras (crédito)</th><th>Saldo aproximado</th><th></th></tr></thead><tbody>
+  ${filas.length?filas.map(({c,r,deb,cred})=>{const s=deb-cred;return `<tr><td>${esc(c.razon_social)}${aviso(c,r)}</td><td>${esExento(c)?'—':money(deb)}</td><td>${esExento(c)?'—':money(cred)}</td><td>${esExento(c)?'<b>En cero</b>':`<b>${money(Math.abs(s))}</b><span class="s">${s>0?'a pagar':s<0?'a favor':'sin saldo'}</span>`}</td><td><button class="g sm" onclick="ivaDetalle('${c.id}')">Ver detalle</button></td></tr>`}).join(''):'<tr><td colspan="5" style="color:var(--mut)">Ningún cliente tiene IVA marcado ni comprobantes en este período.</td></tr>'}</tbody></table></div>
+  ${P.cid?vIvaDetalle(ui.clients.find(c=>c.id===P.cid)):''}`;
+}
+function vIvaDetalle(c){
+  const P=ui.ivaP,d=P.det;if(!d)return '';if(d.loading)return '<div class="msg info">Calculando…</div>';
+  const lab=P.periodo.slice(5)+'/'+P.periodo.slice(0,4),cab=`<div class="row" style="justify-content:space-between;align-items:center;margin-bottom:10px"><h3 style="margin:0;font-size:20px">${esc(c.razon_social)}, ${lab}</h3><button class="b" onclick="informeIva('${c.id}','${P.periodo}')">Informe mensual (PDF)</button></div>${infCard(c.id)}`;
+  if(esExento(c))return `<div class="card" style="padding:20px">${cab}<div class="msg info">IVA Exento: este cliente presenta la declaración en cero. No se cargan compras ni ventas.</div></div>`;
+  const r=ivaResultado(d),a=d.aj,dv=desglose(d.ven),dc=desglose(d.com),keys=[...new Set([...Object.keys(dv),...Object.keys(dc)])].sort((x,y)=>Number(x)-Number(y));
+  const restoV=r.deb-Object.values(dv).reduce((s,x)=>s+x.iva,0),restoC=r.cred-Object.values(dc).reduce((s,x)=>s+x.iva,0);
+  const campo=(k,t,v,ayuda)=>`<label>${t}<input inputmode="decimal" value="${v?String(v).replace('.',','):''}" placeholder="0" onchange="ivaAjuste('${k}',this.value)">${ayuda?`<span class="s">${ayuda}</span>`:''}</label>`;
+  const cerrado=a.cerrado_at?new Date(a.cerrado_at):null,difiere=cerrado&&(Math.abs(Number(a.cierre_saldo_tecnico)-r.stNuevo)>0.005||Math.abs(Number(a.cierre_saldo_libre)-r.sldNuevo)>0.005);
+  const retRows=d.ret;
+  return `<div class="card" style="padding:20px">${cab}
+  <div class="grid" style="margin-bottom:14px"><div class="card kpi"><b>${money(r.deb)}</b><span>IVA ventas, débito fiscal (${d.ven.length} facturas)</span></div><div class="card kpi"><b>${money(r.cred)}</b><span>IVA compras, crédito fiscal (${d.com.length} comprobantes)</span></div><div class="card kpi"><b>${money(r.saldoTecnico)}</b><span>${r.saldoTecnico>=0?'Saldo técnico a pagar antes de ajustes':'Saldo técnico a favor del período'}</span></div></div>
+  ${!d.ven.length?'<div class="msg warn">No hay ventas cargadas en este período: el débito fiscal figura en cero. Cargalas en la sección Ventas.</div>':''}${!d.com.length?'<div class="msg warn">No hay comprobantes de compra en este período.</div>':''}
+  <h3>Saldos que vienen del mes anterior</h3>
+  ${d.prefill?`<div class="msg info">Tomados del cierre de ${antPrevPer(P.periodo).slice(5)}/${antPrevPer(P.periodo).slice(0,4)}. Podés corregirlos.</div>`:`<p class="s" style="margin-bottom:8px">Si cerrás el mes anterior en esta pantalla, estos saldos pasan solos. Mientras tanto, cargalos a mano.</p>`}
+  <div class="fgrid" style="margin-bottom:14px">${campo('saldo_tecnico_anterior','Saldo técnico a favor del período anterior',a.saldo_tecnico_anterior)}${campo('saldo_libre_disp','Saldo de libre disponibilidad anterior',a.saldo_libre_disp)}${campo('pagos_a_cuenta','Pagos a cuenta de este mes',a.pagos_a_cuenta)}</div>
+  <h3>Retenciones y percepciones sufridas de IVA</h3>
+  ${retRows.length?`<div class="tw" style="margin-bottom:10px"><table><thead><tr><th>Fecha</th><th>Tipo</th><th>Agente</th><th>Comprobante</th><th>Importe</th><th></th></tr></thead><tbody>${retRows.map(x=>`<tr><td>${fAR(x.fecha)}</td><td>${x.tipo==='retencion'?'Retención':'Percepción'}${x.impuesto!=='IVA'?` <span class="s">${esc(x.impuesto)}</span>`:''}</td><td>${esc(x.agente_nombre||'')}<span class="s">${x.agente_cuit?cuitF(x.agente_cuit):''}</span></td><td>${esc(x.comprobante||'')}</td><td>${money(Number(x.importe))}</td><td><button class="dng sm" onclick="retQuitar('${x.id}')">Quitar</button></td></tr>`).join('')}</tbody></table></div>`:'<p class="s" style="margin-bottom:8px">Todavía no hay retenciones ni percepciones cargadas para este mes.</p>'}
+  <div class="card" style="margin-bottom:10px"><div class="row" style="justify-content:space-between;align-items:center"><span>Percepciones de IVA que figuran en el Libro IVA de compras: <b>${money(r.percLibro)}</b></span><label style="display:flex;gap:8px;align-items:center;margin:0"><input type="checkbox" style="margin:0" ${r.incl?'checked':''} onchange="ivaTogglePerc(this.checked)"> Sumarlas</label></div><span class="s">Si ya las cargaste también desde "Mis Retenciones", destildalas para no contarlas dos veces.</span></div>
+  <details style="margin-bottom:10px" ${ui.ivaP.retImp?'open':''}><summary class="s" style="cursor:pointer">Agregar a mano o importar el Excel de ARCA</summary>
+   <form class="fgrid" style="margin-top:8px" onsubmit="return retAgregar(event)"><label>Fecha<input type="date" name="fecha" required value="${P.periodo}-01"></label><label>Tipo<select name="tipo"><option value="retencion">Retención</option><option value="percepcion">Percepción</option></select></label><label>CUIT del agente<input name="cuit" inputmode="numeric"></label><label>Nombre del agente<input name="nom"></label><label>N° de comprobante<input name="comp"></label><label>Importe<input name="imp" inputmode="decimal" required></label><div class="full"><button class="b">Agregar</button></div></form>
+   <div class="card" style="margin-top:10px"><b>Importar "Mis Retenciones" de ARCA (Excel o CSV)</b><div class="row" style="margin-top:6px"><input type="file" id="rfile" accept=".xls,.xlsx,.csv"><button class="g" onclick="retArchivo()">Leer archivo</button></div></div>
+   ${ui.ivaP.retImp?vRetImport():''}</details>
+  <div class="fgrid" style="margin-bottom:14px">${campo('retenciones_percepciones','Otras retenciones o percepciones (ajuste manual)',a.retenciones_percepciones,'Solo si algo no está en la lista de arriba.')}</div>
+  <div class="card" style="margin-bottom:14px;background:var(--${r.aPagar>0?'amb':'grn'});border-color:var(--${r.aPagar>0?'ambt':'grnt'})"><span class="s">Resultado aproximado</span><div style="font:700 28px 'Bricolage Grotesque',system-ui,sans-serif">${r.aPagar>0?'IVA a pagar: ':'Sin IVA a pagar'}${r.aPagar>0?money(r.aPagar):''}</div>
+   <div class="s" style="margin-top:8px;line-height:1.6">Saldo técnico del período ${money(r.saldoTecnico)}${r.usadoST?`, menos ${money(r.usadoST)} de saldo técnico anterior`:''}${r.consumido?`, menos ${money(r.consumido)} de retenciones, percepciones, pagos a cuenta y saldo de libre disponibilidad`:''}.<br>Pasan al mes siguiente: saldo técnico a favor <b>${money(r.stNuevo)}</b> y saldo de libre disponibilidad <b>${money(r.sldNuevo)}</b>.</div></div>
+  <div class="row" style="margin-bottom:14px"><button class="b" onclick="ivaCerrar()">${cerrado?'Volver a cerrar el mes':'Cerrar el mes y pasar los saldos'}</button>${cerrado?`<span class="s">Cerrado el ${fAR(isoLocal(cerrado))}.${difiere?' <b style="color:var(--ambt)">Cambiaste datos después de cerrar: volvé a cerrar para actualizar los saldos del mes siguiente.</b>':''}</span>`:'<span class="s">Al cerrar, los saldos del mes pasan solos al mes siguiente.</span>'}</div>
+  <h3>Desglose por alícuota</h3>
+  ${keys.length?`<div class="tw"><table><thead><tr><th>Alícuota</th><th>Ventas, neto</th><th>Ventas, IVA</th><th>Compras, neto</th><th>Compras, IVA</th></tr></thead><tbody>${keys.map(k=>`<tr><td>${String(k).replace('.',',')}%</td><td>${money((dv[k]||{neto:0}).neto)}</td><td>${money((dv[k]||{iva:0}).iva)}</td><td>${money((dc[k]||{neto:0}).neto)}</td><td>${money((dc[k]||{iva:0}).iva)}</td></tr>`).join('')}${Math.abs(restoV)>0.01||Math.abs(restoC)>0.01?`<tr><td>Sin desglose</td><td></td><td>${money(restoV)}</td><td></td><td>${money(restoC)}</td></tr>`:''}</tbody></table></div>`:'<div class="card" style="color:var(--mut)">Sin desglose por alícuota: los datos cargados no traen las columnas por alícuota.</div>'}
+  <p class="s" style="margin-top:12px">No incluye prorrateo de crédito fiscal ni otros conceptos de la declaración jurada. Es una estimación para anticipar el resultado: la liquidación definitiva se hace en ARCA.</p></div>`;
+}
+function vRetImport(){
+  const R=ui.ivaP.retImp,P=ui.ivaP,heads=R.rows[R.h]||[],plan=retPlan(R,P.det.ret);
+  const sel=f=>`<label>${RET_ETQ[f]}<select onchange="retMapa('${f}',this.value)"><option value="">(ninguna)</option>${heads.map((h,j)=>`<option value="${j}" ${R.m[f]===j?'selected':''}>${esc(String(h??'(sin título)'))}</option>`).join('')}</select></label>`;
+  return `<div class="card" style="margin-top:10px"><b>Archivo: ${esc(R.file)}</b>
+  ${R.detectado?'<div class="msg info" style="margin:8px 0">Se detectaron las columnas automáticamente. Verificá que sean las correctas.</div>':'<div class="msg warn" style="margin:8px 0">No se reconocieron las columnas: elegilas a mano. Si el formato se repite, pasame un archivo de muestra y lo dejo automático.</div>'}
+  <div class="fgrid">${['fecha','importe','impuesto','agente_cuit','agente_nombre','comprobante','tipo'].map(sel).join('')}
+   <label>Incluir solo si el impuesto contiene<input value="${esc(R.filtro)}" onchange="ui.ivaP.retImp.filtro=this.value;draw()"></label>
+   ${R.m.tipo===undefined?`<label>Todo lo del archivo es<select onchange="ui.ivaP.retImp.tipo=this.value;draw()"><option value="retencion" ${R.tipo==='retencion'?'selected':''}>Retenciones</option><option value="percepcion" ${R.tipo==='percepcion'?'selected':''}>Percepciones</option></select></label>`:''}</div>
+  <p class="s" style="margin:10px 0">De ${R.rows.length-R.h-1} filas: <b>${plan.nuevos.length}</b> nuevas de ${P.periodo.slice(5)}/${P.periodo.slice(0,4)}, ${plan.ya.length} ya cargadas, ${plan.fuera.length} de otro mes, ${plan.otros} de otros impuestos${plan.errores?`, ${plan.errores} ilegibles`:''}. Total a agregar: <b>${money(plan.nuevos.reduce((a,x)=>a+x.importe,0))}</b>.</p>
+  ${plan.nuevos.length?`<div class="tw" style="margin-bottom:10px"><table><thead><tr><th>Fecha</th><th>Tipo</th><th>Agente</th><th>Importe</th></tr></thead><tbody>${plan.nuevos.slice(0,8).map(x=>`<tr><td>${fAR(x.fecha)}</td><td>${x.tipo==='retencion'?'Retención':'Percepción'}</td><td>${esc(x.agente_nombre||'')}<span class="s">${x.agente_cuit?cuitF(x.agente_cuit):''}</span></td><td>${money(x.importe)}</td></tr>`).join('')}</tbody></table></div>${plan.nuevos.length>8?`<p class="s">…y ${plan.nuevos.length-8} más.</p>`:''}`:''}
+  <div class="row"><button class="b" ${plan.nuevos.length?'':'disabled'} onclick="retConfirmar()">Agregar ${plan.nuevos.length}</button><button class="g" onclick="ui.ivaP.retImp=null;draw()">Cancelar</button></div></div>`;
+}
+
+/* ===== Informe mensual por cliente (PDF) ===== */
+const sumarDias=(iso,n)=>{const [y,m,d]=iso.split('-').map(Number);return new Date(Date.UTC(y,m-1,d+n)).toISOString().slice(0,10)};
+function presMes(c,per){
+  return aplica(c).filter(k=>OBLIG[k].t==='m').map(k=>{const x=filDe(c.id,k,per);return [OBLIG[k].n,x?`${OBLIG[k].v==='pagado'?'Pagado':'Presentado'} el ${fAR(isoLocal(new Date(x.presentado_at)))}${k==='GAN_ANT'&&x.numero_anticipo?' (anticipo '+x.numero_anticipo+')':''}`:'Pendiente']});
+}
+function infMensaje(I,ct){
+  const c=ui.clients.find(x=>x.id===I.cid),nom=ct?String(ct.nombre).trim().split(/\s+/)[0]:'';
+  return `Hola${nom?' '+nom:''}, ¿cómo estás? Te paso el informe mensual de IVA de ${mesAnio(I.per+'-01')} de ${c.razon_social}. ${I.exe?'La declaración se presenta en cero.':(I.aPagar>0?`El resultado aproximado es IVA a pagar: ${money(I.aPagar)}.`:'El resultado aproximado es que no hay IVA a pagar.')}${I.falt?` Quedan ${I.falt} facturas por recibir.`:''} Cualquier duda, avisanos. Estudio Theiler.`;
+}
+async function informeIva(cid,per){
+  const c=ui.clients.find(x=>x.id===cid);if(!c)return;
+  if(!window.jspdf||!window.jspdf.jsPDF){flash('No se pudo cargar el generador de PDF (¿sin internet?).','err');return draw()}
+  try{
+    const exe=esExento(c),d=exe?null:await ivaCargar(cid,per),r=d?ivaResultado(d):null,pr=await sb.from('client_periods').select('id').eq('client_id',cid).eq('periodo',per+'-01').maybeSingle();
+    if(pr.error)throw pr.error;
+    const falt=pr.data?await fetchAll((a,b)=>sb.from('vouchers').select('fecha,emisor_nombre,emisor_cuit,tipo_cmp,punto_venta,numero,importe_total,raw').eq('period_id',pr.data.id).eq('doc_status','no_recibida').order('fecha').range(a,b)):[];
+    const doc=new window.jspdf.jsPDF({orientation:'portrait',unit:'mm',format:'a4'}),azul=[23,48,92],lab=mesAnio(per+'-01');
+    doc.setFontSize(18);doc.setTextColor(...azul);doc.text('Estudio Theiler',14,18);doc.setFontSize(12);doc.setTextColor(60);doc.text('Informe mensual de IVA - '+lab,14,26);
+    doc.setFontSize(10);doc.text(`${c.razon_social}   CUIT ${cuitF(c.cuit)}${c.condicion_iva?'   ('+c.condicion_iva+')':''}`,14,33);doc.text('Generado el '+fAR(hoyISO()),14,38);
+    let y=44;const tabla=(titulo,head,body,opts)=>{doc.setFontSize(12);doc.setTextColor(...azul);doc.text(titulo,14,y);doc.autoTable({startY:y+3,head:[head],body,theme:'grid',styles:{fontSize:9.5},headStyles:{fillColor:azul},columnStyles:opts&&opts.cols||{},margin:{left:14,right:14}});y=doc.lastAutoTable.finalY+8};
+    if(exe){doc.setFontSize(11);doc.setTextColor(40);doc.text('Cliente IVA Exento: la declaración se presenta en cero. No se cargan compras ni ventas.',14,y);y+=10}
+    else{
+      tabla('IVA del mes',['Concepto','Importe'],[['IVA ventas (débito fiscal)',money(r.deb)],['IVA compras (crédito fiscal)',money(r.cred)],['Saldo técnico del período',money(r.saldoTecnico)],['Saldo técnico a favor del mes anterior',money(Number(d.aj.saldo_tecnico_anterior||0))],['Retenciones y percepciones sufridas',money(r.retTotal)],['Pagos a cuenta',money(Number(d.aj.pagos_a_cuenta||0))],['Saldo de libre disponibilidad anterior',money(Number(d.aj.saldo_libre_disp||0))],[{content:'Resultado aproximado',styles:{fontStyle:'bold'}},{content:r.aPagar>0?'IVA a pagar: '+money(r.aPagar):'Sin IVA a pagar',styles:{fontStyle:'bold'}}],['Pasan al mes siguiente (saldo técnico / libre disponibilidad)',money(r.stNuevo)+' / '+money(r.sldNuevo)]],{cols:{1:{halign:'right'}}});
+      const dv=desglose(d.ven),dc=desglose(d.com),ks=[...new Set([...Object.keys(dv),...Object.keys(dc)])].sort((a,b)=>Number(a)-Number(b));
+      if(ks.length)tabla('Desglose por alícuota',['Alícuota','Ventas neto','Ventas IVA','Compras neto','Compras IVA'],ks.map(k=>[String(k).replace('.',',')+'%',money((dv[k]||{neto:0}).neto),money((dv[k]||{iva:0}).iva),money((dc[k]||{neto:0}).neto),money((dc[k]||{iva:0}).iva)]),{cols:{1:{halign:'right'},2:{halign:'right'},3:{halign:'right'},4:{halign:'right'}}});
+      doc.setFontSize(9.5);doc.setTextColor(60);doc.text(`Base: ${d.ven.length} facturas emitidas y ${d.com.length} comprobantes de compra del período.`,14,y-2);y+=6;
+    }
+    const pm=presMes(c,per);if(pm.length)tabla('Presentaciones del mes',['Obligación','Estado'],pm);
+    if(falt.length){tabla(`Facturas que faltan recibir (${falt.length})`,['Fecha','Proveedor','Comprobante','Importe'],falt.slice(0,15).map(v=>[fAR(v.fecha),(v.emisor_nombre||cuitF(v.emisor_cuit)).slice(0,40),`${tipoTxt(v)} ${nroF(v.punto_venta,v.numero)}`,money(Number(v.importe_total))]),{cols:{3:{halign:'right'}}});if(falt.length>15){doc.setFontSize(9.5);doc.text(`...y ${falt.length-15} más.`,14,y-4)}}
+    doc.setFontSize(8.5);doc.setTextColor(110);const pie=doc.splitTextToSize('Este informe es una estimación basada en los comprobantes cargados al sistema. No reemplaza la declaración jurada ni la liquidación definitiva, que se realizan en ARCA.',182);doc.text(pie,14,Math.min(y,285));
+    const blob=doc.output('blob'),nombre='Informe-IVA-'+c.razon_social.normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^A-Za-z0-9]+/g,'_').slice(0,40)+'-'+per+'.pdf';
+    ui.inf={cid,per,blob,nombre,exe,aPagar:r?r.aPagar:0,falt:falt.length};bkDescargar(blob,nombre);flash('Informe generado y descargado.');
+  }catch(e){flash('No se pudo armar el informe: '+(e.message||e),'err')}
+  draw();
+}
+function infCard(cid){
+  const I=ui.inf;if(!I||I.cid!==cid)return '';
+  return `<div class="msg ok" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span style="flex:1;min-width:200px">Informe de ${I.per.slice(5)}/${I.per.slice(0,4)} listo: <b>${esc(I.nombre)}</b></span><button class="g sm" onclick="bkDescargar(ui.inf.blob,ui.inf.nombre)">Descargar otra vez</button><button class="b sm" onclick="infWhatsapp()">Enviar por WhatsApp</button><button class="g sm" onclick="ui.inf=null;draw()">Cerrar</button></div>`;
+}
+async function infWhatsapp(){
+  const I=ui.inf;if(!I)return;
+  const {data,error}=await sb.from('client_contacts').select('*').eq('client_id',I.cid);if(error){flash(errTxt(error),'err');return draw()}
+  const L=(data||[]).filter(x=>x.whatsapp),ct=L.find(x=>x.is_entrega)||L[0]||null,w=ct?waNum(ct.whatsapp):null,msg=infMensaje(I,ct);
+  try{
+    const file=new File([I.blob],I.nombre,{type:'application/pdf'});
+    if(typeof navigator.canShare==='function'&&navigator.canShare({files:[file]})){await navigator.share({files:[file],text:msg,title:I.nombre});return}
+  }catch(e){if(e&&e.name==='AbortError')return}
+  if(!w||!w.ok){try{await navigator.clipboard.writeText(msg);flash('El cliente no tiene un WhatsApp válido cargado en Contactos: copié el mensaje. El PDF ya está descargado.','warn')}catch(e){flash('El cliente no tiene un WhatsApp válido cargado en Contactos.','warn')}return draw()}
+  bkDescargar(I.blob,I.nombre);window.open('https://wa.me/'+w.num+'?text='+encodeURIComponent(msg),'_blank');flash('Se abrió WhatsApp con el mensaje. Arrastrá el PDF descargado al chat.');draw();
+}
+
+/* ===== Tablero de cumplimiento ===== */
+ui.cum={periodo:null,dl:[],solo:false,term:'',q:''};
+const CUM_COLS=[['IVA','IVA','IVA'],['IIBB','IIBB','CM'],['F931','F.931','F931'],['GAN_ANT','Anticipo Gcias.',null]];
+async function loadCum(){const C=ui.cum;C.periodo=C.periodo||workPeriod();const {data,error}=await sb.from('tax_deadlines').select('*').eq('periodo',C.periodo);if(error)throw error;C.dl=data}
+function cumCelda(c,k){
+  const per=ui.cum.periodo;if(!aplica(c).includes(k))return {k:'na'};
+  const x=filDe(c.id,k,per);if(x)return {k:'ok',t:fAR(isoLocal(new Date(x.presentado_at))).slice(0,5),n:x.numero_anticipo};
+  const imp=CUM_COLS.find(z=>z[0]===k)[2],d=imp?ui.cum.dl.find(z=>z.impuesto===imp&&delC(z,c)):null;
+  if(d)return diasHasta(d.fecha)<0?{k:'venc',t:fAR(d.fecha).slice(0,5)}:{k:'pend',t:fAR(d.fecha).slice(0,5),dias:diasHasta(d.fecha)};
+  return {k:'pend',t:null};
+}
+function cumIr(cid,k){const per=ui.cum.periodo;if(k==='F931')return irSueldos(cid,per);if(k==='GAN_ANT')return irAnticipos(per);abrirFicha(cid,'present')}
+function vCumplimiento(){
+  const C=ui.cum,per=C.periodo||workPeriod(),q=norm(C.q);
+  let L=ui.clients.filter(c=>c.active!==false).map(c=>({c,cel:Object.fromEntries(CUM_COLS.map(([k])=>[k,cumCelda(c,k)])),falt:((ui.pst.find(r=>r.client_id===c.id&&r.periodo.slice(0,7)===per)||{}).faltan)||0}));
+  const all=L.flatMap(x=>Object.values(x.cel)).filter(z=>z.k!=='na'),ok=all.filter(z=>z.k==='ok').length,venc=all.filter(z=>z.k==='venc').length,pend=all.filter(z=>z.k==='pend').length;
+  if(q)L=L.filter(x=>norm(x.c.razon_social+' '+(x.c.nombre_comercial||'')).includes(q)||(q.replace(/\D/g,'').length>=2&&x.c.cuit.includes(q.replace(/\D/g,''))));
+  if(C.term!=='')L=L.filter(x=>x.c.cuit.slice(-1)===C.term);
+  if(C.solo)L=L.filter(x=>Object.values(x.cel).some(z=>z.k==='pend'||z.k==='venc'));
+  const peso=x=>Object.values(x.cel).filter(z=>z.k==='venc').length*100+Object.values(x.cel).filter(z=>z.k==='pend').length;
+  L.sort((a,b)=>peso(b)-peso(a)||a.c.razon_social.localeCompare(b.c.razon_social,'es'));
+  const pct=all.length?Math.round(100*ok/all.length):0;
+  const celda=(x,k)=>{const z=x.cel[k];
+    if(z.k==='na')return '<span class="s">-</span>';
+    const col=z.k==='ok'?['grn','grnt']:z.k==='venc'?['red','redt']:['amb','ambt'],txt=z.k==='ok'?'✓ '+(k==='GAN_ANT'&&z.n?'N° '+z.n+' ':'')+z.t:z.k==='venc'?'venció '+z.t:z.t?'vence '+z.t:'pendiente';
+    return `<button class="tag" style="background:var(--${col[0]});color:var(--${col[1]});border:0;cursor:pointer;font:inherit" title="Abrir" onclick="cumIr('${x.c.id}','${k}')">${txt}</button>`};
+  return `<h2>Cumplimiento del mes</h2>
+  <div class="card row" style="margin-bottom:12px;align-items:end"><label>Período<br>${mesPick(per,`ui.cum.periodo=this.value;show('cumplimiento')`)}</label>
+   <label style="flex:1;min-width:200px">Buscar cliente<input type="search" value="${esc(C.q)}" oninput="ui.cum.q=this.value;draw()" style="width:100%" autocomplete="off"></label>
+   <label>CUIT termina en<select onchange="ui.cum.term=this.value;draw()"><option value="">Cualquiera</option>${[0,1,2,3,4,5,6,7,8,9].map(n=>`<option value="${n}" ${C.term===String(n)?'selected':''}>${n}</option>`).join('')}</select></label>
+   <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" style="margin:0" ${C.solo?'checked':''} onchange="ui.cum.solo=this.checked;draw()"> Solo con pendientes</label></div>
+  <div class="grid" style="margin-bottom:12px"><div class="card kpi"><b>${pct}%</b><span>cumplido (${ok} de ${all.length})</span></div><div class="card kpi"><b style="color:var(--redt)">${venc}</b><span>vencidas sin presentar</span></div><div class="card kpi"><b>${pend}</b><span>pendientes (incluye las vencidas)</span></div><div class="card kpi"><b>${ui.clients.filter(c=>c.active!==false).length}</b><span>clientes activos</span></div></div>
+  <div style="height:10px;border-radius:99px;background:var(--hd);overflow:hidden;border:1px solid var(--bd);margin-bottom:14px"><div style="height:100%;width:${pct}%;background:var(--pri)"></div></div>
+  <div class="tw"><table><thead><tr><th>Cliente</th>${CUM_COLS.map(([k,t])=>`<th>${t}</th>`).join('')}<th>Facturas faltantes</th></tr></thead><tbody>
+  ${L.length?L.map(x=>`<tr><td><a href="#" style="color:var(--tx);font-weight:600;text-decoration:none" onclick="abrirFicha('${x.c.id}');return false">${esc(x.c.razon_social)}</a><span class="s">termina en ${x.c.cuit.slice(-1)}${esExento(x.c)?' · IVA exento (en cero)':''}</span></td>${CUM_COLS.map(([k])=>`<td>${celda(x,k)}</td>`).join('')}<td ${x.falt?'style="color:var(--redt);font-weight:600"':''}>${esExento(x.c)?'-':x.falt}</td></tr>`).join(''):'<tr><td colspan="6" style="color:var(--mut)">No hay clientes que coincidan.</td></tr>'}</tbody></table></div>
+  <p class="s" style="margin-top:10px">Se arma con lo que marcás como presentado o pagado en cada cliente y con los vencimientos cargados. Tocá una celda para ir a marcarla. Las fechas "a confirmar" se confirman en Vencimientos.</p>`;
+}
+
+/* ===== Avisos de vencimientos (con anticipación) ===== */
+ui.cfg={avisos:{dias_antes:5,dias_urgente:2,dias_vencido:7,whatsapp:''}};ui.cs=[];ui.cl=[];
+async function loadCfg(){try{const {data,error}=await sb.from('app_config').select('*');if(error)return;(data||[]).forEach(r=>{ui.cfg[r.key]={...(ui.cfg[r.key]||{}),...r.value}})}catch(e){}}
+async function loadSched(){const [a,b]=await Promise.all([sb.from('claim_schedules').select('*').order('proxima_fecha'),sb.from('claim_log').select('*').order('enviado',{ascending:false}).limit(100)]);if(a.error)throw a.error;if(b.error)throw b.error;ui.cs=a.data;ui.cl=b.data}
+const faltanDe=(cid,per)=>{const r=ui.pst.find(x=>x.client_id===cid&&x.periodo.slice(0,7)===per);return r?r.faltan:0};
+function calcAvisos(){
+  const cfg=ui.cfg.avisos,out=[];
+  for(const d of ui.dl){
+    const n=diasHasta(d.fecha);if(n>cfg.dias_antes||n<-cfg.dias_vencido)continue;
+    for(const c of afectados(d)){const p=presDeVenc(c,d);if(p.k==='ok')continue;
+      if(p.k==='na'){if(n>=0&&n<=cfg.dias_urgente)out.push({tipo:'info',n,d,c});continue}
+      out.push({tipo:p.k==='venc'?'vencido':(n<=cfg.dias_urgente?'urgente':'proximo'),n,d,c});}
+  }
+  for(const s of ui.cs){if(!s.activo)continue;const dias=diasHasta(s.proxima_fecha);if(dias>0)continue;const c=ui.clients.find(x=>x.id===s.client_id);if(!c||c.active===false||esExento(c))continue;const f=faltanDe(s.client_id,s.periodo.slice(0,7));if(f>0)out.push({tipo:'reclamo',n:dias,s,c,f})}
+  const ord={vencido:0,reclamo:1,urgente:2,proximo:3,info:4};return out.sort((a,b)=>ord[a.tipo]-ord[b.tipo]||a.n-b.n||a.c.razon_social.localeCompare(b.c.razon_social,'es'));
+}
+const avisosCuenta=()=>calcAvisos().filter(x=>x.tipo!=='info'&&x.tipo!=='proximo').length;
+const navBadge=k=>{if(k!=='avisos')return '';const n=avisosCuenta();return n?` <span class="tag" style="background:var(--red);color:var(--redt);margin-left:4px">${n}</span>`:''};
+const AV_ETQ={vencido:['Vencidos sin presentar','red'],reclamo:['Reclamos para enviar','blu'],urgente:['Urgentes','amb'],proximo:['Próximos','org'],info:['Vencen pronto (se controlan en otra sección)','blu']};
+function avLinea(x){
+  if(x.tipo==='reclamo')return `<b>${esc(x.c.razon_social)}</b>: reclamar facturas de ${x.s.periodo.slice(5,7)}/${x.s.periodo.slice(0,4)} (faltan ${x.f})${x.n<0?`, programado hace ${-x.n} d`:', programado para hoy'}`;
+  return `<b>${esc(x.c.razon_social)}</b>: ${esc(x.d.descripcion)}${x.d.periodo?' ('+esc(x.d.periodo)+')':''}, ${fAR(x.d.fecha).slice(0,5)} (${cuando(x.n)})`;
+}
+function avisosResumen(){
+  const L=calcAvisos().filter(x=>x.tipo!=='info'&&x.tipo!=='proximo');if(!L.length)return '';
+  return `<div class="card" style="margin-bottom:14px;border-color:var(--redt)"><div class="row" style="justify-content:space-between;align-items:center"><b>${L.length} ${L.length===1?'aviso que requiere atención':'avisos que requieren atención'}</b><button class="b sm" onclick="show('avisos')">Ver los avisos</button></div>
+  ${L.slice(0,4).map(x=>`<div class="s" style="margin-top:6px;color:var(--tx)">${avLinea(x)}</div>`).join('')}${L.length>4?`<div class="s" style="margin-top:6px">…y ${L.length-4} más.</div>`:''}</div>`;
+}
+function avMensaje(){
+  const L=calcAvisos().filter(x=>x.tipo!=='info');if(!L.length)return 'Estudio Theiler: sin avisos pendientes.';
+  const linea=x=>x.tipo==='reclamo'?`- Reclamar facturas a ${x.c.razon_social} (${x.s.periodo.slice(5,7)}/${x.s.periodo.slice(0,4)}, faltan ${x.f})`:`- ${x.c.razon_social}: ${x.d.descripcion}, ${fAR(x.d.fecha).slice(0,5)} (${cuando(x.n)})`;
+  const g=t=>{const l=L.filter(x=>x.tipo===t);return l.length?`*${AV_ETQ[t][0]}*\n${l.map(linea).join('\n')}`:''};
+  return 'Estudio Theiler, avisos del '+fAR(hoyISO())+'\n\n'+['vencido','reclamo','urgente','proximo'].map(g).filter(Boolean).join('\n\n');
+}
+function avWhatsapp(){const w=waNum(ui.cfg.avisos.whatsapp),u='https://wa.me/'+(w&&w.ok?w.num:'')+'?text='+encodeURIComponent(avMensaje());window.open(u,'_blank')}
+async function avCopiar(){try{await navigator.clipboard.writeText(avMensaje());flash('Resumen copiado.')}catch(e){flash('No se pudo copiar.','err')}draw()}
+async function avGuardar(){
+  const g=id=>$(id).value,n=(id,def)=>{const v=parseInt(g(id),10);return Number.isFinite(v)&&v>=0&&v<=60?v:def},w=g('avwa').trim();
+  if(w&&!(waNum(w)||{}).ok){flash('Revisá el WhatsApp: código de área + número, sin 0 ni 15.','err');return draw()}
+  ui.cfg.avisos={dias_antes:n('avA',5),dias_urgente:n('avU',2),dias_vencido:n('avV',7),whatsapp:w};
+  const {error}=await sb.from('app_config').upsert({key:'avisos',value:ui.cfg.avisos,updated_by:me.id,updated_at:new Date().toISOString()},{onConflict:'key'});
+  if(error)flash(errTxt(error),'err');else flash('Configuración de avisos guardada.');draw();
+}
+function vAvisos(){
+  const cfg=ui.cfg.avisos,L=calcAvisos(),ed=canEdit(),grupos=['vencido','reclamo','urgente','proximo','info'];
+  return `<h2>Avisos</h2>
+  <p class="s" style="margin-bottom:12px">Los avisos aparecen unos días antes de cada vencimiento y solo para quienes todavía no presentaron. No es un aviso diario: cada obligación aparece desde ${cfg.dias_antes} días antes de su fecha y desaparece cuando la marcás como presentada.</p>
+  <div class="card row" style="margin-bottom:14px;align-items:end"><label>Avisar desde (días antes)<input id="avA" inputmode="numeric" value="${cfg.dias_antes}" style="width:90px" ${ed?'':'disabled'}></label><label>Marcar urgente desde (días antes)<input id="avU" inputmode="numeric" value="${cfg.dias_urgente}" style="width:90px" ${ed?'':'disabled'}></label>
+   <label>Seguir mostrando vencidos (días)<input id="avV" inputmode="numeric" value="${cfg.dias_vencido}" style="width:90px" ${ed?'':'disabled'}></label><label>WhatsApp del estudio (para recibir el resumen)<input id="avwa" inputmode="tel" value="${esc(cfg.whatsapp)}" placeholder="3537 412345" ${ed?'':'disabled'}></label>${ed?'<button class="b" onclick="avGuardar()">Guardar</button>':''}</div>
+  ${L.filter(x=>x.tipo!=='info').length?`<div class="row" style="margin-bottom:12px"><button class="b" onclick="avWhatsapp()">Enviar el resumen por WhatsApp</button><button class="g" onclick="avCopiar()">Copiar el resumen</button></div>`:''}
+  ${L.length?grupos.map(t=>{const l=L.filter(x=>x.tipo===t);return l.length?`<h3>${AV_ETQ[t][0]} (${l.length})</h3><div class="card" style="padding:6px 16px;margin-bottom:12px">${l.map(x=>`<div style="padding:10px 0;border-bottom:1px solid var(--bd);display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span style="flex:1;min-width:240px">${avLinea(x)}</span>${x.tipo==='reclamo'?`<button class="b sm" onclick="abrirFicha('${x.c.id}','pedir','${x.s.periodo.slice(0,7)}')">Preparar el reclamo</button>`:x.tipo==='info'?'':`<button class="g sm" onclick="abrirFicha('${x.c.id}','present')">Ir a marcar</button>`}</div>`).join('')}</div>`:''}).join(''):'<div class="msg ok">No hay avisos: nadie tiene vencimientos próximos sin presentar ni reclamos para enviar.</div>'}
+  <p class="s" style="margin-top:10px">Para recibir los avisos fuera de la aplicación (por correo, aunque nadie la abra) hace falta una cuenta de envío de mails: es un paso aparte.</p>`;
+}
+
+/* ===== Reclamos de facturas: programar la fecha y registrar los envíos ===== */
+async function recProgramar(){
+  const cid=$('rcCli').value,per=$('rcPer').value,fecha=$('rcFecha').value,rep=$('rcRep').value,nota=$('rcNota').value.trim(),bad=m=>{flash(m,'err');draw()};
+  if(!cid||!/^\d{4}-\d{2}$/.test(per))return bad('Elegí el cliente y el período.');if(!pDate(fecha))return bad('Elegí la fecha del reclamo.');
+  const c=ui.clients.find(x=>x.id===cid);if(esExento(c))return bad(exentoMsg(cid));
+  const {error}=await sb.from('claim_schedules').upsert({client_id:cid,periodo:per+'-01',proxima_fecha:fecha,repetir_cada_dias:rep?Number(rep):null,activo:true,nota:nota||null,created_by:me.id},{onConflict:'client_id,periodo'});
+  if(error)flash(errTxt(error),'err');else{await loadSched();flash(`Reclamo programado para el ${fAR(fecha)}.`)}draw();
+}
+async function recFecha(id,v){if(!pDate(v)){flash('Fecha inválida.','err');return draw()}const {error}=await sb.from('claim_schedules').update({proxima_fecha:v,activo:true}).eq('id',id);if(error)flash(errTxt(error),'err');else{await loadSched();flash('Fecha reprogramada.')}draw()}
+async function recPausar(id,activo){const {error}=await sb.from('claim_schedules').update({activo}).eq('id',id);if(error)flash(errTxt(error),'err');else await loadSched();draw()}
+async function recQuitar(id){if(!confirm('¿Quitar esta programación?'))return;const {error}=await sb.from('claim_schedules').delete().eq('id',id);if(error)flash(errTxt(error),'err');else{await loadSched();flash('Programación quitada.')}draw()}
+async function recLogQuitar(id){if(!confirm('¿Quitar este registro de envío?'))return;const {error}=await sb.from('claim_log').delete().eq('id',id);if(error)flash(errTxt(error),'err');else{await loadSched();flash('Registro quitado.')}draw()}
+/** Registra que se mandó el reclamo en la fecha que elija la persona; si hay programación, la corre o la termina. */
+async function recRegistrar(cid,per,fecha,nota){
+  if(esExento(ui.clients.find(x=>x.id===cid))){flash(exentoMsg(cid),'err');return draw()}
+  if(!pDate(fecha)){flash('Elegí la fecha en que se envió el reclamo.','err');return draw()}
+  const faltan=faltanDe(cid,per),{error}=await sb.from('claim_log').insert({client_id:cid,periodo:per+'-01',enviado:fecha,canal:'whatsapp',faltantes:faltan,nota:nota||null,created_by:me.id});
+  if(error){flash(errTxt(error),'err');return draw()}
+  const s=ui.cs.find(x=>x.client_id===cid&&x.periodo.slice(0,7)===per);
+  if(s){const upd={ultimo_envio:fecha,envios:(s.envios||0)+1};if(s.repetir_cada_dias)upd.proxima_fecha=sumarDias(fecha,s.repetir_cada_dias);else upd.activo=false;await sb.from('claim_schedules').update(upd).eq('id',s.id)}
+  await loadSched();flash(`Envío registrado con fecha ${fAR(fecha)}${s&&s.repetir_cada_dias?`. Próximo reclamo: ${fAR(sumarDias(fecha,s.repetir_cada_dias))}.`:'.'}`);draw();
+}
+function recRegistrarDe(cid,per,idf){return recRegistrar(cid,per,$(idf).value,($('rn_'+idf)||{value:''}).value.trim())}
+function vReclamos(){
+  const hoy=hoyISO(),act=ui.clients.filter(c=>c.active!==false&&!esExento(c)),cli=id=>ui.clients.find(c=>c.id===id)||{razon_social:'(cliente)'};
+  const fila=s=>{const per=s.periodo.slice(0,7),f=faltanDe(s.client_id,per),dias=diasHasta(s.proxima_fecha),listo=s.activo&&dias<=0&&f>0,idf='rd_'+s.id;
+    return `<tr ${listo?'style="background:var(--blu)"':''}><td>${esc(cli(s.client_id).razon_social)}</td><td>${per.slice(5)}/${per.slice(0,4)}</td><td ${f?'style="color:var(--redt);font-weight:600"':''}>${f?f:'Completo'}</td>
+    <td><input type="date" value="${s.proxima_fecha}" onchange="recFecha('${s.id}',this.value)"><span class="s">${!s.activo?'pausado':f===0?'no hace falta reclamar':dias<0?'tocaba hace '+(-dias)+' d':dias===0?'HOY':'en '+dias+' días'}</span></td>
+    <td>${s.repetir_cada_dias?'cada '+s.repetir_cada_dias+' días':'una vez'}${s.nota?`<span class="s">${esc(s.nota)}</span>`:''}</td><td>${s.ultimo_envio?fAR(s.ultimo_envio)+`<span class="s">${s.envios} envío(s)</span>`:'-'}</td>
+    <td style="white-space:nowrap"><button class="b sm" onclick="abrirFicha('${s.client_id}','pedir','${per}')">Preparar</button> <input type="date" id="${idf}" value="${hoy}" style="width:140px" title="Fecha en que se envió"> <button class="g sm" onclick="recRegistrarDe('${s.client_id}','${per}','${idf}')">Registrar envío</button> <button class="g sm" onclick="recPausar('${s.id}',${!s.activo})">${s.activo?'Pausar':'Reanudar'}</button> <button class="dng sm" onclick="recQuitar('${s.id}')">Quitar</button></td></tr>`};
+  const paraHoy=ui.cs.filter(s=>s.activo&&diasHasta(s.proxima_fecha)<=0&&faltanDe(s.client_id,s.periodo.slice(0,7))>0),resto=ui.cs.filter(s=>!paraHoy.includes(s));
+  const tabla=(t,l,v)=>`<h3>${t} (${l.length})</h3>${l.length?`<div class="tw" style="margin-bottom:14px"><table><thead><tr><th>Cliente</th><th>Período</th><th>Faltan</th><th>Fecha del reclamo</th><th>Repite</th><th>Último envío</th><th></th></tr></thead><tbody>${l.map(fila).join('')}</tbody></table></div>`:`<div class="card" style="color:var(--mut);margin-bottom:14px">${v}</div>`}`;
+  return `<h2>Reclamos de facturas</h2>
+  <p class="s" style="margin-bottom:12px">Elegís la fecha en que querés reclamar las facturas que faltan. Ese día el reclamo aparece acá y en Avisos con el mensaje listo. WhatsApp no deja enviar mensajes solo desde una aplicación: la app lo prepara y vos tocás enviar. Después registrás la fecha real del envío y, si pusiste repetición, se programa el siguiente solo.</p>
+  <div class="card row" style="margin-bottom:16px;align-items:end"><label>Cliente<br><select id="rcCli">${act.map(c=>`<option value="${c.id}" ${c.id===ui.cid?'selected':''}>${esc(c.razon_social)}</option>`).join('')}</select></label>
+   <label>Facturas de<br>${mesPick(workPeriod(),'',"rcPer")}</label><label>Fecha del reclamo<br><input type="date" id="rcFecha" value="${sumarDias(hoy,1)}"></label>
+   <label>Repetir<br><select id="rcRep"><option value="">No repetir</option>${[3,5,7,10,15].map(n=>`<option value="${n}">Cada ${n} días</option>`).join('')}</select></label><label style="flex:1;min-width:160px">Nota<br><input id="rcNota" style="width:100%" placeholder="Opcional"></label><button class="b" onclick="recProgramar()">Programar</button></div>
+  ${tabla('Para enviar ahora',paraHoy,'No hay reclamos para enviar hoy.')}${tabla('Programados y terminados',resto,'Todavía no programaste reclamos.')}
+  <h3>Historial de envíos</h3>${ui.cl.length?`<div class="tw"><table><thead><tr><th>Enviado</th><th>Cliente</th><th>Facturas de</th><th>Faltaban</th><th>Nota</th><th></th></tr></thead><tbody>${ui.cl.map(x=>`<tr><td>${fAR(x.enviado)}</td><td>${esc(cli(x.client_id).razon_social)}</td><td>${x.periodo.slice(5,7)}/${x.periodo.slice(0,4)}</td><td>${x.faltantes??'-'}</td><td>${esc(x.nota||'')}</td><td><button class="dng sm" onclick="recLogQuitar('${x.id}')">Quitar</button></td></tr>`).join('')}</tbody></table></div>`:'<div class="card" style="color:var(--mut)">Todavía no registraste envíos.</div>'}`;
+}
+/** Bloque dentro de "Pedir facturas" de la ficha: registrar el envío con la fecha real y programar el próximo reclamo. */
+function recBloque(c,f){
+  const r=f.rec,per=r.periodo,hoy=hoyISO(),log=ui.cl.filter(x=>x.client_id===c.id&&x.periodo.slice(0,7)===per),s=ui.cs.find(x=>x.client_id===c.id&&x.periodo.slice(0,7)===per);
+  return `<div class="card" style="margin:14px 0"><b>Registro de reclamos de ${per.slice(5)}/${per.slice(0,4)}</b>
+  ${log.length?`<div class="s" style="margin:6px 0">Enviados: ${log.slice(0,4).map(x=>fAR(x.enviado)).join(', ')}${log.length>4?'…':''}</div>`:'<div class="s" style="margin:6px 0">Todavía no registraste ningún envío para este período.</div>'}
+  <div class="row" style="align-items:end"><label>Fecha en que lo enviaste<br><input type="date" id="rdF" value="${hoy}"></label><button class="g" onclick="recRegistrarDe('${c.id}','${per}','rdF')">Registrar envío</button></div>
+  <div class="row" style="align-items:end;margin-top:10px"><label>Programar el próximo reclamo para el<br><input type="date" id="rpF" value="${s?s.proxima_fecha:sumarDias(hoy,7)}"></label><label>Repetir<br><select id="rpR"><option value="">No repetir</option>${[3,5,7,10,15].map(n=>`<option value="${n}" ${s&&s.repetir_cada_dias===n?'selected':''}>Cada ${n} días</option>`).join('')}</select></label><button class="g" onclick="recProgramarDesde('${c.id}','${per}')">${s?'Reprogramar':'Programar'}</button></div>
+  ${s?`<div class="s" style="margin-top:6px">Programado: ${fAR(s.proxima_fecha)}${s.repetir_cada_dias?', cada '+s.repetir_cada_dias+' días':''}${s.activo?'':' (pausado)'}.</div>`:''}</div>`;
+}
+async function recProgramarDesde(cid,per){
+  const fecha=$('rpF').value,rep=$('rpR').value;if(esExento(ui.clients.find(x=>x.id===cid))){flash(exentoMsg(cid),'err');return draw()}if(!pDate(fecha)){flash('Elegí la fecha del próximo reclamo.','err');return draw()}
+  const {error}=await sb.from('claim_schedules').upsert({client_id:cid,periodo:per+'-01',proxima_fecha:fecha,repetir_cada_dias:rep?Number(rep):null,activo:true,created_by:me.id},{onConflict:'client_id,periodo'});
+  if(error)flash(errTxt(error),'err');else{await loadSched();flash(`Reclamo programado para el ${fAR(fecha)}.`)}draw();
 }
 
 init();
