@@ -162,7 +162,7 @@ function planImport(parsed,meta,existing,ctx){
 
 
 /* ===== Supabase ===== */
-const APP_VERSION='26/10/2026, liquidaciones de granos, hacienda y leche';
+const APP_VERSION='27/10/2026, editar y quitar compras y ventas, lectura de granos corregida';
 const SUPABASE_URL='https://tugdqcoxcpsiynlvnqdu.supabase.co';
 const SUPABASE_KEY='sb_publishable_2-96VeZrsNNftRXkzA1l_A_YG7ThJrL'; // clave pública: los permisos los da la base (RLS)
 const sb=(typeof supabase!=='undefined')?supabase.createClient(SUPABASE_URL,SUPABASE_KEY):null;
@@ -232,7 +232,7 @@ async function show(t){
   draw();
 }
 async function loadVouchers(){
-  ui.sel.clear();ui.vs=[];if(!ui.cid)return;
+  ui.sel.clear();ui.vedit=null;ui.vs=[];if(!ui.cid)return;
   const {data:p,error}=await sb.from('client_periods').select('id').eq('client_id',ui.cid).eq('periodo',ui.periodo+'-01').maybeSingle();
   if(error)throw error;if(!p)return;
   ui.vs=await fetchAll((a,b)=>sb.from('vouchers').select('*').eq('period_id',p.id).order('fecha').order('numero').range(a,b));
@@ -385,14 +385,14 @@ function tabla(vs){
   return `<div class="card row" style="margin-bottom:10px"><b style="align-self:center">${n} seleccionado(s)</b>
   <label>Documentación<br><select id="bd"><option value="">(sin cambio)</option>${optsOf(DOC)}</select></label>
   <label>Procesamiento<br><select id="bp"><option value="">(sin cambio)</option>${optsOf(PROC)}</select></label>
-  <label>Motivo (si excluye)<br><input id="bm"></label><button class="b" ${n?'':'disabled'} onclick="masivo()">Aplicar a los seleccionados</button></div>
+  <label>Motivo (si excluye)<br><input id="bm"></label><button class="b" ${n?'':'disabled'} onclick="masivo()">Aplicar a los seleccionados</button><button class="dng" ${n?'':'disabled'} onclick="compQuitar([...ui.sel])">Quitar seleccionados</button></div>${compEditForm()}
   <div class="tw"><table><thead><tr><th><input type="checkbox" onchange="selAll(this.checked)" ${n&&n===vs.length?'checked':''}></th><th>Fecha</th><th>Proveedor</th><th>Comprobante</th><th>Importe</th><th>IVA</th><th>Documentación</th><th>Procesamiento</th><th>Cambiar</th></tr></thead><tbody>
   ${vs.length?vs.map(v=>`<tr><td><input type="checkbox" ${ui.sel.has(v.id)?'checked':''} onchange="toggleSel('${v.id}',this.checked)"></td><td>${fAR(v.fecha)}</td>
   <td>${esc(v.emisor_nombre)}${v.origen==='libro_iva'?' <span class="tag" style="background:var(--blu);color:var(--blut)">Libro IVA</span>':''}<span class="s">${cuitF(v.emisor_cuit)}</span></td>
   <td>${esc(tipoTxt(v))}<span class="s">${String(v.punto_venta).padStart(5,'0')}-${String(v.numero).padStart(8,'0')}</span></td><td>${money(Number(v.importe_total))}</td><td>${v.iva===null||v.iva===undefined?'<span class="s">sin dato</span>':money(Number(v.iva))}</td>
   <td>${tag(DOC,v.doc_status)}</td><td>${tag(PROC,v.proc_status)}${v.proc_exclusion_reason?`<span class="s">${esc(v.proc_exclusion_reason)}</span>`:''}</td>
   <td><div class="row" style="gap:4px"><select id="d${v.id}">${optsOf(DOC,v.doc_status)}</select><select id="p${v.id}">${optsOf(PROC,v.proc_status)}</select><input id="m${v.id}" placeholder="Motivo" style="width:90px">
-  <button class="g" onclick="guardar('${v.id}')">Guardar</button><button class="g" onclick="verHist('${v.id}')">Historial</button></div></td></tr>
+  <button class="g" onclick="guardar('${v.id}')">Guardar</button><button class="g" onclick="verHist('${v.id}')">Historial</button><button class="g" onclick="compEditar('${v.id}')">Editar</button><button class="dng" onclick="compQuitar(['${v.id}'])">Quitar</button></div></td></tr>
   ${ui.hist&&ui.hist.id===v.id?`<tr class="hist"><td></td><td colspan="8">${ui.hist.html}</td></tr>`:''}`).join(''):'<tr><td colspan="9" style="color:var(--mut)">Sin comprobantes para este cliente, período y filtro.</td></tr>'}</tbody></table></div>`;
 }
 async function verHist(id){
@@ -416,6 +416,64 @@ async function aplicarGrupos(targets){ // targets: [{v,doc,proc,motivo}]
     const nuevosRec=targets.filter(t=>g.ids.includes(t.v.id)&&RECIBIDOS.includes(g.doc)&&t.v.doc_status!==g.doc);
     if(nuevosRec.length){const {error:e2}=await sb.from('document_receipts').insert(nuevosRec.map(t=>({voucher_id:t.v.id,method:'manual',received_by:me.id})));if(e2)throw e2}
   }
+}
+
+/* ----- Editar o quitar un comprobante de compra ----- */
+function compEditar(id){ui.vedit=ui.vedit===id?null:id;redrawTable();if(ui.vedit){const f=document.getElementById('cedit');if(f)f.scrollIntoView({behavior:'smooth',block:'center'})}}
+function compEditForm(){
+  const x=ui.vedit&&ui.vs.find(v=>v.id===ui.vedit);if(!x)return '';
+  const tipos=TIPOS_CMP.slice();if(!tipos.some(t=>t[0]===Number(x.tipo_cmp)))tipos.push([Number(x.tipo_cmp),tipoTxt(x)]);
+  const nv=n=>n===null||n===undefined?'':String(Number(n));
+  return `<form class="card" id="cedit" style="margin-bottom:12px;border:2px solid var(--blut)" onsubmit="return compGuardarEdicion(event)"><b>Editar comprobante ${String(x.punto_venta).padStart(5,'0')}-${String(x.numero).padStart(8,'0')} de ${esc(x.emisor_nombre||'')}</b>
+  <div class="fgrid" style="margin-top:8px">
+  <label>Fecha<input type="date" name="fecha" required value="${esc(x.fecha)}"></label>
+  <label>Tipo<select name="tipo">${tipos.map(([k,t])=>`<option value="${k}" ${k===Number(x.tipo_cmp)?'selected':''}>${k} - ${esc(t)}</option>`).join('')}</select></label>
+  <label>Punto de venta<input name="pv" required inputmode="numeric" value="${esc(x.punto_venta)}"></label>
+  <label>Número<input name="num" required inputmode="numeric" value="${esc(x.numero)}"></label>
+  <label>CUIT del proveedor<input name="cuit" required inputmode="numeric" value="${esc(x.emisor_cuit)}"></label>
+  <label>Nombre del proveedor<input name="nom" required value="${esc(x.emisor_nombre||'')}"></label>
+  <label>Neto gravado<input name="neto" inputmode="decimal" value="${nv(x.neto_gravado)}"></label>
+  <label>IVA (vacío si no hay dato)<input name="iva" inputmode="decimal" value="${nv(x.iva)}"></label>
+  <label>No gravado<input name="nograv" inputmode="decimal" value="${nv(x.no_gravado)}"></label>
+  <label>Exento<input name="exento" inputmode="decimal" value="${nv(x.exento)}"></label>
+  <label>Otros tributos<input name="otros" inputmode="decimal" value="${nv(x.otros_tributos)}"></label>
+  <label>Importe total<input name="total" required inputmode="decimal" value="${nv(x.importe_total)}"></label>
+  <div class="full row"><button class="b">Guardar cambios</button><button type="button" class="g" onclick="compEditar('${x.id}')">Cancelar</button></div></div>
+  <p class="s" style="margin-top:8px">No cambia el estado de documentación ni de procesamiento.${x.origen==='arca'?' Este comprobante vino del Excel de ARCA: si cambiás el CUIT, el tipo, el punto de venta o el número y después volvés a importar el Excel, el original aparece de nuevo.':''}</p></form>`;
+}
+async function compGuardarEdicion(e){
+  e.preventDefault();const x=ui.vs.find(v=>v.id===ui.vedit),fd=new FormData(e.target),bad=m=>{flash(m,'err');draw();return false};if(!x)return false;
+  const fecha=String(fd.get('fecha')),pv=pNum(fd.get('pv')),num=pNum(fd.get('num')),tipo=Number(fd.get('tipo')),cuit=String(fd.get('cuit')||'').replace(/\D/g,''),nom=String(fd.get('nom')||'').trim();
+  const op=k=>{const s=String(fd.get(k)??'').trim();return s===''?null:pNum(s)},n=k=>op(k)||0,total=op('total'),iva=op('iva');
+  if(!pDate(fecha))return bad('La fecha no es válida.');
+  if(pv===null||!Number.isInteger(pv)||pv<0||num===null||!Number.isInteger(num)||num<=0)return bad('El punto de venta y el número tienen que ser enteros (el número mayor a cero).');
+  if(cuit.length!==11)return bad('El CUIT del proveedor tiene que tener 11 dígitos.');
+  if(!nom)return bad('Cargá el nombre del proveedor.');
+  if(total===null||!(total>0))return bad('El importe total tiene que ser mayor a cero.');
+  if(iva!==null&&iva<0)return bad('El IVA no puede ser negativo.');
+  if(iva!==null&&Math.abs(n('neto')+iva+n('nograv')+n('exento')+n('otros')-total)>1&&!confirm(`El total (${money(total)}) no coincide con la suma de los importes (${money(n('neto')+iva+n('nograv')+n('exento')+n('otros'))}).\n¿Guardar igual?`))return false;
+  const per=fecha.slice(0,7),raw={...(x.raw||{}),editado_a_mano:true};
+  if(tipo!==Number(x.tipo_cmp)){raw['Tipo']=tipoNombre(tipo);delete raw['Tipo de Comprobante']}
+  try{
+    let pid=x.period_id;
+    if(per!==String(x.fecha).slice(0,7)){const {data:p,error:e1}=await sb.from('client_periods').upsert({client_id:x.client_id,periodo:per+'-01'},{onConflict:'client_id,periodo'}).select('id').single();if(e1)throw e1;pid=p.id}
+    const {data,error}=await sb.from('vouchers').update({period_id:pid,fecha,tipo_cmp:tipo,punto_venta:pv,numero:num,emisor_cuit:cuit,emisor_nombre:nom,neto_gravado:n('neto'),no_gravado:n('nograv'),exento:n('exento'),otros_tributos:n('otros'),iva,importe_total:total,raw,updated_by:me.id}).eq('id',x.id).select('id');
+    if(error)throw error;if(!data||!data.length)throw new Error('No se pudo modificar el comprobante (sin permisos o ya no existe).');
+    const cambioMes=per!==String(x.fecha).slice(0,7);await loadVouchers();flash('Comprobante modificado.'+(cambioMes?` Pasó al período ${per.slice(5)}/${per.slice(0,4)}.`:''));
+  }catch(err){flash(/duplicate/i.test(err.message||'')?'Ya existe otro comprobante de ese proveedor con el mismo tipo, punto de venta y número.':errTxt(err),'err')}
+  draw();return false;
+}
+async function compQuitar(ids){
+  const vs=ui.vs.filter(v=>ids.includes(v.id));if(!vs.length){flash('No hay comprobantes para quitar.','err');return draw()}
+  const det=vs.length===1?`el comprobante ${String(vs[0].punto_venta).padStart(5,'0')}-${String(vs[0].numero).padStart(8,'0')} de ${vs[0].emisor_nombre} (${money(Number(vs[0].importe_total))})`:`${vs.length} comprobantes`;
+  if(!confirm(`¿Quitar ${det}?\n\nSe borra también su historial de estados y el registro de recepción. No se puede deshacer.${vs.some(v=>v.origen==='arca')?'\n\nAviso: si venía del Excel de ARCA y volvés a importarlo, va a aparecer de nuevo.':''}`))return;
+  try{
+    let borrados=0;
+    for(let i=0;i<vs.length;i+=100){const {data,error}=await sb.from('vouchers').delete().in('id',vs.slice(i,i+100).map(v=>v.id)).select('id');if(error)throw error;borrados+=(data||[]).length}
+    ui.hist=null;await loadVouchers();
+    flash(borrados===vs.length?`Se quitó ${borrados===1?'el comprobante':borrados+' comprobantes'}.`:`Solo se pudieron quitar ${borrados} de ${vs.length} comprobantes (revisá los permisos).`,borrados===vs.length?'ok':'err');
+  }catch(x){flash(errTxt(x),'err')}
+  draw();
 }
 async function guardar(id){
   const v=ui.vs.find(x=>x.id===id),doc=$('d'+id).value,proc=$('p'+id).value,motivo=($('m'+id).value||v.proc_exclusion_reason||'').trim();
@@ -1273,10 +1331,10 @@ function vVentas(){
   <label>Período<br>${mesPick(v.periodo,`ui.vta.periodo=this.value;show('ventas')`)}</label>
   <label style="flex:1;min-width:230px">Excel de "Mis Comprobantes Emitidos" (.xls / .xlsx)<br><input type="file" id="vfile" accept=".xls,.xlsx" style="width:100%"></label>
   <button class="b" onclick="ventasPrevisualizar()">Ver vista previa</button><button class="g" onclick="ui.vta.form=!ui.vta.form;draw()">Agregar factura a mano</button><button class="g" onclick="liqAbrir()">Cargar liquidación (PDF)</button></div>
-  ${v.form?ventaForm():''}${liqForm()}
+  ${v.form?ventaForm():''}${v.edit?ventaEditForm():''}${liqForm()}
   <div class="grid" style="margin-bottom:12px"><div class="card kpi"><b>${R.length}</b><span>Facturas del período</span></div><div class="card kpi"><b>${money(neto)}</b><span>Neto gravado</span></div><div class="card kpi"><b>${money(deb)}</b><span>IVA débito fiscal (las notas de crédito restan)</span></div><div class="card kpi"><b>${money(tot)}</b><span>Total facturado</span></div></div>
   <div class="tw"><table><thead><tr><th>Fecha</th><th>Comprobante</th><th>Cliente de la venta</th><th>Neto gravado</th><th>IVA</th><th>Total</th><th>Origen</th><th></th></tr></thead><tbody>
-  ${R.length?R.map(x=>{const nc=esNC(x.tipo_cmp),m=n=>n===null||n===undefined?'-':money(sgnVal(x.tipo_cmp,n));return `<tr><td>${fAR(x.fecha)}</td><td>${esc(tipoNombre(x.tipo_cmp))}${nc?' <span class="tag" style="background:var(--org);color:var(--orgt)">resta</span>':''}<span class="s">${nroF(x.punto_venta,x.numero)}</span></td><td>${esc(x.receptor_nombre||'')}<span class="s">${esc(x.receptor_cuit||'')}</span></td><td>${m(x.neto_gravado)}</td><td>${m(x.iva)}</td><td>${m(x.importe_total)}</td><td>${x.origen==='manual'?'A mano':'Excel'}</td><td style="white-space:nowrap">${x.archivo_path?`<button class="g sm" onclick="verArchivo('${x.archivo_path}')">Ver PDF</button> `:''}<button class="dng sm" onclick="ventasQuitar('${x.id}')">Quitar</button></td></tr>`}).join(''):'<tr><td colspan="8" style="color:var(--mut)">Todavía no hay facturas emitidas en este período. Subí el Excel de emitidos o agregalas a mano.</td></tr>'}</tbody></table></div>`;
+  ${R.length?R.map(x=>{const nc=esNC(x.tipo_cmp),m=n=>n===null||n===undefined?'-':money(sgnVal(x.tipo_cmp,n));return `<tr><td>${fAR(x.fecha)}</td><td>${esc(tipoNombre(x.tipo_cmp))}${nc?' <span class="tag" style="background:var(--org);color:var(--orgt)">resta</span>':''}<span class="s">${nroF(x.punto_venta,x.numero)}</span></td><td>${esc(x.receptor_nombre||'')}<span class="s">${esc(x.receptor_cuit||'')}</span></td><td>${m(x.neto_gravado)}</td><td>${m(x.iva)}</td><td>${m(x.importe_total)}</td><td>${x.origen==='manual'?'A mano':'Excel'}</td><td style="white-space:nowrap">${x.archivo_path?`<button class="g sm" onclick="verArchivo('${x.archivo_path}')">Ver PDF</button> `:''}<button class="g sm" onclick="ventasEditar('${x.id}')">Editar</button> <button class="dng sm" onclick="ventasQuitar('${x.id}')">Quitar</button></td></tr>`}).join(''):'<tr><td colspan="8" style="color:var(--mut)">Todavía no hay facturas emitidas en este período. Subí el Excel de emitidos o agregalas a mano.</td></tr>'}</tbody></table></div>`;
 }
 function ventaForm(){
   return `<form class="card" style="margin-bottom:14px" onsubmit="return ventasAgregar(event)"><b>Agregar factura emitida</b><div class="fgrid" style="margin-top:8px">
@@ -1315,8 +1373,66 @@ async function ventasAgregar(e){
   }catch(x){flash(/duplicate/i.test(x.message||'')?'Ya cargaste una factura con ese tipo, punto de venta y número.':errTxt(x),'err')}
   draw();return false;
 }
+
+/* ----- Editar una venta ya cargada (factura o liquidación con PDF) ----- */
+const CLASE_DE_TIPO={9001:'liq_granos',9002:'liq_venta',9003:'liq_leche'};
+function ventasEditar(id){const v=ui.vta;v.edit=v.edit===id?null:id;v.form=false;if(v.liq)v.liq.abierta=false;draw();if(v.edit){const f=document.getElementById('vedit');if(f)f.scrollIntoView({behavior:'smooth',block:'center'})}}
+function ventaEditForm(){
+  const v=ui.vta,x=v.rows.find(r=>r.id===v.edit);if(!x)return '';
+  const liq=!!CLASE_DE_TIPO[Number(x.tipo_cmp)],al=alicDeRaw(x.raw),ks=Object.keys(al).sort((a,b)=>al[b].neto-al[a].neto);
+  let alic=ks.length?Number(ks[0]):liqTasa(Number(x.neto_gravado),Number(x.iva));if(alic===null||alic===undefined||isNaN(alic))alic=21;
+  const tipos=liq?Object.entries(LIQ).map(([k,l])=>[l.cod,l.nombre]):TIPOS_CMP.slice();if(!tipos.some(t=>t[0]===Number(x.tipo_cmp)))tipos.push([Number(x.tipo_cmp),tipoNombre(x.tipo_cmp)]);
+  const alics=ALIC.includes(alic)?ALIC:[...ALIC,alic],nv=n=>String(Number(n||0));
+  return `<form class="card" id="vedit" style="margin-bottom:14px;border:2px solid var(--blut)" onsubmit="return ventasGuardarEdicion(event)"><b>Editar ${liq?'liquidación':'factura'} ${esc(nroF(x.punto_venta,x.numero))}</b>
+  <div class="fgrid" style="margin-top:8px">
+  <label>Fecha<input type="date" name="fecha" required value="${esc(x.fecha)}"></label>
+  <label>Tipo<select name="tipo">${tipos.map(([k,t])=>`<option value="${k}" ${k===Number(x.tipo_cmp)?'selected':''}>${liq?'':k+' - '}${esc(t)}</option>`).join('')}</select></label>
+  <label>Punto de venta${liq?' (0 si solo tiene COE)':''}<input name="pv" required inputmode="numeric" value="${esc(x.punto_venta)}"></label>
+  <label>${liq?'Número o COE':'Número'}<input name="num" required inputmode="numeric" value="${esc(x.numero)}"></label>
+  <label>${liq?'CUIT de la contraparte':'CUIT o DNI del cliente'}<input name="rcuit" inputmode="numeric" value="${esc(x.receptor_cuit||'')}"></label>
+  <label>${liq?'Nombre de la contraparte':'Nombre o razón social del cliente'}<input name="rnom" value="${esc(x.receptor_nombre||'')}"></label>
+  <label>Neto gravado<input name="neto" inputmode="decimal" value="${nv(x.neto_gravado)}" oninput="calcVenta(this.form)"></label>
+  <label>Alícuota de IVA<select name="alic" onchange="calcVenta(this.form)">${alics.map(a=>`<option value="${a}" ${a===alic?'selected':''}>${String(a).replace('.',',')}%</option>`).join('')}</select></label>
+  <label>IVA<input name="iva" inputmode="decimal" value="${nv(x.iva)}" oninput="calcTotalVenta(this.form)"></label>
+  <label>No gravado<input name="nograv" inputmode="decimal" value="${nv(x.no_gravado)}" oninput="calcTotalVenta(this.form)"></label>
+  <label>Exento<input name="exento" inputmode="decimal" value="${nv(x.exento)}" oninput="calcTotalVenta(this.form)"></label>
+  <label>Otros tributos<input name="otros" inputmode="decimal" value="${nv(x.otros_tributos)}" oninput="calcTotalVenta(this.form)"></label>
+  <label>Total<input name="total" inputmode="decimal" value="${nv(x.importe_total)}"></label>
+  ${liq?`<label>Reemplazar el PDF (opcional)<input type="file" name="pdf" accept="application/pdf,.pdf"></label>`:''}
+  <div class="full row"><button class="b">Guardar cambios</button><button type="button" class="g" onclick="ventasEditar('${x.id}')">Cancelar</button>${x.archivo_path?`<button type="button" class="g" onclick="verArchivo('${x.archivo_path}')">Ver PDF actual</button>`:''}</div></div>
+  <p class="s" style="margin-top:8px">Al cambiar el neto o la alícuota, el IVA y el total se recalculan solos (se pueden corregir a mano). ${liq?'Las retenciones y percepciones de esta liquidación se corrigen o se quitan en el IVA aproximado.':''}</p></form>`;
+}
+async function ventasGuardarEdicion(e){
+  e.preventDefault();const v=ui.vta,x=v.rows.find(r=>r.id===v.edit),fd=new FormData(e.target),bad=m=>{flash(m,'err');draw();return false};if(!x)return false;
+  const liq=!!CLASE_DE_TIPO[Number(x.tipo_cmp)],fecha=String(fd.get('fecha')),pv=pNum(fd.get('pv')),num=pNum(fd.get('num')),tipo=Number(fd.get('tipo')),n=k=>pNum(String(fd.get(k)))||0,alic=Number(fd.get('alic'));
+  if(!pDate(fecha))return bad('La fecha no es válida.');
+  if(pv===null||!Number.isInteger(pv)||(liq?pv<0:pv<=0)||num===null||!Number.isInteger(num)||num<=0)return bad(liq?'El punto de venta (puede ser 0) y el número tienen que ser enteros.':'El punto de venta y el número tienen que ser enteros positivos.');
+  const neto=n('neto'),iva=n('iva'),nog=n('nograv'),exe=n('exento'),otr=n('otros'),total=n('total');
+  if(!(total>0))return bad('El total tiene que ser mayor a cero.');
+  if(alic>0&&neto>0&&Math.abs(neto*alic/100-iva)>Math.max(1,neto*0.0005)&&!confirm(`El IVA (${money(iva)}) no coincide con el neto por ${String(alic).replace('.',',')}% (${money(neto*alic/100)}).\n¿Guardar igual?`))return false;
+  if(Math.abs(neto+iva+nog+exe+otr-total)>1&&!confirm(`El total (${money(total)}) no coincide con la suma de los importes (${money(neto+iva+nog+exe+otr)}).\n¿Guardar igual?`))return false;
+  const file=fd.get('pdf'),nuevoPdf=file&&file.size>0?file:null;
+  if(nuevoPdf){const m=await esPdf(nuevoPdf);if(m)return bad(m)}
+  const raw={};for(const [k,val] of Object.entries(x.raw||{})){const nk=norm(k);if(/^neto grav iva \d/.test(nk)||/^iva \d/.test(nk))continue;raw[k]=val}
+  const a=String(alic).replace('.',',');raw['Neto Grav. IVA '+a+'%']=neto;if(alic>0)raw['IVA '+a+'%']=iva;
+  const per=fecha.slice(0,7);let path=null;
+  try{
+    let pid=x.period_id;
+    if(per!==String(x.fecha).slice(0,7)){const {data:p,error:e1}=await sb.from('client_periods').upsert({client_id:x.client_id,periodo:per+'-01'},{onConflict:'client_id,periodo'}).select('id').single();if(e1)throw e1;pid=p.id}
+    const upd={period_id:pid,fecha,tipo_cmp:tipo,punto_venta:pv,numero:num,receptor_cuit:String(fd.get('rcuit')||'').replace(/\D/g,'')||null,receptor_nombre:String(fd.get('rnom')||'').trim()||null,neto_gravado:neto,no_gravado:nog,exento:exe,otros_tributos:otr,iva,importe_total:total,raw};
+    if(CLASE_DE_TIPO[tipo])upd.clase=CLASE_DE_TIPO[tipo];
+    if(x.datos_extraidos)upd.datos_extraidos={...x.datos_extraidos,editado_a_mano:true};
+    if(nuevoPdf){const safe=nuevoPdf.name.normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^A-Za-z0-9._-]+/g,'_').slice(-80);path=`${x.client_id}/ventas/${crypto.randomUUID()}-${safe}`;
+      const up=await sb.storage.from('clientes').upload(path,nuevoPdf,{contentType:'application/pdf',upsert:false});if(up.error)throw up.error;upd.archivo_path=path;upd.archivo_nombre=nuevoPdf.name}
+    const {data,error}=await sb.from('sales_invoices').update(upd).eq('id',x.id).select('id');
+    if(error)throw error;if(!data||!data.length)throw new Error('No se pudo modificar la venta (sin permisos o ya no existe).');
+    if(nuevoPdf&&x.archivo_path)await sb.storage.from('clientes').remove([x.archivo_path]);
+    v.edit=null;v.periodo=per;await loadVentas();flash('Cambios guardados.'+(per!==String(x.fecha).slice(0,7)?` Pasó al período ${per.slice(5)}/${per.slice(0,4)}.`:''));
+  }catch(err){if(path)await sb.storage.from('clientes').remove([path]);flash(/duplicate/i.test(err.message||'')?'Ya existe otra venta con ese tipo, punto de venta y número.':errTxt(err),'err')}
+  draw();return false;
+}
 async function ventasQuitar(id){
-  const x=ui.vta.rows.find(r=>r.id===id);if(!x||!confirm(`¿Quitar la factura ${nroF(x.punto_venta,x.numero)}?`))return;
+  const x=ui.vta.rows.find(r=>r.id===id);if(!x||!confirm(`¿Quitar la factura ${nroF(x.punto_venta,x.numero)}?${x.archivo_path?'\nSe borra también el PDF guardado.':''}`))return;if(ui.vta.edit===id)ui.vta.edit=null;
   if(x.archivo_path){const rr=await sb.storage.from('clientes').remove([x.archivo_path]);if(rr.error){flash(errTxt(rr.error),'err');return draw()}}
   const {error}=await sb.from('sales_invoices').delete().eq('id',id);
   if(error)flash(errTxt(error),'err');else{try{await loadVentas();flash('Factura quitada.')}catch(e){flash(errTxt(e),'err')}}
@@ -1855,10 +1971,12 @@ const liqBuscar=(L,re,desde)=>{for(let i=desde||0;i<L.length;i++)if(re.test(liqN
 const liqTasa=(neto,iva)=>{if(!(neto>0))return null;const t=iva/neto*100;return [10.5,21,27,5,2.5].find(x=>Math.abs(x-t)<0.05)||null};
 
 function liqLineas(items){
-  const filas=[];
-  for(const it of items){if(!it.str||!it.str.trim())continue;const y=it.transform[5],x=it.transform[4];let f=filas.find(r=>Math.abs(r.y-y)<2.5);if(!f){f={y,items:[]};filas.push(f)}f.items.push({x,s:it.str})}
+  const filas=[],todos=[];
+  for(const it of items){if(!it.str||!it.str.trim())continue;const y=it.transform[5],x=it.transform[4];todos.push({x,y,s:it.str.trim()});let f=filas.find(r=>Math.abs(r.y-y)<2.5);if(!f){f={y,items:[]};filas.push(f)}f.items.push({x,s:it.str})}
   filas.sort((a,b)=>b.y-a.y);
-  return filas.map(f=>f.items.sort((a,b)=>a.x-b.x).map(i=>i.s).join(' ').replace(/\s+/g,' ').trim()).filter(Boolean);
+  const out=filas.map(f=>f.items.sort((a,b)=>a.x-b.x).map(i=>i.s).join(' ').replace(/\s+/g,' ').trim()).filter(Boolean);
+  out.items=todos; // posiciones (x, y) de cada texto: sirven para separar las columnas COMPRADOR y VENDEDOR
+  return out;
 }
 function cargarScript(src){return new Promise((ok,mal)=>{const s=document.createElement('script');s.src=src;s.onload=ok;s.onerror=()=>mal(new Error('No se pudo cargar '+src));document.head.appendChild(s)})}
 async function pdfTexto(file){
@@ -1866,7 +1984,7 @@ async function pdfTexto(file){
   if(typeof pdfjsLib==='undefined')throw new Error('No se pudo cargar el lector de PDF (¿sin conexión a internet?). Podés cargar los importes a mano.');
   if(!pdfjsLib.GlobalWorkerOptions.workerSrc){try{const r=await fetch('https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js');pdfjsLib.GlobalWorkerOptions.workerSrc=URL.createObjectURL(new Blob([await r.text()],{type:'text/javascript'}))}catch(e){}}
   const doc=await pdfjsLib.getDocument({data:new Uint8Array(await file.arrayBuffer())}).promise,lineas=[];
-  for(let n=1;n<=doc.numPages&&n<=15;n++){const pg=await doc.getPage(n),tc=await pg.getTextContent();lineas.push(...liqLineas(tc.items))}
+  for(let n=1;n<=doc.numPages&&n<=15;n++){const pg=await doc.getPage(n),tc=await pg.getTextContent();const r=liqLineas(tc.items);lineas.push(...r);if(n===1)lineas.items=r.items}
   return lineas;
 }
 
@@ -1912,22 +2030,57 @@ function liqGenerico(lineas,cuitCliente){
 }
 
 /* ---- Lectura específica de cada tipo ---- */
+/** Separa las dos partes del PDF por columna: COMPRADOR a la izquierda y VENDEDOR a la derecha (no por el orden del texto, que se mezcla). */
+function liqPartes(L){
+  const it=L.items;if(!it||!it.length)return null;
+  const hc=it.find(i=>/^comprador$/i.test(i.s)),hv=it.find(i=>/^vendedor$/i.test(i.s));
+  if(!hc||!hv||Math.abs(hc.y-hv.y)>4)return null;
+  const mid=(hc.x+hv.x)/2,top=hc.y-3,cor=it.filter(i=>i.y<top&&/^actuo corredor|^condiciones de la operacion/.test(liqNorm(i.s))),piso=cor.length?Math.max(...cor.map(i=>i.y))+1:top-130;
+  const zona=it.filter(i=>i.y<top&&i.y>piso);
+  const lado=f=>{const z=zona.filter(f).sort((a,b)=>b.y-a.y||a.x-b.x),ls=[];for(const i of z){const l=ls.find(r=>Math.abs(r.y-i.y)<2.5);l?l.t+=' '+i.s:ls.push({y:i.y,t:i.s})}return ls.map(l=>l.t.trim())};
+  const leer=ls=>{
+    const iR=ls.findIndex(l=>/^razon social/.test(liqNorm(l)));let nombre=null;
+    if(iR>=0){nombre=ls[iR].replace(/^[^:]*:\s*/,'').trim();for(let k=iR+1;k<ls.length&&!/^(domicilio|localidad|c\.u\.i\.t|i\.v\.a|ingresos|actuo)/.test(liqNorm(ls[k]));k++)nombre+=' '+ls[k].trim()}
+    const m=ls.join(' ').match(/c\.?u\.?i\.?t\.?\s*:?\s*(\d{2})[-. ]?(\d{8})[-. ]?(\d)/i);
+    return {nombre:nombre||null,cuit:m?m[1]+m[2]+m[3]:null}};
+  return {comprador:leer(lado(i=>i.x<mid)),vendedor:leer(lado(i=>i.x>=mid))};
+}
+/** Busca en la zona OPERACIÓN tres importes que cierren entre sí: neto x alícuota = IVA y neto + IVA = total (el "Total Operación" ya trae el IVA sumado). */
+function liqTripleta(L,totalOp){
+  const a=liqBuscar(L,/^operacion$/),b=a>=0?liqBuscar(L,/^deducciones/,a):-1;
+  const buscar=zona=>{const m=[];zona.forEach(l=>liqMontos(l).forEach(x=>{if(x>0&&!m.includes(x))m.push(x)}));let mejor=null;
+    if(m.length>80)return null;
+    for(const n of m)for(const i of m){if(i>=n)continue;const alic=[10.5,21,27,5,2.5].find(r=>Math.abs(n*r/100-i)<=Math.max(0.05,n*0.00005));if(!alic)continue;
+      for(const t of m){if(Math.abs(n+i-t)>1.5)continue;const sc=(totalOp!==null&&totalOp!==undefined&&Math.abs(t-totalOp)<=1.5?2:0)+1;if(!mejor||sc>mejor.sc)mejor={neto:n,iva:i,total:t,alic,sc}}}
+    return mejor};
+  return (a>=0&&b>a?buscar(L.slice(a,b)):null)||buscar(L);
+}
 /** Liquidación primaria de granos: el cliente es el VENDEDOR. IVA de la operación = débito fiscal; trae retenciones de IVA y Ganancias. */
 function liqGranos(L,cuitCli,razonCli){
   const d={},ret=[],info=[];
   const iC=liqBuscar(L,/c\.?o\.?e\.?\s*:/);if(iC>=0){const m=L[iC].match(/(\d{12})/);if(m){d.pv=0;d.num=Number(m[1]);d.coe=true}}
   d.fecha=liqFecha(L,/condiciones de la operacion/)||liqFecha(L,/fecha/);
+  const tOp=liqBuscar(L,/total operacion/),totalOp=tOp>=0?liqMontos(L[tOp])[0]:null;
   const iH=liqBuscar(L,/subtotal.*importe iva|subtotal.*alicuota/);
   if(iH>=0&&L[iH+1]){const v=liqMontos(L[iH+1]);if(v.length>=4){d.neto=v[1];d.iva=v[2];d.total=v[3]}const t=L[iH+1].match(/\$\s?[\d.,]+\s+(\d{1,2}(?:[.,]\d{1,2})?)\s+\$/);d.alic=t?Number(t[1].replace(',','.')):liqTasa(d.neto,d.iva)}
+  const tr=liqTripleta(L,totalOp);
+  if(tr&&!(d.neto===tr.neto&&d.iva===tr.iva&&d.total===tr.total)){d.neto=tr.neto;d.iva=tr.iva;d.total=tr.total;d.alic=tr.alic}
   const rg=liqBuscar(L,/ret\.?\s*ganancias/);if(rg>=0){const v=liqMontos(L[rg]);if(v.length)ret.push({tipo:'retencion',impuesto:'GANANCIAS',importe:liqUlt(v),etq:'Retención de Ganancias'})}
   const ri=liqBuscar(L,/retencion iva/);if(ri>=0){const v=liqMontos(L[ri]);if(v.length)ret.push({tipo:'retencion',impuesto:'IVA',importe:liqUlt(v),etq:'Retención de IVA'})}
   const pe=liqBuscar(L,/total percepciones/);if(pe>=0){const v=liqMontos(L[pe]);if(v.length>=2&&v[1]>0)ret.push({tipo:'percepcion',impuesto:'IVA',importe:v[1],etq:'Percepciones'})}
   const iD=liqBuscar(L,/concepto detalle.*deducciones/),iR=liqBuscar(L,/^retenciones$/,iD>=0?iD:0);
   if(iD>=0&&iR>iD){let s=0;for(let i=iD+1;i<iR;i++){const v=liqMontos(L[i]);if(v.length>=3)s+=v[v.length-2]}if(s>0)info.push(`El IVA de las deducciones (comisión y gastos) es de ${money(liqPlata(s))}: es crédito fiscal y entra por el Libro IVA de compras.`)}
   const rg4=liqBuscar(L,/iva rg 4310/);if(rg4>=0){const m=L[rg4].match(/IVA RG 4310\/2018:\s*\$\s*([\d.,]+)/i);if(m){const v=liqMontos(m[1]);if(v.length)info.push(`IVA RG 4310/2018: ${money(v[0])} (informativo: se paga aparte, no es una retención).`)}}
-  const iT=liqBuscar(L,/^comprador vendedor/),rs=[];for(let i=Math.max(0,iT);i<L.length&&rs.length<2;i++)if(/^razon social/.test(liqNorm(L[i])))rs.push(i);
-  if(rs.length){const mio=razonCli?liqNorm(razonCli).slice(0,14):'',pri=rs.find(i=>!mio||!liqNorm(L[i]).includes(mio));if(pri!==undefined){let n=L[pri].replace(/^[^:]*:\s*/,'').trim();const sig=L[rs[rs.length-1]+1];if(sig&&!/^(domicilio|localidad|c\.u\.i\.t|i\.v\.a|ingresos|razon|actuo)/.test(liqNorm(sig))&&sig.length<60)n+=' '+sig.trim();d.nombre=n}}
-  const tOp=liqBuscar(L,/total operacion/),totalOp=tOp>=0?liqMontos(L[tOp])[0]:null;
+  // Contraparte: el cliente es el VENDEDOR y a quien se le vendió es el COMPRADOR. Se lee por columna; si el cliente figura como comprador, se invierte.
+  const P=liqPartes(L);
+  if(P&&(P.comprador.cuit||P.vendedor.cuit)){
+    let cp=P.comprador;
+    if(cuitCli&&P.comprador.cuit===cuitCli&&P.vendedor.cuit!==cuitCli){cp=P.vendedor;info.push('En este PDF el cliente elegido figura como COMPRADOR: se cargó como contraparte al vendedor.')}
+    if(cp.cuit)d.cuit=cp.cuit;if(cp.nombre)d.nombre=cp.nombre;
+  }else{
+    const iT=liqBuscar(L,/^comprador vendedor/),rs=[];for(let i=Math.max(0,iT);i<L.length&&rs.length<2;i++)if(/^razon social/.test(liqNorm(L[i])))rs.push(i);
+    if(rs.length){const mio=razonCli?liqNorm(razonCli).slice(0,14):'',pri=rs.find(i=>!mio||!liqNorm(L[i]).includes(mio));if(pri!==undefined){let n=L[pri].replace(/^[^:]*:\s*/,'').trim();const sig=L[rs[rs.length-1]+1];if(sig&&!/^(domicilio|localidad|c\.u\.i\.t|i\.v\.a|ingresos|razon|actuo)/.test(liqNorm(sig))&&sig.length<60)n+=' '+sig.trim();d.nombre=n}}
+  }
   return {datos:d,retenciones:ret,info,cruce:()=>totalOp===null||totalOp===undefined||d.total===undefined?null:Math.abs(totalOp-d.total)<=1.5};
 }
 /** Cuenta de venta y líquido producto (hacienda): el cliente es el productor. IVA s/bruto = débito; IVA s/gastos = crédito. */
