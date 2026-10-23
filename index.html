@@ -82,6 +82,8 @@ input.sm{margin-top:0;border-radius:8px}
 label.g{display:inline-flex;align-items:center;color:var(--tx);background:var(--card);border:1px solid var(--bd);border-radius:10px;cursor:pointer;margin:0}
 label.g:hover{background:var(--card2)}
 .cel{display:grid;gap:6px;min-width:200px;justify-items:start}
+.mes{display:inline-flex;gap:4px;align-items:center}.mes select{min-width:150px}
+.fbar{display:flex;gap:12px;flex-wrap:wrap;align-items:end}.fbar label{margin:0}
 .login-mono{position:fixed;inset:0;z-index:0;pointer-events:none;background:url(data:image/png;base64,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) 50% 46%/min(86vmin,700px) no-repeat;opacity:.17;filter:drop-shadow(0 0 40px rgba(252,229,110,.30));-webkit-mask-image:radial-gradient(circle at 50% 46%,#000 0,#000 26vmin,transparent 56vmin);mask-image:radial-gradient(circle at 50% 46%,#000 0,#000 26vmin,transparent 56vmin)}
 .login{position:relative;z-index:1}
 @media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
@@ -160,7 +162,7 @@ function planImport(parsed,meta,existing,ctx){
 
 
 /* ===== Supabase ===== */
-const APP_VERSION='23/10/2026, backup y liquidaciones';
+const APP_VERSION='24/10/2026, Libro IVA, anticipos y filtros';
 const SUPABASE_URL='https://tugdqcoxcpsiynlvnqdu.supabase.co';
 const SUPABASE_KEY='sb_publishable_2-96VeZrsNNftRXkzA1l_A_YG7ThJrL'; // clave pública: los permisos los da la base (RLS)
 const sb=(typeof supabase!=='undefined')?supabase.createClient(SUPABASE_URL,SUPABASE_KEY):null;
@@ -218,7 +220,7 @@ async function show(t){
     if(t==='clientes')await loadCStats();
     if(t==='ventas')await loadVentas();
     if(t==='iva')await loadIva();
-    if(t==='anticipos'){await loadDeadlines();await loadFil()}
+    if(t==='anticipos'||t==='vencimientos'){await loadDeadlines();await loadFil()}
     if(t==='sueldos'){await loadSueldosAll();setSd(ui.clients.find(c=>c.id===ui.cid&&c.active!==false)?ui.cid:(ui.clients.find(c=>c.active!==false)||{}).id)}
     if(t==='inicio')await loadDash();
     if(t==='importar'){const {data,error}=await sb.from('import_batches').select('*, clients(razon_social)').order('imported_at',{ascending:false}).limit(50);if(error)throw error;ui.batches=data}
@@ -248,7 +250,7 @@ function vInicio(){
   const urg=n=>n<=2?'var(--redt)':n<=7?'var(--ambt)':'var(--mut)';
   const prox=R.filter(r=>r.nxt&&diasHasta(r.nxt.fecha)<=14).sort((a,b)=>a.nxt.fecha<b.nxt.fecha?-1:1);
   return `<h2>Inicio</h2>${bkRecordatorio()}
-  <div class="row" style="margin-bottom:14px;align-items:center"><label>Período de trabajo<br><input type="month" value="${wp}" onchange="ui.wp=this.value;draw()"></label><span class="s" style="max-width:420px">Por defecto es el mes anterior, que es el que se declara ahora. Los totales de la tabla corresponden a ${lab}.</span></div>
+  <div class="row" style="margin-bottom:14px;align-items:center"><label>Período de trabajo<br>${mesPick(wp,`ui.wp=this.value;draw()`)}</label><span class="s" style="max-width:420px">Por defecto es el mes anterior, que es el que se declara ahora. Los totales de la tabla corresponden a ${lab}.</span></div>
   <div class="grid" style="margin-bottom:22px">${K.map(([t,n])=>`<div class="card kpi"><b>${n}</b><span>${t}</span></div>`).join('')}</div>
   <div class="row" style="align-items:flex-start;gap:20px">
   <div style="flex:2;min-width:340px"><h3 style="margin-top:0">Clientes por atender (${lab})</h3>
@@ -276,18 +278,6 @@ function vInicio0(){
   return `<h2>Inicio</h2><div class="grid">${k.map(([t,n])=>`<div class="card kpi"><b>${n}</b><span>${t}</span></div>`).join('')}</div>
   <p style="color:var(--mut)">${ui.clients.length?'Importá el Excel de ARCA de un cliente desde "Importar ARCA".':(isAdmin()?'Empezá creando un cliente en "Clientes".':'Todavía no tenés clientes asignados. Pedile a un administrador que te los asigne.')}</p>`;
 }
-function vClientes(){
-  const ed=canEdit(),L=ui.clients.filter(c=>ui.vinact||c.active!==false),SH={IVA:'IVA',CM:'IIBB CM',IIBB:'IIBB',F931:'F.931',GANANCIAS_PH:'Ganancias',GAN_ANT:'Anticipos Gcias.',GAN_DDJJ:'Ganancias',BP:'B. Personales',MONOTRIBUTO:'Monotributo'};
-  const card=c=>{const st=ui.cstats[c.id]||{tot:0,fal:0};return `<div class="card cl ${c.active===false?'off':''}" tabindex="0" role="button" onclick="abrirFicha('${c.id}')" onkeydown="if(event.key==='Enter')abrirFicha('${c.id}')">
-    <div class="term">${c.cuit.slice(-1)}<small>termina en</small></div><h3>${esc(c.razon_social)}</h3><div class="s" style="font-size:13px">CUIT ${cuitF(c.cuit)}${c.active===false?' (inactivo)':''}</div>
-    <div class="chips">${(c.impuestos||[]).map(k=>`<span class="chip">${SH[k]||esc(k)}</span>`).join('')}</div>
-    <div class="clf"><span>${st.tot} comprobantes</span><span class="${st.fal?'bad':''}">${st.fal} sin factura</span></div></div>`};
-  return `<h2>Clientes</h2>${ed?`<form class="card row" onsubmit="return addClient(event)" style="margin-bottom:16px">
-  <label style="flex:1;min-width:200px">Razón social<input name="rs" required style="width:100%"></label>
-  <label>CUIT<input name="cuit" required inputmode="numeric" placeholder="30-12345678-9"></label><button class="b">Agregar cliente</button></form>`:''}
-  <label style="display:flex;gap:8px;align-items:center;margin-bottom:12px"><input type="checkbox" style="margin:0" ${ui.vinact?'checked':''} onchange="ui.vinact=this.checked;draw()"> Mostrar clientes inactivos</label>
-  <div class="cl-grid">${L.length?L.map(card).join(''):'<div class="card">Todavía no hay clientes. Agregá el primero con su razón social y CUIT.</div>'}</div>`;
-}
 async function addClient(e){
   e.preventDefault();const f=new FormData(e.target),cuit=String(f.get('cuit')).replace(/\D/g,''),rs=String(f.get('rs')).trim();
   if(cuit.length!==11)flash('El CUIT debe tener 11 dígitos.','err');else if(!rs)flash('Falta la razón social.','err');
@@ -297,15 +287,17 @@ async function addClient(e){
 const clientOpts=()=>ui.clients.filter(c=>c.active!==false).map(c=>`<option value="${c.id}" ${c.id===ui.cid?'selected':''}>${esc(c.razon_social)}</option>`).join('');
 function vImportar(){
   if(!ui.clients.length)return `<h2>Importar compras (Excel de ARCA)</h2><div class="card">No hay clientes disponibles.</div>`;
+  if(ui.lib)return vLibroPreview();
   if(ui.pend)return vPreview();
   return `<h2>Importar compras (Excel de ARCA)</h2><div class="card row" style="max-width:640px">
   <label>Cliente<br><select id="icl" onchange="ui.cid=this.value">${clientOpts()}</select></label>
-  <label>Período<br><input type="month" id="iper" value="${ui.periodo}" onchange="ui.periodo=this.value"></label>
+  <label>Período<br>${mesPick(ui.periodo,`ui.periodo=this.value`,'iper')}</label>
   <label style="flex:1;min-width:220px">Archivo de "Mis Comprobantes Recibidos" (.xls / .xlsx)<br><input type="file" id="ifile" accept=".xls,.xlsx"></label>
   <button class="b" onclick="previsualizar()">Ver vista previa</button></div>
   <p style="color:var(--mut);font-size:12px">El archivo se lee en tu navegador; solo se guardan los comprobantes en la base.</p>
+  ${libroCard()}
   <h3>Historial de importaciones</h3><div class="tw"><table><thead><tr><th>Fecha</th><th>Cliente</th><th>Archivo</th><th>Leídos</th><th>Nuevos</th><th>Repetidos</th><th>Rechazados</th></tr></thead><tbody>
-  ${ui.batches.length?ui.batches.map(b=>`<tr><td>${new Date(b.imported_at).toLocaleString('es-AR')}</td><td>${esc(b.clients&&b.clients.razon_social)}</td><td>${esc(b.file_name)}</td><td>${b.rows_read}</td><td>${b.rows_new}</td><td>${b.rows_duplicate}</td><td>${b.rows_rejected}</td></tr>`).join(''):'<tr><td colspan="7" style="color:var(--mut)">Todavía no hay importaciones.</td></tr>'}</tbody></table></div>`;
+  ${ui.batches.length?ui.batches.map(b=>`<tr><td>${new Date(b.imported_at).toLocaleString('es-AR')}</td><td>${esc(b.clients&&b.clients.razon_social)}</td><td>${esc(b.file_name)}${b.kind==='libro_iva'?' <span class="tag" style="background:var(--blu);color:var(--blut)">Libro IVA</span>':''}</td><td>${b.rows_read}</td><td>${b.rows_new}</td><td>${b.rows_duplicate}</td><td>${b.rows_rejected}</td></tr>`).join(''):'<tr><td colspan="7" style="color:var(--mut)">Todavía no hay importaciones.</td></tr>'}</tbody></table></div>`;
 }
 async function previsualizar(){
   const f=$('ifile').files[0],cid=$('icl').value,periodo=$('iper').value;ui.cid=cid;ui.periodo=periodo;
@@ -378,7 +370,7 @@ function vComp(){
   const F=[['','Todos'],['faltan','Sin factura recibida'],['fisica','Recibidos en papel'],['digital','Recibidos digitalmente'],['liq','Liquidados'],['sinfactura','Liquidados sin factura'],['revisar','Por revisar']];
   return `<h2>Comprobantes de compra</h2><div class="card row" style="margin-bottom:12px">
   <label>Cliente<br><select onchange="ui.cid=this.value;show('comprobantes')">${clientOpts()}</select></label>
-  <label>Período<br><input type="month" value="${ui.periodo}" onchange="ui.periodo=this.value;show('comprobantes')"></label>
+  <label>Período<br>${mesPick(ui.periodo,`ui.periodo=this.value;show('comprobantes')`)}</label>
   <label>Buscar<br><input value="${esc(ui.q)}" placeholder="CUIT, proveedor o número" oninput="ui.q=this.value;redrawTable()"></label>
   <label>Filtro<br><select onchange="ui.filtro=this.value;ui.sel.clear();draw()">${F.map(([k,t])=>`<option value="${k}" ${ui.filtro===k?'selected':''}>${t}</option>`).join('')}</select></label>
   <button class="g" onclick="copiarFaltantes()">Copiar lista de faltantes</button><button class="b" onclick="abrirFicha(ui.cid,'pedir',ui.periodo)">Pedir faltantes por WhatsApp</button></div>${resumenIvaCompras()}<div id="tabla">${tabla(filtered())}</div>`;
@@ -392,7 +384,7 @@ function tabla(vs){
   <label>Motivo (si excluye)<br><input id="bm"></label><button class="b" ${n?'':'disabled'} onclick="masivo()">Aplicar a los seleccionados</button></div>
   <div class="tw"><table><thead><tr><th><input type="checkbox" onchange="selAll(this.checked)" ${n&&n===vs.length?'checked':''}></th><th>Fecha</th><th>Proveedor</th><th>Comprobante</th><th>Importe</th><th>IVA</th><th>Documentación</th><th>Procesamiento</th><th>Cambiar</th></tr></thead><tbody>
   ${vs.length?vs.map(v=>`<tr><td><input type="checkbox" ${ui.sel.has(v.id)?'checked':''} onchange="toggleSel('${v.id}',this.checked)"></td><td>${fAR(v.fecha)}</td>
-  <td>${esc(v.emisor_nombre)}<span class="s">${cuitF(v.emisor_cuit)}</span></td>
+  <td>${esc(v.emisor_nombre)}${v.origen==='libro_iva'?' <span class="tag" style="background:var(--blu);color:var(--blut)">Libro IVA</span>':''}<span class="s">${cuitF(v.emisor_cuit)}</span></td>
   <td>${esc(tipoTxt(v))}<span class="s">${String(v.punto_venta).padStart(5,'0')}-${String(v.numero).padStart(8,'0')}</span></td><td>${money(Number(v.importe_total))}</td><td>${v.iva===null||v.iva===undefined?'<span class="s">sin dato</span>':money(Number(v.iva))}</td>
   <td>${tag(DOC,v.doc_status)}</td><td>${tag(PROC,v.proc_status)}${v.proc_exclusion_reason?`<span class="s">${esc(v.proc_exclusion_reason)}</span>`:''}</td>
   <td><div class="row" style="gap:4px"><select id="d${v.id}">${optsOf(DOC,v.doc_status)}</select><select id="p${v.id}">${optsOf(PROC,v.proc_status)}</select><input id="m${v.id}" placeholder="Motivo" style="width:90px">
@@ -633,17 +625,6 @@ function vProx(){
   const rows=ui.dl.filter(d=>{const n=diasHasta(d.fecha);return n>=0&&n<=7}).map(d=>({d,a:afectados(d)})).filter(x=>x.a.length);
   return `<h3>Próximos 7 días</h3>`+(rows.length?`<div class="tw"><table><tbody>${rows.map(({d,a})=>`<tr><td style="white-space:nowrap">${fAR(d.fecha)}<span class="s">${cuando(diasHasta(d.fecha))}</span></td><td>${esc(d.descripcion)}${d.periodo?`<span class="s">período ${esc(d.periodo)}</span>`:''}</td><td>${a.map(c=>esc(c.razon_social)).join(', ')}</td></tr>`).join('')}</tbody></table></div>`:`<div class="card" style="color:var(--mut)">${ui.clients.some(c=>(c.impuestos||[]).length)?'No hay vencimientos de tus clientes en los próximos 7 días (según lo cargado).':'Indicá qué impuestos tiene cada cliente en "Clientes" para ver sus vencimientos acá.'}</div>`);
 }
-function vVenc(){
-  const n=Number(ui.vdias),sel=ui.vcli;
-  let rows=ui.dl.filter(d=>{const x=diasHasta(d.fecha);return x>=-7&&(n===0||x<=n)}).map(d=>({d,a:afectados(d)}));
-  if(sel)rows=rows.filter(x=>x.a.some(c=>c.id===sel));
-  return `<h2>Vencimientos</h2><div class="msg warn">Estas fechas se tomaron de calendarios publicados y se cruzaron entre varias fuentes; no se leen directamente de ARCA. Confirmalas en el calendario oficial antes de depender de ellas, y actualizalas si ARCA prorroga.</div>
-  <div class="card row" style="margin-bottom:12px"><label>Cliente<br><select onchange="ui.vcli=this.value;draw()"><option value="">Todos los clientes</option>${ui.clients.map(c=>`<option value="${c.id}" ${sel===c.id?'selected':''}>${esc(c.razon_social)}</option>`).join('')}</select></label>
-  <label>Ver<br><select onchange="ui.vdias=this.value;draw()">${[['30','Próximos 30 días'],['60','Próximos 60 días'],['0','Todo lo cargado']].map(([k,t])=>`<option value="${k}" ${ui.vdias===k?'selected':''}>${t}</option>`).join('')}</select></label></div>
-  <div class="tw"><table><thead><tr><th>Fecha</th><th>Obligación</th><th>Terminaciones</th><th>Clientes</th><th>Estado</th></tr></thead><tbody>
-  ${rows.length?rows.map(({d,a})=>{const x=diasHasta(d.fecha);return `<tr><td style="white-space:nowrap">${fAR(d.fecha)}<span class="s">${diaSem(d.fecha)} · ${cuando(x)}</span></td><td>${esc(d.descripcion)}${d.periodo?`<span class="s">período ${esc(d.periodo)}</span>`:''}</td><td>${d.terminaciones.length===10?'Todas':d.terminaciones.join(', ')}</td><td>${a.length?a.map(c=>esc(c.razon_social)).join(', '):'<span class="s">Ningún cliente con este impuesto</span>'}</td><td>${d.verificado?'<span class="tag" style="background:var(--grn);color:var(--grnt)">Verificado</span>':'<span class="tag" style="background:var(--amb);color:var(--ambt)">A confirmar</span>'}${isAdmin()?`<br><button class="g" style="margin-top:4px" onclick="toggleVerif('${d.id}',${!d.verificado})">${d.verificado?'Desmarcar':'Marcar verificado'}</button>`:''}</td></tr>`}).join(''):'<tr><td colspan="5" style="color:var(--mut)">Sin vencimientos para este filtro.</td></tr>'}</tbody></table></div>
-  ${isAdmin()?formVenc():''}`;
-}
 function formVenc(){return `<h3>Cargar vencimiento</h3><form class="card row" onsubmit="return addVenc(event)"><label>Impuesto<br><select name="imp">${IMPS.map(([k,t])=>`<option value="${k}">${t}</option>`).join('')}<option value="OTRO">Otro</option></select></label><label style="flex:1;min-width:220px">Descripción<br><input name="desc" required style="width:100%"></label><label>Período<br><input name="per" placeholder="2026-10"></label><label>Fecha<br><input type="date" name="fec" required></label><label>Terminaciones<br><input name="ter" placeholder="0,1,2 (vacío = todas)"></label><label>Fuente<br><input name="fte"></label><button class="b">Agregar</button></form>`}
 async function addVenc(e){
   e.preventDefault();const f=new FormData(e.target),t=String(f.get('ter')).trim(),ter=t?t.split(/[,\s]+/).map(Number):[0,1,2,3,4,5,6,7,8,9];
@@ -652,7 +633,6 @@ async function addVenc(e){
   if(error)flash(errTxt(error),'err');else{await loadDeadlines();flash('Vencimiento agregado: queda "A confirmar" hasta que lo marques como verificado.')}
   draw();return false;
 }
-async function toggleVerif(id,v){const {data,error}=await sb.from('tax_deadlines').update({verificado:v}).eq('id',id).select('id');if(error)flash(errTxt(error),'err');else if(!data.length)flash('No tenés permiso.','err');else await loadDeadlines();draw()}
 async function saveImps(id){
   const arr=IMPS.map(([k])=>k).filter(k=>document.getElementById(`imp_${id}_${k}`).checked);
   const {data,error}=await sb.from('clients').update({impuestos:arr}).eq('id',id).select('id');
@@ -699,16 +679,12 @@ function vFicha(){
   ${window._fm||''}<div>${f.loading?'<div class="msg info">Cargando la ficha…</div>':fTab(c,f)}</div></aside></div>`;
 }
 function fVencRows(c,max,dias){return ui.dl.filter(d=>{const n=diasHasta(d.fecha);return n>=-7&&n<=dias&&delC(d,c)}).slice(0,max)}
-function fVencTable(c,rows){
-  if(!(c.impuestos||[]).length)return '<div class="card" style="color:var(--mut)">Todavía no indicaste qué impuestos le corresponden. Marcalos en la pestaña Datos para ver sus vencimientos acá.</div>';
-  return rows.length?`<div class="tw"><table><thead><tr><th>Fecha</th><th>Obligación</th><th>Estado</th></tr></thead><tbody>${rows.map(d=>`<tr><td style="white-space:nowrap">${fAR(d.fecha)}<span class="s">${diaSem(d.fecha)}, ${cuando(diasHasta(d.fecha))}</span></td><td>${esc(d.descripcion)}${d.periodo?`<span class="s">período ${esc(d.periodo)}</span>`:''}</td><td>${d.verificado?'<span class="tag" style="background:var(--grn);color:var(--grnt)">Verificado</span>':'<span class="tag" style="background:var(--amb);color:var(--ambt)">A confirmar</span>'}</td></tr>`).join('')}</tbody></table></div>`:'<div class="card" style="color:var(--mut)">No hay vencimientos cargados para este cliente en el período consultado.</div>';
-}
 function fTab(c,f){
   const ed=canEdit();
   if(f.tab==='resumen'){
     const s=sumSt(f.per);
     return `<div class="grid">${[['Comprobantes',s.tot],['Sin factura recibida',s.fal],['Liquidados sin factura',s.sin],['Por revisar',s.rev]].map(([t,n])=>`<div class="card kpi"><b>${n}</b><span>${t}</span></div>`).join('')}</div>
-    ${infoCliente(c)}<h3>Próximos vencimientos</h3>${fVencTable(c,fVencRows(c,6,60))}
+    ${infoCliente(c)}${fDeclMatriz(c)}<h3>Próximos vencimientos</h3>${fVencTable(c,fVencRows(c,6,60))}
     ${c.observaciones?`<h3>Observaciones internas</h3><div class="card">${esc(c.observaciones)}</div>`:''}`;
   }
   if(f.tab==='datos'){
@@ -944,12 +920,12 @@ const filDe=(cid,imp,per)=>ui.fil.find(z=>z.client_id===cid&&z.periodo.slice(0,7
 function cel(c,imp,per){
   const x=filDe(c.id,imp,per),k=`${c.id}_${imp}_${per}`,ob=OBLIG[imp],A=`'${imp}','${per}'`,Z=`'${c.id}'`;
   const opts=sel=>Object.entries(CANC).map(([v,t])=>`<option value="${v}" ${sel===v?'selected':''}>${t}</option>`).join('');
-  if(!x)return `<div class="cel"><input type="date" class="sm" id="pf_${k}" value="${hoyISO()}" title="Fecha"><select class="sm" id="pc_${k}" title="Cómo se canceló">${opts('')}</select><button class="b sm" onclick="marcarPres(${A},${Z})">Marcar ${ob.v}</button></div>`;
+  if(!x)return `<div class="cel"><input type="date" class="sm" id="pf_${k}" value="${hoyISO()}" title="Fecha">${imp==='GAN_ANT'?antSel(c.id,per,k):''}<select class="sm" id="pc_${k}" title="Cómo se canceló">${opts('')}</select><button class="b sm" onclick="marcarPres(${A},${Z})">Marcar ${ob.v}</button></div>`;
   const fd=x.presentado_at?isoLocal(new Date(x.presentado_at)):'',files=ui.ffil.filter(f=>f.filing_id===x.id);
   const slots=ADJ.map(([t,et])=>{const f=files.find(z=>z.tipo===t);return f?`<span class="row" style="gap:2px"><button class="g sm" onclick="verArchivo('${f.path}')" title="${esc(f.nombre_archivo)}">${et}</button><button class="g sm" onclick="quitarArch('${f.id}')" title="Quitar">×</button></span>`:`<label class="g sm">+ ${et}<input type="file" accept="application/pdf,.pdf" hidden onchange="adjArch('${t}',${A},this,${Z})"></label>`}).join('');
-  return `<div class="cel"><span class="tag" style="background:var(--grn);color:var(--grnt)">${ob.v==='pagado'?'Pagado':'Presentado'}</span>
+  return `<div class="cel"><span class="tag" style="background:var(--grn);color:var(--grnt)">${ob.v==='pagado'?'Pagado':'Presentado'}${imp==='GAN_ANT'&&x.numero_anticipo?' · anticipo '+x.numero_anticipo:''}</span>
   <input type="date" class="sm" value="${fd}" title="Fecha (se puede cambiar)" onchange="cambiarFechaPres(${A},this.value,${Z})">
-  <select class="sm" title="Cómo se canceló" onchange="cambiarCancel(${A},this.value,${Z})">${opts(x.cancelacion||'')}</select>
+  ${imp==='GAN_ANT'?`<select class="sm" title="Número de anticipo" onchange="cambiarNumAnt(${A},this.value,${Z})">${antNumOpts(x.numero_anticipo,null)}</select>`:''}<select class="sm" title="Cómo se canceló" onchange="cambiarCancel(${A},this.value,${Z})">${opts(x.cancelacion||'')}</select>
   ${x.nota?`<span class="s">${esc(x.nota)}</span>`:''}
   <div class="row" style="gap:4px">${slots}</div>
   <div class="row" style="gap:4px"><button class="g sm" onclick="notaPres(${A},${Z})">Nota</button><button class="g sm" onclick="deshacerPres(${A},${Z})">Deshacer</button></div></div>`;
@@ -970,9 +946,10 @@ function vPresent(c,f){
 async function marcarPres(imp,per,cid){
   const c=ui.clients.find(x=>x.id===cid),inp=document.getElementById(`pf_${cid}_${imp}_${per}`),cs=document.getElementById(`pc_${cid}_${imp}_${per}`),fecha=inp&&inp.value;
   if(!fecha){flash('Elegí la fecha.','err');return draw()}
+  const ns=document.getElementById('pn_'+cid+'_'+imp+'_'+per);if(imp==='GAN_ANT'&&!(ns&&ns.value)){flash('Elegí el número de anticipo (1, 2, 3...).','err');return draw()}
   const nota=prompt(`${OBLIG[imp].n} (${per.slice(5)}/${per.slice(0,4)}) de ${c.razon_social}.\nNota opcional (por ejemplo, el número de presentación):`,'');
   if(nota===null)return;
-  const {error}=await sb.from('tax_filings').insert({client_id:cid,periodo:per+'-01',impuesto:imp,presentado_by:me.id,presentado_at:nuevaFecha(fecha),nota:nota.trim()||null,cancelacion:(cs&&cs.value)||null});
+  const {error}=await sb.from('tax_filings').insert({client_id:cid,periodo:per+'-01',impuesto:imp,presentado_by:me.id,presentado_at:nuevaFecha(fecha),nota:nota.trim()||null,cancelacion:(cs&&cs.value)||null,numero_anticipo:(ns&&ns.value)?Number(ns.value):null});
   if(error)flash(errTxt(error),'err');else{try{await loadFil();flash(`${OBLIG[imp].n} de ${c.razon_social} ${per.slice(5)}/${per.slice(0,4)}: marcado como ${OBLIG[imp].v} el ${fAR(fecha)}.`)}catch(e){flash(errTxt(e),'err')}}
   draw();
 }
@@ -1119,7 +1096,7 @@ function vSueldos(c,f){
   return `<h3 style="margin-top:0">Empleados</h3>${form}${empT}
   <h3>Recibos de ${mesAnio(s.periodo+'-01')}</h3>
   <div class="card row" style="margin-bottom:12px">
-   <label>Período<br><input type="month" value="${s.periodo}" onchange="ui.sd.sue.periodo=this.value;draw()"></label>
+   <label>Período<br>${mesPick(s.periodo,`ui.sd.sue.periodo=this.value;draw()`)}</label>
    <label>Tipo de recibo<br><select onchange="ui.sd.sue.tipo=this.value;draw()">${TIPOS_REC.map(t=>`<option ${s.tipo===t?'selected':''}>${t}</option>`).join('')}</select></label>
    <label>El enlace vence en<br><select onchange="ui.sd.sue.horas=Number(this.value)">${[[24,'24 horas'],[72,'3 días'],[168,'7 días']].map(([h,t])=>`<option value="${h}" ${s.horas===h?'selected':''}>${t}</option>`).join('')}</select></label>
    <label class="g">Subir varios PDF a la vez<input type="file" accept="application/pdf,.pdf" multiple hidden onchange="subirVarios(this)"></label></div>
@@ -1246,9 +1223,9 @@ function vAnticipos(){
   const hechos=act.filter(c=>filDe(c.id,'GAN_ANT',per)).length;
   const prox=c=>{const d=ui.dl.filter(x=>x.impuesto==='GANANCIAS_PH'&&diasHasta(x.fecha)>=0&&delC(x,c)).sort((a,b)=>a.fecha<b.fecha?-1:1)[0];return d?`${fAR(d.fecha)}<span class="s">${cuando(diasHasta(d.fecha))}${d.verificado?'':', a confirmar'}</span>`:'<span class="s">sin fecha cargada</span>'};
   return `<h2>Anticipos de Ganancias</h2>
-  <div class="card row" style="margin-bottom:14px;align-items:center"><label>Período<br><input type="month" value="${per}" onchange="ui.antPer=this.value;draw()"></label>
+  <div class="card row" style="margin-bottom:14px;align-items:center"><label>Período<br>${mesPick(per,`ui.antPer=this.value;draw()`)}</label>
    <div class="grid" style="flex:1;min-width:260px"><div class="card kpi"><b>${act.length}</b><span>Clientes con anticipos</span></div><div class="card kpi"><b>${hechos}</b><span>Pagados</span></div><div class="card kpi"><b>${act.length-hechos}</b><span>Pendientes</span></div></div></div>
-  <p class="s" style="margin-bottom:12px">Marcá cada anticipo cuando quede pagado: elegí si fue con VEP completo, compensación o VEP + compensación, y adjuntá los comprobantes. La app solo guarda tu marca; no verifica nada con ARCA.</p>
+  <p class="s" style="margin-bottom:12px">Marcá cada anticipo cuando quede pagado: elegí el número de anticipo (1, 2, 3...), si fue con VEP completo, compensación o VEP + compensación, y adjuntá los comprobantes. La app solo guarda tu marca; no verifica nada con ARCA.</p>
   <div class="tw"><table><thead><tr><th>Cliente</th><th>Próximo vencimiento cargado</th><th>Anticipo ${per.slice(5)}/${per.slice(0,4)}</th></tr></thead><tbody>
   ${act.length?act.map(c=>`<tr><td>${esc(c.razon_social)}<span class="s">CUIT ${cuitF(c.cuit)}, termina en ${c.cuit.slice(-1)}</span></td><td>${prox(c)}</td><td>${cel(c,'GAN_ANT',per)}</td></tr>`).join(''):'<tr><td colspan="3" style="color:var(--mut)">Ningún cliente tiene anticipos de Ganancias. Marcá "Ganancias: anticipos" en la pestaña Datos de cada cliente.</td></tr>'}</tbody></table></div>`;
 }
@@ -1287,7 +1264,7 @@ function vVentas(){
   const R=v.rows,deb=R.reduce((a,x)=>a+sgnVal(x.tipo_cmp,x.iva),0),neto=R.reduce((a,x)=>a+sgnVal(x.tipo_cmp,x.neto_gravado),0),tot=R.reduce((a,x)=>a+sgnVal(x.tipo_cmp,x.importe_total),0);
   return `<h2>Ventas (facturas emitidas)</h2>
   <div class="card row" style="margin-bottom:12px"><label>Cliente<br><select onchange="ui.cid=this.value;show('ventas')">${clientOpts()}</select></label>
-  <label>Período<br><input type="month" value="${v.periodo}" onchange="ui.vta.periodo=this.value;show('ventas')"></label>
+  <label>Período<br>${mesPick(v.periodo,`ui.vta.periodo=this.value;show('ventas')`)}</label>
   <label style="flex:1;min-width:230px">Excel de "Mis Comprobantes Emitidos" (.xls / .xlsx)<br><input type="file" id="vfile" accept=".xls,.xlsx" style="width:100%"></label>
   <button class="b" onclick="ventasPrevisualizar()">Ver vista previa</button><button class="g" onclick="ui.vta.form=!ui.vta.form;draw()">Agregar factura a mano</button><button class="g" onclick="liqAbrir()">Cargar liquidación (PDF)</button></div>
   ${v.form?ventaForm():''}${liqForm()}
@@ -1416,7 +1393,7 @@ function vIva(){
   const lab=P.periodo.slice(5)+'/'+P.periodo.slice(0,4);
   const aviso=r=>{const a=[];if(!r||!r.cant_ventas)a.push('sin ventas cargadas');if(!r||!r.cant_compras)a.push('sin compras');if(r&&r.compras_sin_iva)a.push(r.compras_sin_iva+' compra(s) sin IVA');return a.length?`<span class="s" style="color:var(--ambt)">${a.join(', ')}</span>`:''};
   return `<h2>IVA aproximado</h2>
-  <div class="card row" style="margin-bottom:12px"><label>Período<br><input type="month" value="${P.periodo}" onchange="ui.ivaP.periodo=this.value;show('iva')"></label>
+  <div class="card row" style="margin-bottom:12px"><label>Período<br>${mesPick(P.periodo,`ui.ivaP.periodo=this.value;show('iva')`)}</label>
   <span class="s" style="max-width:520px">Es una estimación: IVA de las ventas menos IVA de las compras de ${lab}. Las notas de crédito restan y los comprobantes de compra marcados como excluidos no cuentan. No reemplaza la liquidación.</span></div>
   <div class="tw" style="margin-bottom:18px"><table><thead><tr><th>Cliente</th><th>IVA ventas (débito)</th><th>IVA compras (crédito)</th><th>Saldo aproximado</th><th></th></tr></thead><tbody>
   ${filas.length?filas.map(({c,r,deb,cred})=>{const s=deb-cred;return `<tr><td>${esc(c.razon_social)}${aviso(r)}</td><td>${money(deb)}</td><td>${money(cred)}</td><td><b>${money(Math.abs(s))}</b><span class="s">${s>0?'a pagar':s<0?'a favor':'sin saldo'}</span></td><td><button class="g sm" onclick="ivaDetalle('${c.id}')">Ver detalle</button></td></tr>`}).join(''):'<tr><td colspan="5" style="color:var(--mut)">Ningún cliente tiene IVA marcado ni comprobantes en este período.</td></tr>'}</tbody></table></div>
@@ -2018,6 +1995,260 @@ async function liqGuardar(){
     v.periodo=fecha.slice(0,7);L.abierta=false;L.datos=null;L.file=null;L.cand=[];L.avisos=[];await loadVentas();flash(`${tipo.nombre} guardada. Ya cuenta en el IVA aproximado de ${v.periodo.slice(5)}/${v.periodo.slice(0,4)}.`);
   }catch(x){await sb.storage.from('clientes').remove([path]);flash(/duplicate/i.test(x.message||'')?'Ya cargaste una liquidación con ese punto de venta y número.':errTxt(x),'err')}
   draw();
+}
+
+/* ===== Libro IVA Compras: suma al sistema lo que NO está en "Mis Comprobantes" (tickets y cargas manuales) =====
+   Regla: un comprobante del Libro que ya figura en ARCA (mismo CUIT, tipo, punto de venta y número) se omite. Todo lo demás se ofrece
+   para agregar, con vista previa y casillas para destildar lo que no corresponda. No se modifica ningún comprobante existente. */
+const LIBRO_TIPOS={'FACTURA A':1,'NOTA DE DEBITO A':2,'NOTA DE CREDITO A':3,'FACTURA B':6,'NOTA DE DEBITO B':7,'NOTA DE CREDITO B':8,'FACTURA C':11,'NOTA DE DEBITO C':12,'NOTA DE CREDITO C':13,'FACTURA M':51,'NOTA DE DEBITO M':52,'NOTA DE CREDITO M':53,
+  'TIQUE FACTURA A':81,'TICKET FACTURA A':81,'TIQUE FACTURA B':82,'TICKET FACTURA B':82,'TIQUE':83,'TICKET':83,'RESUMEN BANCARIO':9101,'LIQUIDACION':9102,'LIQUIDACIONES':9102};
+const LIBRO_COLS={naturaleza:['naturaleza'],fechaLibro:['fecha'],tipo:['comprobante'],numero:['numero','nro','numero comprobante'],fcomp:['fecha comp','fecha comprobante'],prov:['proveedor','razon social'],cuit:['cuit'],
+  neto:['neto','neto gravado'],nograv:['no gravado'],interno:['imp interno','impuestos internos'],pivas:['percep iva','percepcion iva'],piibb:['percep iibb','percepcion iibb'],ivam:['iva monto','monto iva','importe iva'],ivap:['iva pct','alicuota','alicuota iva'],total:['total']};
+const lbNorm=s=>norm(String(s??'').replace(/%/g,' pct '));
+const lbTipo=s=>String(s??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/\s+/g,' ').trim();
+const lbCod=n=>LIBRO_TIPOS[n]!==undefined?LIBRO_TIPOS[n]:9100;
+const lbNombreTipo=c=>c.tipo_cmp>=9100?(c.tipoTxt||'Otro comprobante'):c.tipoTxt;
+
+function parseLibroIva(rows){
+  const need=['tipo','numero','cuit','neto','ivam','total'];let h=-1,ix=null;
+  for(let i=0;i<Math.min(rows.length,25);i++){const m={};(rows[i]||[]).forEach((c,j)=>{const k=lbNorm(c);for(const [f,al] of Object.entries(LIBRO_COLS))if(al.includes(k)&&m[f]===undefined)m[f]=j});if(need.every(f=>m[f]!==undefined)){h=i;ix=m;break}}
+  if(h<0)return {ok:false,error:'No se reconoció el formato del Libro IVA Compras. Tiene que traer las columnas COMPROBANTE, NUMERO, CUIT, NETO, IVA MONTO y TOTAL.'};
+  const top=rows.slice(0,h).flat().map(c=>String(c??'')).join(' '),pm=top.match(/periodo\s*desde\D*(\d{1,2})\/(\d{4}).*?periodo\s*hasta\D*(\d{1,2})\/(\d{4})/i);
+  let periodo=null;
+  if(pm){if(+pm[1]!==+pm[3]||pm[2]!==pm[4])return {ok:false,error:'El Libro abarca más de un mes ('+pm[1]+'/'+pm[2]+' a '+pm[3]+'/'+pm[4]+'). Exportalo mes por mes.'};periodo=pm[2]+'-'+String(+pm[1]).padStart(2,'0')}
+  const grupos=new Map(),errores=[];let filas=0,pie=null;
+  for(let i=h+1;i<rows.length;i++){
+    const r=rows[i]||[],txt=r.map(c=>String(c??'')).join(' '),mc=txt.match(/cantidad de comprobantes\D*(\d+)/i);
+    if(mc){pie={cantidad:+mc[1],neto:pNum(r[ix.neto]),iva:pNum(r[ix.ivam]),total:pNum(r[ix.total])};continue}
+    if(r.every(c=>String(c??'').trim()===''))continue;
+    const tipoTxt=lbTipo(r[ix.tipo]);if(!tipoTxt)continue;filas++;
+    const mn=String(r[ix.numero]??'').trim().match(/^(\d+)\s*-\s*(\d+)$/),cuit=String(r[ix.cuit]??'').replace(/\D/g,''),fc=pDate(r[ix.fcomp!==undefined?ix.fcomp:ix.fechaLibro]),p=[];
+    if(!mn)p.push('número inválido');if(cuit.length!==11)p.push('CUIT inválido');if(!fc)p.push('fecha inválida');
+    if(p.length){errores.push({fila:i+1,mensaje:p.join(', ')});continue}
+    const key=tipoTxt+'|'+(+mn[1])+'-'+(+mn[2])+'|'+cuit;let g=grupos.get(key);
+    if(!g){g={clave:key,tipoTxt,tipo_cmp:lbCod(tipoTxt),pv:+mn[1],numero:+mn[2],cuit,proveedor:String(r[ix.prov]??'').trim()||null,fecha:fc,naturaleza:ix.naturaleza!==undefined?String(r[ix.naturaleza]??'').trim():'',neto:0,nograv:0,interno:0,pivas:0,piibb:0,iva:0,total:0,filasTotal:0,rates:{}};grupos.set(key,g)}
+    const n=k=>ix[k]!==undefined?(pNum(r[ix[k]])||0):0;
+    g.neto+=n('neto');g.nograv+=n('nograv');g.interno+=n('interno');g.pivas+=n('pivas');g.piibb+=n('piibb');g.iva+=n('ivam');
+    const tv=pNum(r[ix.total]);if(tv!==null){g.total+=tv;g.filasTotal++}
+    const rate=ix.ivap!==undefined?pNum(r[ix.ivap]):null;
+    if(rate!==null&&(Math.abs(n('neto'))>0.004||Math.abs(n('ivam'))>0.004)){const t=g.rates[String(rate)]||(g.rates[String(rate)]={neto:0,iva:0});t.neto+=n('neto');t.iva+=n('ivam')}
+  }
+  const sumas={neto:0,iva:0,total:0};
+  const comprobantes=[...grupos.values()].map(g=>{
+    sumas.neto+=g.neto;sumas.iva+=g.iva;sumas.total+=g.total;
+    const nc=esNC(g.tipo_cmp),f=v=>liqPlata(nc?Math.abs(v):v),otros=g.interno+g.pivas+g.piibb,sinTotal=g.filasTotal===0,total=sinTotal?g.neto+g.nograv+otros+g.iva:g.total;
+    const c={clave:g.clave,tipoTxt:g.tipoTxt,tipo_cmp:g.tipo_cmp,pv:g.pv,numero:g.numero,cuit:g.cuit,proveedor:g.proveedor,fecha:g.fecha,naturaleza:g.naturaleza,nc,
+      neto:f(g.neto),nograv:f(g.nograv),otros:f(otros),pivas:f(g.pivas),piibb:f(g.piibb),interno:f(g.interno),iva:f(g.iva),total:f(total),
+      cierra:Math.abs(g.neto+g.nograv+otros+g.iva-total)<=1.5,repetidoEnLibro:g.filasTotal>1,sinTotal};
+    const raw={'Origen':'Libro IVA Compras','Tipo':g.tipoTxt,'Naturaleza':g.naturaleza,'Neto Gravado Total':c.neto,'Neto No Gravado':c.nograv,'Impuestos Internos':f(g.interno),'Percepción IVA':c.pivas,'Percepción IIBB':c.piibb,'Total IVA':c.iva,'Imp. Total':c.total};
+    for(const [k,t] of Object.entries(g.rates)){const a=String(+k).replace('.',',');raw['Neto Grav. IVA '+a+'%']=f(t.neto);if(+k>0)raw['IVA '+a+'%']=f(t.iva)}
+    c.raw=raw;return c;
+  });
+  return {ok:true,periodo,comprobantes,errores,filas,pie,sumas:{neto:liqPlata(sumas.neto),iva:liqPlata(sumas.iva),total:liqPlata(sumas.total)}};
+}
+
+/** Compara el Libro con lo que ya está en el sistema (todo lo del cliente, de cualquier período). */
+function planLibro(lib,ex,periodo){
+  const k4=(c,t,p,n)=>[c,t,p,n].join('|'),k3=(c,p,n)=>[c,p,n].join('|'),m4=new Map(),m3=new Map();
+  ex.forEach(e=>{m4.set(k4(e.emisor_cuit,e.tipo_cmp,e.punto_venta,e.numero),e);const k=k3(e.emisor_cuit,e.punto_venta,e.numero);if(!m3.has(k))m3.set(k,[]);m3.get(k).push(e)});
+  const p={nuevos:[],repetidos:[],posibles:[],difs:[],arcaSinLibro:[]},vistos=new Set();
+  for(const c of lib.comprobantes){
+    const e=m4.get(k4(c.cuit,c.tipo_cmp,c.pv,c.numero));
+    if(e){vistos.add(e);p.repetidos.push({c,e});if(Math.abs(Math.abs(Number(e.importe_total))-Math.abs(c.total))>1)p.difs.push({c,e});continue}
+    const alt=m3.get(k3(c.cuit,c.pv,c.numero));
+    if(alt){alt.forEach(a=>vistos.add(a));p.posibles.push({c,alt});continue}
+    p.nuevos.push(c);
+  }
+  p.arcaSinLibro=ex.filter(e=>e.origen!=='libro_iva'&&e.proc_status!=='excluido'&&String(e.fecha).startsWith(periodo)&&!vistos.has(e));
+  return p;
+}
+
+/* ---- Interfaz ---- */
+function libroCard(){
+  return `<div class="card" style="max-width:640px;margin-top:16px"><b>Libro IVA Compras (paso 2, opcional)</b>
+  <p class="s" style="margin:4px 0 10px">Usa el cliente y el período de arriba. Se agregan solo los comprobantes del Libro que no figuran en "Mis Comprobantes" (por ejemplo, los tickets). Primero importá el Excel de ARCA.</p>
+  <div class="row"><label style="flex:1;min-width:220px">Excel del Libro IVA Compras (.xls / .xlsx)<br><input type="file" id="lfile" accept=".xls,.xlsx" style="width:100%"></label><button class="b" onclick="libroPrevisualizar()">Ver vista previa del Libro</button></div></div>`;
+}
+async function libroPrevisualizar(){
+  const f=$('lfile').files[0],cid=$('icl').value,periodo=$('iper').value;ui.cid=cid;ui.periodo=periodo;const bad=m=>{flash(m,'err');draw()};
+  if(!/^\d{4}-\d{2}$/.test(periodo))return bad('Elegí el período.');
+  if(!f)return bad('Subí el Excel del Libro IVA Compras.');
+  if(!/\.xlsx?$/i.test(f.name))return bad('El archivo debe ser .xls o .xlsx.');
+  if(f.size>10*1048576)return bad('El archivo supera los 10 MB.');
+  if(typeof XLSX==='undefined')return bad('No se pudo cargar el lector de Excel (¿sin conexión a internet?).');
+  let buf,rows;try{buf=await f.arrayBuffer();const wb=XLSX.read(buf,{type:'array'});rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,raw:true,defval:null})}catch(e){return bad('No se pudo abrir el archivo: ¿está dañado?')}
+  const lib=parseLibroIva(rows);if(!lib.ok)return bad(lib.error);
+  if(lib.periodo&&lib.periodo!==periodo)return bad(`El Libro es de ${lib.periodo.slice(5)}/${lib.periodo.slice(0,4)} y elegiste ${periodo.slice(5)}/${periodo.slice(0,4)}. Elegí el mismo período.`);
+  if(!lib.comprobantes.length)return bad('El Libro no tiene comprobantes para leer.');
+  try{
+    const ex=await fetchAll((a,b)=>sb.from('vouchers').select('emisor_cuit,tipo_cmp,punto_venta,numero,fecha,importe_total,origen,proc_status').eq('client_id',cid).range(a,b));
+    ex.forEach(e=>{e.importe_total=Number(e.importe_total)});
+    const plan=planLibro(lib,ex,periodo),cand=[...plan.nuevos.map(c=>({c,tipo:'nuevo'})),...plan.posibles.map(x=>({c:x.c,tipo:'posible',alt:x.alt}))];
+    ui.lib={cid,periodo,file:f.name,hash:await bkSha(new Uint8Array(buf)),lib,plan,cand,sel:new Set(cand.map((x,i)=>x.tipo==='nuevo'?i:-1).filter(i=>i>=0)),estado:'ya_pasados',
+      sinArca:!ex.some(e=>e.origen!=='libro_iva'&&String(e.fecha).startsWith(periodo)),forzar:false};
+  }catch(e){flash(errTxt(e),'err')}
+  draw();
+}
+function libToggle(i,v){const L=ui.lib;v?L.sel.add(i):L.sel.delete(i);draw()}
+function libTodos(tipo,v){const L=ui.lib;L.cand.forEach((x,i)=>{if(x.tipo===tipo)v?L.sel.add(i):L.sel.delete(i)});draw()}
+function vLibroPreview(){
+  const L=ui.lib,p=L.plan,lib=L.lib,cli=ui.clients.find(c=>c.id===L.cid),pie=lib.pie,n=L.sel.size;
+  const warn=[];
+  if(L.sinArca)warn.push('Todavía no hay comprobantes de ARCA importados para este cliente y período: todo figuraría como nuevo. Conviene importar primero el Excel de "Mis Comprobantes Recibidos".');
+  if(pie&&pie.cantidad!==lib.comprobantes.length)warn.push(`El pie del Libro dice ${pie.cantidad} comprobantes y se leyeron ${lib.comprobantes.length}.`);
+  if(pie&&pie.total!==null&&Math.abs(pie.total-lib.sumas.total)>1)warn.push(`El total del pie (${money(pie.total)}) no coincide con la suma de las filas (${money(lib.sumas.total)}).`);
+  if(lib.errores.length)warn.push(`${lib.errores.length} fila(s) no se pudieron leer: ${lib.errores.slice(0,6).map(e=>'fila '+e.fila+' ('+e.mensaje+')').join(', ')}.`);
+  const dud=c=>[c.nc?'<span class="tag" style="background:var(--org);color:var(--orgt)">nota de crédito</span>':'',c.tipo_cmp>=9100?'<span class="tag" style="background:var(--blu);color:var(--blut)">sin código ARCA</span>':'',!c.cierra?'<span class="tag" style="background:var(--red);color:var(--redt)">el total no cierra</span>':'',c.repetidoEnLibro?'<span class="tag" style="background:var(--red);color:var(--redt)">repetido en el Libro</span>':'',c.sinTotal?'<span class="tag" style="background:var(--amb);color:var(--ambt)">sin total</span>':''].join(' ');
+  const fila=(x,i)=>{const c=x.c;return `<tr><td><input type="checkbox" ${L.sel.has(i)?'checked':''} onchange="libToggle(${i},this.checked)"></td><td>${fAR(c.fecha)}</td><td>${esc(lbNombreTipo(c))}<span class="s">${nroF(c.pv,c.numero)}</span></td><td>${esc(c.proveedor||'')}<span class="s">${cuitF(c.cuit)}</span></td><td>${money(c.neto)}</td><td>${money(c.iva)}</td><td>${money(c.total)}</td><td>${dud(c)}${x.tipo==='posible'?`<span class="s">Ya hay uno con otro tipo: ${x.alt.map(a=>'tipo '+a.tipo_cmp).join(', ')}</span>`:''}</td></tr>`};
+  const tabla=(tipo,titulo,vacio)=>{const items=L.cand.map((x,i)=>[x,i]).filter(([x])=>x.tipo===tipo);return `<h3>${titulo} (${items.length})</h3>${items.length?`<div class="row" style="margin-bottom:6px"><button class="g sm" onclick="libTodos('${tipo}',true)">Marcar todos</button><button class="g sm" onclick="libTodos('${tipo}',false)">Desmarcar todos</button></div><div class="tw" style="margin-bottom:14px"><table><thead><tr><th></th><th>Fecha</th><th>Comprobante</th><th>Proveedor</th><th>Neto</th><th>IVA</th><th>Total</th><th>Aviso</th></tr></thead><tbody>${items.map(([x,i])=>fila(x,i)).join('')}</tbody></table></div>`:`<div class="card" style="color:var(--mut);margin-bottom:14px">${vacio}</div>`}`};
+  const sumSel=[...L.sel].reduce((a,i)=>{const c=L.cand[i].c;return {iva:a.iva+sgnVal(c.tipo_cmp,c.iva),neto:a.neto+sgnVal(c.tipo_cmp,c.neto)}},{iva:0,neto:0});
+  return `<h2>Vista previa del Libro IVA: ${esc(L.file)}</h2>
+  <div class="msg info">Cliente: <b>${esc(cli?cli.razon_social:'')}</b>, período ${L.periodo.slice(5)}/${L.periodo.slice(0,4)}. Verificá que sean los correctos antes de confirmar.</div>
+  <div class="grid" style="margin-bottom:12px">${[['En el Libro',lib.comprobantes.length],['Ya estaban en ARCA (se omiten)',p.repetidos.length],['Para agregar',p.nuevos.length],['Posibles repetidos',p.posibles.length]].map(([t,k])=>`<div class="card kpi"><b>${k}</b><span>${t}</span></div>`).join('')}</div>
+  ${warn.map(w=>`<div class="msg warn">${esc(w)}</div>`).join('')}
+  ${tabla('nuevo','Comprobantes del Libro que no están en ARCA','No hay comprobantes nuevos: todo lo del Libro ya está cargado.')}
+  ${p.posibles.length?tabla('posible','Posibles repetidos: mismo proveedor, punto de venta y número, pero otro tipo (destildados)',''):''}
+  ${p.difs.length?`<div class="msg warn"><b>${p.difs.length} comprobante(s) están en ambos pero con distinto importe:</b> ${p.difs.slice(0,6).map(({c,e})=>nroF(c.pv,c.numero)+' (Libro '+money(c.total)+' / ARCA '+money(Math.abs(e.importe_total))+')').join(', ')}${p.difs.length>6?'…':''}. No se modifican: revisalos.</div>`:''}
+  ${p.arcaSinLibro.length?`<div class="msg warn"><b>${p.arcaSinLibro.length} comprobante(s) de ARCA de este período no figuran en el Libro</b> (puede que falte cargarlos en el sistema contable): ${p.arcaSinLibro.slice(0,6).map(e=>nroF(e.punto_venta,e.numero)+' '+fAR(e.fecha)).join(', ')}${p.arcaSinLibro.length>6?'…':''}.</div>`:''}
+  <div class="card row" style="margin-bottom:12px;align-items:end"><label>Estado con el que se agregan<br><select onchange="ui.lib.estado=this.value"><option value="ya_pasados" ${L.estado==='ya_pasados'?'selected':''}>Recibidos y ya pasados al sistema (recomendado: salen del Libro)</option><option value="pendiente" ${L.estado==='pendiente'?'selected':''}>Recibidos, pendientes de pasar</option></select></label>
+  ${L.sinArca?`<label style="display:flex;gap:8px;align-items:center"><input type="checkbox" style="margin:0" ${L.forzar?'checked':''} onchange="ui.lib.forzar=this.checked;draw()"> Agregar igual, sin haber importado ARCA</label>`:''}</div>
+  <p class="s" style="margin-bottom:10px">Seleccionados: IVA crédito de ${n} comprobante(s): <b>${money(sumSel.iva)}</b> (las notas de crédito restan).</p>
+  <div class="row"><button class="b" id="bconf" ${(!n||(L.sinArca&&!L.forzar))?'disabled':''} onclick="libroConfirmar()">Confirmar: agregar ${n} comprobante(s)</button><button class="g" onclick="ui.lib=null;draw()">Cancelar</button></div>`;
+}
+async function libroConfirmar(){
+  if(ui.busy)return;const L=ui.lib,elegidos=[...L.sel].sort((a,b)=>a-b).map(i=>L.cand[i]);if(!elegidos.length)return;
+  ui.busy=true;let batchId=null,n=0;
+  try{
+    const {data:per,error:e1}=await sb.from('client_periods').upsert({client_id:L.cid,periodo:L.periodo+'-01'},{onConflict:'client_id,periodo'}).select('id').single();if(e1)throw e1;
+    const {data:b,error:e2}=await sb.from('import_batches').insert({client_id:L.cid,period_id:per.id,file_name:L.file,file_sha256:L.hash,imported_by:me.id,kind:'libro_iva',rows_read:L.lib.comprobantes.length,rows_new:elegidos.length,rows_duplicate:L.plan.repetidos.length,rows_rejected:L.lib.errores.length,errors:L.lib.errores.map(e=>({row:e.fila,message:e.mensaje}))}).select('id').single();if(e2)throw e2;
+    batchId=b.id;const ahora=new Date().toISOString(),proc=L.estado==='pendiente'?'pendiente':'liquidado_con_documentacion';
+    const rowsDb=elegidos.map(({c})=>({client_id:L.cid,period_id:per.id,batch_id:batchId,fecha:c.fecha,tipo_cmp:c.tipo_cmp,punto_venta:c.pv,numero:c.numero,emisor_cuit:c.cuit,emisor_nombre:c.proveedor,moneda:'PES',tipo_cambio:1,importe_total:c.total,neto_gravado:c.neto,no_gravado:c.nograv,exento:0,otros_tributos:c.otros,iva:c.iva,raw:c.raw,origen:'libro_iva',doc_status:'recibida_fisica',proc_status:proc,received_at:ahora,notes:'Cargado desde el Libro IVA Compras',updated_by:me.id}));
+    for(let i=0;i<rowsDb.length;i+=300){const {data,error}=await sb.from('vouchers').upsert(rowsDb.slice(i,i+300),{onConflict:'client_id,emisor_cuit,tipo_cmp,punto_venta,numero',ignoreDuplicates:true}).select('id');if(error)throw error;n+=data.length}
+    if(n!==elegidos.length)await sb.from('import_batches').update({rows_new:n,rows_duplicate:L.plan.repetidos.length+(elegidos.length-n)}).eq('id',batchId);
+    ui.lib=null;ui.busy=false;ui.periodo=L.periodo;ui.cid=L.cid;flash(`Se agregaron ${n} comprobantes del Libro IVA (${L.plan.repetidos.length} ya estaban en ARCA y se omitieron).`);await show('comprobantes');
+  }catch(e){
+    if(batchId)await sb.from('import_batches').update({rows_new:n}).eq('id',batchId);
+    ui.busy=false;flash(`La importación falló${n?` después de agregar ${n} comprobantes`:''}: ${errTxt(e)}. Podés repetirla: no se duplica nada.`,'err');draw();
+  }
+}
+
+/* ===== Selector de mes que funciona en cualquier navegador (con flechas) ===== */
+function mesPick(v,js,id){
+  const hoy=new Date(),base=hoy.getFullYear()*12+hoy.getMonth(),opts=[];
+  for(let i=-47;i<=6;i++){const t=base+i;opts.push(Math.floor(t/12)+'-'+String(t%12+1).padStart(2,'0'))}
+  if(v&&!opts.includes(v)){opts.push(v);opts.sort()}
+  return `<span class="mes"><button type="button" class="g sm" title="Mes anterior" onclick="mesMover(this,-1)">◀</button><select ${id?`id="${id}"`:''} onchange="${String(js).replace(/"/g,'&quot;')}">${opts.map(o=>`<option value="${o}" ${o===v?'selected':''}>${MESES[+o.slice(5)-1]} ${o.slice(0,4)}</option>`).join('')}</select><button type="button" class="g sm" title="Mes siguiente" onclick="mesMover(this,1)">▶</button></span>`;
+}
+function mesMover(btn,d){const s=btn.parentNode.querySelector('select'),i=s.selectedIndex+d;if(i<0||i>=s.options.length)return;s.selectedIndex=i;s.dispatchEvent(new Event('change',{bubbles:true}))}
+
+/* ===== Anticipos: número de anticipo (1, 2, 3...) ===== */
+const pad2=n=>String(n).padStart(2,'0');
+function antPrevPer(per){let [y,m]=per.split('-').map(Number);m--;if(m===0){m=12;y--}return y+'-'+pad2(m)}
+function antNumOpts(sel,sug){return '<option value="">N° de anticipo</option>'+[1,2,3,4,5,6,7,8,9,10].map(n=>`<option value="${n}" ${(sel?+sel===n:sug===n)?'selected':''}>Anticipo ${n}${(!sel&&sug===n)?' (sugerido)':''}</option>`).join('')}
+function antSel(cid,per,k){const prev=filDe(cid,'GAN_ANT',antPrevPer(per)),sug=prev&&prev.numero_anticipo&&prev.numero_anticipo<10?prev.numero_anticipo+1:null;return `<select class="sm" id="pn_${k}" title="Número de anticipo">${antNumOpts(null,sug)}</select>`}
+function cambiarNumAnt(imp,per,v,cid){return updPres(imp,per,{numero_anticipo:v?Number(v):null},'Número de anticipo actualizado.',cid)}
+
+/* ===== Presentación de cada obligación, a partir de lo que se marcó ===== */
+const FIL_DE_VENC={IVA:'IVA',CM:'IIBB',F931:'F931'};
+function presDeVenc(c,d){
+  const key=FIL_DE_VENC[d.impuesto];if(!key||!d.periodo)return {k:'na'};
+  const x=ui.fil.find(z=>z.client_id===c.id&&z.impuesto===key&&z.periodo.slice(0,7)===String(d.periodo).slice(0,7));
+  if(x)return {k:'ok',t:'Presentado '+fAR(isoLocal(new Date(x.presentado_at)))};
+  return diasHasta(d.fecha)<0?{k:'venc',t:'Vencido sin presentar'}:{k:'pend',t:'Pendiente'};
+}
+const presTag=p=>p.k==='na'?'<span class="s">—</span>':`<span class="tag" style="background:var(--${p.k==='ok'?'grn':p.k==='venc'?'red':'amb'});color:var(--${p.k==='ok'?'grnt':p.k==='venc'?'redt':'ambt'})">${esc(p.t)}</span>`;
+const confTag=d=>d.verificado?`<span class="tag" style="background:var(--grn);color:var(--grnt)">Fecha confirmada</span>${d.verificado_at?`<span class="s">${fAR(isoLocal(new Date(d.verificado_at)))}</span>`:''}`:'<span class="tag" style="background:var(--amb);color:var(--ambt)">Fecha a confirmar</span>';
+function fDeclMatriz(c){
+  const ap=aplica(c);if(!ap.length)return '';
+  const men=ap.filter(k=>OBLIG[k].t==='m'),anu=ap.filter(k=>OBLIG[k].t==='a'),meses=[];
+  let [y,m]=workPeriod().split('-').map(Number);for(let i=0;i<4;i++){meses.push(y+'-'+pad2(m));m--;if(m===0){m=12;y--}}
+  const REV={IVA:'IVA',IIBB:'CM',F931:'F931'};
+  const celda=(k,per)=>{
+    const x=filDe(c.id,k,per);
+    if(x)return `<span class="tag" style="background:var(--grn);color:var(--grnt)">${OBLIG[k].v==='pagado'?'Pagado':'Presentado'}${k==='GAN_ANT'&&x.numero_anticipo?' (anticipo '+x.numero_anticipo+')':''}</span><span class="s">${fAR(isoLocal(new Date(x.presentado_at)))}</span>`;
+    const dl=REV[k]?ui.dl.find(d=>d.impuesto===REV[k]&&String(d.periodo||'').slice(0,7)===per&&delC(d,c)):null,venc=dl&&diasHasta(dl.fecha)<0;
+    return `<span class="tag" style="background:var(--${venc?'red':'amb'});color:var(--${venc?'redt':'ambt'})">${venc?'Vencido sin presentar':'Pendiente'}</span>${dl?`<span class="s">vence ${fAR(dl.fecha)}</span>`:''}`;
+  };
+  let h='<h3>Presentaciones</h3>';
+  if(men.length)h+=`<div class="tw"><table><thead><tr><th>Obligación</th>${meses.map(p=>`<th>${p.slice(5)}/${p.slice(0,4)}</th>`).join('')}</tr></thead><tbody>${men.map(k=>`<tr><td>${OBLIG[k].n}</td>${meses.map(p=>`<td>${celda(k,p)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+  anu.forEach(k=>{const cierre=k==='BP'?12:(c.ejercicio_cierre_mes||12),per=ejerciciosCerrados(cierre,1)[0],[yy,mm]=per.split('-').map(Number),x=filDe(c.id,k,per);
+    h+=`<p class="s" style="margin-top:8px">${OBLIG[k].n}, ejercicio cerrado el ${new Date(Date.UTC(yy,mm,0)).getUTCDate()}/${pad2(mm)}/${yy}: ${x?`<span class="tag" style="background:var(--grn);color:var(--grnt)">Presentada ${fAR(isoLocal(new Date(x.presentado_at)))}</span>`:'<span class="tag" style="background:var(--amb);color:var(--ambt)">Pendiente</span>'}</p>`});
+  return h+'<p class="s" style="margin-top:6px">Se completa con lo que marcás en la pestaña Presentaciones y en las secciones Anticipos y Sueldos.</p>';
+}
+function fVencTable(c,rows){
+  if(!(c.impuestos||[]).length)return '<div class="card" style="color:var(--mut)">Todavía no indicaste qué impuestos le corresponden. Marcalos en la pestaña Datos para ver sus vencimientos acá.</div>';
+  return rows.length?`<div class="tw"><table><thead><tr><th>Vence</th><th>Obligación</th><th>Presentación</th><th>Fecha</th></tr></thead><tbody>${rows.map(d=>`<tr><td style="white-space:nowrap">${fAR(d.fecha)}<span class="s">${diaSem(d.fecha)}, ${cuando(diasHasta(d.fecha))}</span></td><td>${esc(d.descripcion)}${d.periodo?`<span class="s">período ${esc(d.periodo)}</span>`:''}</td><td>${presTag(presDeVenc(c,d))}${d.impuesto==='GANANCIAS_PH'?'<span class="s">se controla en Anticipos</span>':''}</td><td>${confTag(d)}${canEdit()?`<br><button class="g sm" style="margin-top:4px" onclick="toggleVerif('${d.id}',${!d.verificado})">${d.verificado?'Desmarcar':'Confirmar fecha'}</button>`:''}</td></tr>`).join('')}</tbody></table></div>`:'<div class="card" style="color:var(--mut)">No hay vencimientos cargados para este cliente en el período consultado.</div>';
+}
+function vVenc(){
+  const n=Number(ui.vdias),sel=ui.vcli;
+  let rows=ui.dl.filter(d=>{const x=diasHasta(d.fecha);return x>=-7&&(n===0||x<=n)}).map(d=>({d,a:afectados(d)}));
+  if(sel)rows=rows.filter(x=>x.a.some(c=>c.id===sel));
+  const sinConf=rows.filter(({d})=>!d.verificado);
+  return `<h2>Vencimientos</h2><div class="msg warn">Estas fechas se tomaron de calendarios publicados y se cruzaron entre varias fuentes; no se leen directamente de ARCA. Confirmá cada fecha contra el calendario oficial y actualizala si ARCA prorroga. "Fecha a confirmar" habla de la fecha, no de si el cliente presentó: eso se ve en la columna de presentación.</div>
+  <div class="card row" style="margin-bottom:12px;align-items:end"><label>Cliente<br><select onchange="ui.vcli=this.value;draw()"><option value="">Todos los clientes</option>${ui.clients.map(c=>`<option value="${c.id}" ${sel===c.id?'selected':''}>${esc(c.razon_social)}</option>`).join('')}</select></label>
+  <label>Ver<br><select onchange="ui.vdias=this.value;draw()">${[['30','Próximos 30 días'],['60','Próximos 60 días'],['0','Todo lo cargado']].map(([k,t])=>`<option value="${k}" ${ui.vdias===k?'selected':''}>${t}</option>`).join('')}</select></label>
+  ${canEdit()&&sinConf.length?`<button class="b" onclick="verifTodos([${sinConf.map(({d})=>`'${d.id}'`).join(',')}])">Confirmar las ${sinConf.length} fechas que se ven</button>`:''}</div>
+  <div class="tw"><table><thead><tr><th>Vence</th><th>Obligación</th><th>Terminaciones</th><th>Clientes y presentación</th><th>Fecha</th></tr></thead><tbody>
+  ${rows.length?rows.map(({d,a})=>{const x=diasHasta(d.fecha),ps=a.map(c=>({c,p:presDeVenc(c,d)})),mapea=ps.length&&ps[0].p.k!=='na',ok=ps.filter(z=>z.p.k==='ok').length;
+    return `<tr><td style="white-space:nowrap">${fAR(d.fecha)}<span class="s">${diaSem(d.fecha)} · ${cuando(x)}</span></td><td>${esc(d.descripcion)}${d.periodo?`<span class="s">período ${esc(d.periodo)}</span>`:''}</td><td>${d.terminaciones.length===10?'Todas':d.terminaciones.join(', ')}</td><td>${a.length?(mapea?`<span class="s" style="margin-bottom:4px">Presentaron ${ok} de ${a.length}</span>`:'')+ps.map(({c,p})=>`<div>${esc(c.razon_social)} ${presTag(p)}</div>`).join(''):'<span class="s">Ningún cliente con este impuesto</span>'}</td><td>${confTag(d)}${canEdit()?`<br><button class="g sm" style="margin-top:4px" onclick="toggleVerif('${d.id}',${!d.verificado})">${d.verificado?'Desmarcar':'Confirmar fecha'}</button>`:''}</td></tr>`}).join(''):'<tr><td colspan="5" style="color:var(--mut)">No hay vencimientos en este rango.</td></tr>'}</tbody></table></div>
+  ${isAdmin()?formVenc():''}`;
+}
+async function toggleVerif(id,v){
+  const {data,error}=await sb.from('tax_deadlines').update({verificado:v,verificado_por:v?me.id:null,verificado_at:v?new Date().toISOString():null}).eq('id',id).select('id');
+  if(error)flash(errTxt(error),'err');else if(!data.length)flash('No tenés permiso para confirmar vencimientos.','err');else{await loadDeadlines();flash(v?'Fecha confirmada.':'Confirmación quitada.')}
+  draw();
+}
+async function verifTodos(ids){
+  if(!ids.length||!confirm(`¿Confirmar las ${ids.length} fechas que se ven? Hacelo solo si ya las contrastaste con el calendario oficial.`))return;
+  const {data,error}=await sb.from('tax_deadlines').update({verificado:true,verificado_por:me.id,verificado_at:new Date().toISOString()}).in('id',ids).select('id');
+  if(error)flash(errTxt(error),'err');else{await loadDeadlines();flash(`Se confirmaron ${data.length} fechas.`)}
+  draw();
+}
+
+/* ===== Clientes: búsqueda y filtros ===== */
+ui.cf={q:'',estado:'activos',imp:'',term:'',falt:false,orden:'az'};
+const CL_SH={IVA:'IVA',CM:'IIBB CM',IIBB:'IIBB',F931:'F.931',GANANCIAS_PH:'Ganancias',GAN_ANT:'Anticipos Gcias.',GAN_DDJJ:'Ganancias',BP:'B. Personales',MONOTRIBUTO:'Monotributo'};
+function clLista(){
+  const f=ui.cf,q=norm(f.q),qd=f.q.replace(/\D/g,'');
+  let L=ui.clients.filter(c=>f.estado==='todos'||(f.estado==='inactivos'?c.active===false:c.active!==false));
+  if(q)L=L.filter(c=>norm([c.razon_social,c.nombre_comercial,c.localidad,c.provincia,c.titular_ingreso,c.email,c.telefono].join(' ')).includes(q)||(qd.length>=2&&c.cuit.includes(qd)));
+  if(f.imp)L=L.filter(c=>f.imp==='IIBB'?(tieneImp(c,'IIBB')||tieneImp(c,'CM')):tieneImp(c,f.imp));
+  if(f.term!=='')L=L.filter(c=>c.cuit.slice(-1)===f.term);
+  if(f.falt)L=L.filter(c=>((ui.cstats[c.id]||{}).fal||0)>0);
+  const nom=(a,b)=>a.razon_social.localeCompare(b.razon_social,'es');
+  if(f.orden==='falt')L.sort((a,b)=>((ui.cstats[b.id]||{}).fal||0)-((ui.cstats[a.id]||{}).fal||0)||nom(a,b));
+  else if(f.orden==='term')L.sort((a,b)=>a.cuit.slice(-1).localeCompare(b.cuit.slice(-1))||nom(a,b));
+  else if(f.orden==='nuevos')L.sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at)));
+  else L.sort(nom);
+  return L;
+}
+function clCard(c){
+  const st=ui.cstats[c.id]||{tot:0,fal:0};
+  return `<div class="card cl ${c.active===false?'off':''}" tabindex="0" role="button" onclick="abrirFicha('${c.id}')" onkeydown="if(event.key==='Enter')abrirFicha('${c.id}')">
+    <div class="term">${c.cuit.slice(-1)}<small>termina en</small></div><h3>${esc(c.razon_social)}</h3><div class="s" style="font-size:13px">CUIT ${cuitF(c.cuit)}${c.active===false?' (inactivo)':''}</div>
+    <div class="chips">${(c.impuestos||[]).map(k=>`<span class="chip">${CL_SH[k]||esc(k)}</span>`).join('')}</div>
+    <div class="clf"><span>${st.tot} comprobantes</span><span class="${st.fal?'bad':''}">${st.fal} sin factura</span></div></div>`;
+}
+function clGrid(){
+  const L=clLista(),hay=ui.clients.length;
+  return {n:L.length,html:L.length?L.map(clCard).join(''):(hay?`<div class="card">Ningún cliente coincide con la búsqueda o los filtros. <button class="g sm" onclick="clLimpiar()">Limpiar filtros</button></div>`:'<div class="card">Todavía no hay clientes. Agregá el primero con su razón social y CUIT.</div>')};
+}
+function clRender(){const g=clGrid(),el=document.getElementById('clgrid'),n=document.getElementById('clcount');if(el)el.innerHTML=g.html;if(n)n.textContent=g.n===ui.clients.length?g.n+' clientes':g.n+' de '+ui.clients.length+' clientes'}
+function clLimpiar(){ui.cf={q:'',estado:'activos',imp:'',term:'',falt:false,orden:'az'};draw()}
+function vClientes(){
+  const ed=canEdit(),f=ui.cf,g=clGrid(),sel=(k,v,t)=>`<option value="${v}" ${f[k]===v?'selected':''}>${t}</option>`;
+  return `<h2>Clientes</h2>${ed?`<form class="card row" onsubmit="return addClient(event)" style="margin-bottom:16px">
+  <label style="flex:1;min-width:200px">Razón social<input name="rs" required style="width:100%"></label>
+  <label>CUIT<input name="cuit" required inputmode="numeric" placeholder="30-12345678-9"></label><button class="b">Agregar cliente</button></form>`:''}
+  <div class="card fbar" style="margin-bottom:14px">
+   <label style="flex:2;min-width:220px">Buscar<input type="search" value="${esc(f.q)}" placeholder="Razón social, nombre comercial, CUIT, localidad…" autocomplete="off" oninput="ui.cf.q=this.value;clRender()" style="width:100%"></label>
+   <label>Estado<select onchange="ui.cf.estado=this.value;clRender()">${sel('estado','activos','Activos')}${sel('estado','inactivos','Inactivos')}${sel('estado','todos','Todos')}</select></label>
+   <label>Impuesto<select onchange="ui.cf.imp=this.value;clRender()"><option value="">Todos</option>${IMPS.map(([k,t])=>`<option value="${k}" ${f.imp===k?'selected':''}>${t}</option>`).join('')}</select></label>
+   <label>CUIT termina en<select onchange="ui.cf.term=this.value;clRender()"><option value="">Cualquiera</option>${[0,1,2,3,4,5,6,7,8,9].map(n=>`<option value="${n}" ${f.term===String(n)?'selected':''}>${n}</option>`).join('')}</select></label>
+   <label>Ordenar<select onchange="ui.cf.orden=this.value;clRender()">${sel('orden','az','Razón social (A a Z)')}${sel('orden','falt','Más facturas faltantes')}${sel('orden','term','Terminación del CUIT')}${sel('orden','nuevos','Más nuevos')}</select></label>
+   <label style="display:flex;gap:8px;align-items:center;white-space:nowrap"><input type="checkbox" style="margin:0" ${f.falt?'checked':''} onchange="ui.cf.falt=this.checked;clRender()"> Con facturas faltantes</label>
+   <button class="g" onclick="clLimpiar()">Limpiar</button><span class="s" id="clcount" style="align-self:center">${g.n===ui.clients.length?g.n+' clientes':g.n+' de '+ui.clients.length+' clientes'}</span></div>
+  <div class="cl-grid" id="clgrid">${g.html}</div>`;
 }
 
 init();
