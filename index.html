@@ -142,7 +142,14 @@ function parseArca(rows,mode){
     if(p.length){errors.push({row:i+1,message:p.join(', ')});continue}
     const k=(mode==='ventas'?[tipo,pv,num]:[cuit,tipo,pv,num]).join('|');if(seen.has(k)){dupFile++;continue}seen.add(k);
     const nv=x=>pNum(f[x]);let iva=nv('iva');if(iva===null&&rateCols.length)iva=rateCols.reduce((a,c)=>a+(pNum(r[c])||0),0);
-    vs.push({fecha,tipo_cmp:tipo,tipo_txt:String(f.tipo).trim(),punto_venta:pv,numero:num,emisor_cuit:cuit,emisor_nombre:f.nombre?String(f.nombre).trim():null,moneda:pMon(f.moneda),tipo_cambio:pNum(f.cambio)??1,importe_total:tot,neto_gravado:nv('neto'),no_gravado:nv('nograv'),exento:nv('exento'),otros_tributos:nv('otros'),iva,raw});
+    // Moneda extranjera: ARCA informa los importes en la moneda original y el tipo de cambio aparte. Todo se guarda en PESOS.
+    const mon=pMon(f.moneda),tc=pNum(f.cambio)??1,ext=mon!=='PES';
+    if(ext&&!(tc>1)){errors.push({row:i+1,message:'comprobante en moneda extranjera ('+mon+') sin tipo de cambio: no se puede pasar a pesos'});continue}
+    const cv=x=>(x===null||x===undefined||!ext)?x:Math.round((x*tc+Number.EPSILON)*100)/100;
+    let rawF=raw;
+    if(ext){rawF={};for(const [k,val] of Object.entries(raw))rawF[k]=(typeof val==='number'&&/^(Neto Grav\. IVA|IVA \d|Imp\. Total|Total IVA|Neto Gravado Total|Otros Tributos|Neto No Gravado|Op\. Exentas)/.test(k))?cv(val):val;
+      rawF._moneda_original={moneda:mon,tipo_cambio:tc,importe_total:tot,neto_gravado:nv('neto'),no_gravado:nv('nograv'),exento:nv('exento'),otros_tributos:nv('otros'),iva,convertido_a_pesos:true}}
+    vs.push({fecha,tipo_cmp:tipo,tipo_txt:String(f.tipo).trim(),punto_venta:pv,numero:num,emisor_cuit:cuit,emisor_nombre:f.nombre?String(f.nombre).trim():null,moneda:mon,tipo_cambio:tc,importe_total:cv(tot),neto_gravado:cv(nv('neto')),no_gravado:cv(nv('nograv')),exento:cv(nv('exento')),otros_tributos:cv(nv('otros')),iva:cv(iva),raw:rawF});
   }
   return{ok:true,meta,vs,errors,read,dupFile};
 }
@@ -162,7 +169,7 @@ function planImport(parsed,meta,existing,ctx){
 
 
 /* ===== Supabase ===== */
-const APP_VERSION='27/10/2026, editar y quitar compras y ventas, lectura de granos corregida';
+const APP_VERSION='28/10/2026, importes en dólares pasados a pesos, otras retenciones de granos';
 const SUPABASE_URL='https://tugdqcoxcpsiynlvnqdu.supabase.co';
 const SUPABASE_KEY='sb_publishable_2-96VeZrsNNftRXkzA1l_A_YG7ThJrL'; // clave pública: los permisos los da la base (RLS)
 const sb=(typeof supabase!=='undefined')?supabase.createClient(SUPABASE_URL,SUPABASE_KEY):null;
@@ -2068,6 +2075,8 @@ function liqGranos(L,cuitCli,razonCli){
   const rg=liqBuscar(L,/ret\.?\s*ganancias/);if(rg>=0){const v=liqMontos(L[rg]);if(v.length)ret.push({tipo:'retencion',impuesto:'GANANCIAS',importe:liqUlt(v),etq:'Retención de Ganancias'})}
   const ri=liqBuscar(L,/retencion iva/);if(ri>=0){const v=liqMontos(L[ri]);if(v.length)ret.push({tipo:'retencion',impuesto:'IVA',importe:liqUlt(v),etq:'Retención de IVA'})}
   const pe=liqBuscar(L,/total percepciones/);if(pe>=0){const v=liqMontos(L[pe]);if(v.length>=2&&v[1]>0)ret.push({tipo:'percepcion',impuesto:'IVA',importe:v[1],etq:'Percepciones'})}
+  const po=liqBuscar(L,/total otras retenciones/);if(po>=0){const m=liqNorm(L[po]).match(/total otras retenciones:?\s*(?:\$\s*)?(-?[\d.,]+)/);const v=m?liqMontos(m[1]):[];if(v.length&&v[0]>0)ret.push({tipo:'retencion',impuesto:'OTRO',importe:v[0],etq:'Otras retenciones'})}
+  const pa=liqBuscar(L,/total retenciones afip/);if(pa>=0){const m=liqNorm(L[pa]).match(/total retenciones afip:?\s*(?:\$\s*)?(-?[\d.,]+)/),v=m?liqMontos(m[1]):[],sum=ret.filter(x=>x.tipo==='retencion'&&x.impuesto!=='OTRO').reduce((a,x)=>a+x.importe,0);if(v.length&&v[0]>0&&Math.abs(v[0]-sum)>0.01)info.push(`El PDF informa Retenciones AFIP por ${money(v[0])}, pero las retenciones de IVA y Ganancias detectadas suman ${money(sum)}: revisalas.`)}
   const iD=liqBuscar(L,/concepto detalle.*deducciones/),iR=liqBuscar(L,/^retenciones$/,iD>=0?iD:0);
   if(iD>=0&&iR>iD){let s=0;for(let i=iD+1;i<iR;i++){const v=liqMontos(L[i]);if(v.length>=3)s+=v[v.length-2]}if(s>0)info.push(`El IVA de las deducciones (comisión y gastos) es de ${money(liqPlata(s))}: es crédito fiscal y entra por el Libro IVA de compras.`)}
   const rg4=liqBuscar(L,/iva rg 4310/);if(rg4>=0){const m=L[rg4].match(/IVA RG 4310\/2018:\s*\$\s*([\d.,]+)/i);if(m){const v=liqMontos(m[1]);if(v.length)info.push(`IVA RG 4310/2018: ${money(v[0])} (informativo: se paga aparte, no es una retención).`)}}
@@ -2164,7 +2173,7 @@ function liqForm(){
     ${L.avisos.map(a=>`<div class="msg warn">${esc(a)}</div>`).join('')}${L.info.map(a=>`<div class="msg info">${esc(a)}</div>`).join('')}
     <div class="fgrid" style="margin-top:10px">${inp('fecha','Fecha (AAAA-MM-DD)','2026-09-15')}${inp('pv','Punto de venta (0 si solo tiene COE)','0')}${inp('num','Número de liquidación o COE','')}
       ${inp('neto','Neto gravado','0,00')}<label>Alícuota de IVA<select onchange="liqCampo('alic',this.value)">${ALIC.map(a=>`<option value="${a}" ${Number(d.alic)===a?'selected':''}>${String(a).replace('.',',')}%</option>`).join('')}</select></label>${inp('iva','IVA','0,00')}${inp('total','Total con IVA (opcional)','')}${inp('cuit','CUIT de la contraparte (opcional)','')}${inp('nombre','Nombre de la contraparte (opcional)','')}</div>
-    ${L.ret.length?`<div class="card" style="margin-top:10px"><b>Retenciones y percepciones que figuran en el PDF</b><p class="s" style="margin:4px 0 8px">Las de IVA bajan el IVA a pagar en el IVA aproximado. Si ya las cargaste desde "Mis Retenciones", destildalas.</p>${L.ret.map((x,i)=>`<label style="display:flex;gap:8px;align-items:center;margin:4px 0"><input type="checkbox" style="margin:0" ${x.sel?'checked':''} onchange="liqRetSel(${i},this.checked)"> ${esc(x.etq)} (${x.impuesto==='IVA'?'IVA':'Ganancias'}): <b>${money(x.importe)}</b></label>`).join('')}</div>`:''}
+    ${L.ret.length?`<div class="card" style="margin-top:10px"><b>Retenciones y percepciones que figuran en el PDF</b><p class="s" style="margin:4px 0 8px">Las de IVA bajan el IVA a pagar en el IVA aproximado. Si ya las cargaste desde "Mis Retenciones", destildalas.</p>${L.ret.map((x,i)=>`<label style="display:flex;gap:8px;align-items:center;margin:4px 0"><input type="checkbox" style="margin:0" ${x.sel?'checked':''} onchange="liqRetSel(${i},this.checked)"> ${esc(x.etq)} (${({IVA:'IVA',GANANCIAS:'Ganancias',OTRO:'otros impuestos; no afecta el IVA'})[x.impuesto]||x.impuesto}): <b>${money(x.importe)}</b></label>`).join('')}</div>`:''}
     <div class="row" style="margin-top:10px"><button class="g" onclick="liqCalcIva()">Calcular IVA y total desde el neto</button><button class="b" onclick="liqGuardar()">Guardar liquidación</button><button class="g" onclick="liqAbrir()">Cancelar</button></div>
     ${L.cand.length?`<details style="margin-top:12px"><summary class="s" style="cursor:pointer">Importes encontrados en el PDF (tocá para usar uno)</summary><div class="tw" style="margin-top:8px"><table><tbody>${L.cand.map(c=>`<tr><td class="s" style="min-width:240px">${esc(c.linea)}</td><td>${c.montos.map(m=>`<div style="white-space:nowrap">${money(m)} <button class="g sm" onclick="liqUsar('neto','${m}')">Neto</button> <button class="g sm" onclick="liqUsar('iva','${m}')">IVA</button> <button class="g sm" onclick="liqUsar('total','${m}')">Total</button></div>`).join('')}</td></tr>`).join('')}</tbody></table></div></details>`:''}`:''}</div>`;
 }
