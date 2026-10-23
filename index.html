@@ -10,6 +10,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/zxing-wasm@3.1.5/dist/iife/reader/index.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
@@ -159,7 +160,7 @@ function planImport(parsed,meta,existing,ctx){
 
 
 /* ===== Supabase ===== */
-const APP_VERSION='19/10/2026, IVA, ventas y favicon';
+const APP_VERSION='23/10/2026, backup y liquidaciones';
 const SUPABASE_URL='https://tugdqcoxcpsiynlvnqdu.supabase.co';
 const SUPABASE_KEY='sb_publishable_2-96VeZrsNNftRXkzA1l_A_YG7ThJrL'; // clave pública: los permisos los da la base (RLS)
 const sb=(typeof supabase!=='undefined')?supabase.createClient(SUPABASE_URL,SUPABASE_KEY):null;
@@ -210,6 +211,7 @@ async function logout(){await sb.auth.signOut()}
 /* ===== Navegación y carga de datos ===== */
 const TABS=[['inicio','Inicio'],['vencimientos','Vencimientos'],['clientes','Clientes'],['importar','Importar compras'],['escanear','Escanear QR'],['comprobantes','Comprobantes de compra'],['ventas','Ventas'],['iva','IVA aproximado'],['anticipos','Anticipos'],['sueldos','Sueldos']];
 async function show(t){
+  if(t==='admin'&&!isAdmin()){flash('Esa sección es solo para administradores.','err');t='inicio'}
   stopCam();ui.tab=t;ui.hist=null;ui.scan=null;
   try{
     if(t==='inicio'||t==='vencimientos')await loadDeadlines();
@@ -231,10 +233,10 @@ async function loadVouchers(){
   ui.vs=await fetchAll((a,b)=>sb.from('vouchers').select('*').eq('period_id',p.id).order('fecha').order('numero').range(a,b));
 }
 function draw(){
-  $('nav').innerHTML='<h1>Estudio Theiler</h1>'+TABS.map(([k,t])=>`<button class="${ui.tab===k?'on':''}" onclick="show('${k}')">${t}</button>`).join('')+
+  $('nav').innerHTML='<h1>Estudio Theiler</h1>'+TABS.concat(isAdmin()?[['admin','Administración']]:[]).map(([k,t])=>`<button class="${ui.tab===k?'on':''}" onclick="show('${k}')">${t}</button>`).join('')+
    `<div class="me">${esc(prof.username||prof.full_name||me.email)}<br>${esc(prof.role)}<br><button class="g" onclick="logout()">Cerrar sesión</button><br><span style="display:block;margin-top:10px;font-size:11px;opacity:.7">Versión: ${APP_VERSION}</span></div>`;
   const m=ui.msg?`<div class="msg ${ui.msg.k}">${esc(ui.msg.t)}</div>`:'';ui.msg=null;window._fm=m;
-  $('main').innerHTML=(ui.ficha?'':m)+({inicio:vInicio,clientes:vClientes,importar:vImportar,escanear:vEscanear,comprobantes:vComp,vencimientos:vVenc,anticipos:vAnticipos,sueldos:vSueldosPage,ventas:vVentas,iva:vIva})[ui.tab]()+vFicha();
+  $('main').innerHTML=(ui.ficha?'':m)+({inicio:vInicio,clientes:vClientes,importar:vImportar,escanear:vEscanear,comprobantes:vComp,vencimientos:vVenc,anticipos:vAnticipos,sueldos:vSueldosPage,ventas:vVentas,iva:vIva,admin:vAdmin})[ui.tab]()+vFicha();
   document.body.style.overflow=ui.ficha?'hidden':'';
 }
 function vInicio(){
@@ -245,7 +247,7 @@ function vInicio(){
   const SH={IVA:'IVA',CM:'IIBB CM',F931:'F.931',GANANCIAS_PH:'Ganancias',GAN_ANT:'Anticipos Gcias.',GAN_DDJJ:'Ganancias',BP:'B. Personales',MONOTRIBUTO:'Monotributo',OTRO:'Otro'};
   const urg=n=>n<=2?'var(--redt)':n<=7?'var(--ambt)':'var(--mut)';
   const prox=R.filter(r=>r.nxt&&diasHasta(r.nxt.fecha)<=14).sort((a,b)=>a.nxt.fecha<b.nxt.fecha?-1:1);
-  return `<h2>Inicio</h2>
+  return `<h2>Inicio</h2>${bkRecordatorio()}
   <div class="row" style="margin-bottom:14px;align-items:center"><label>Período de trabajo<br><input type="month" value="${wp}" onchange="ui.wp=this.value;draw()"></label><span class="s" style="max-width:420px">Por defecto es el mes anterior, que es el que se declara ahora. Los totales de la tabla corresponden a ${lab}.</span></div>
   <div class="grid" style="margin-bottom:22px">${K.map(([t,n])=>`<div class="card kpi"><b>${n}</b><span>${t}</span></div>`).join('')}</div>
   <div class="row" style="align-items:flex-start;gap:20px">
@@ -1256,7 +1258,7 @@ function irSueldos(cid,per){ui.cid=cid;ui.sueCfg=ui.sueCfg||{periodo:workPeriod(
 const NC_SET=new Set([3,8,13,53,203,208,213]),esNC=t=>NC_SET.has(Number(t));
 const sgnVal=(t,x)=>{const n=Number(x)||0;return esNC(t)?-Math.abs(n):n};
 const TIPOS_CMP=[[1,'Factura A'],[6,'Factura B'],[11,'Factura C'],[51,'Factura M'],[2,'Nota de Débito A'],[7,'Nota de Débito B'],[12,'Nota de Débito C'],[3,'Nota de Crédito A'],[8,'Nota de Crédito B'],[13,'Nota de Crédito C'],[53,'Nota de Crédito M'],[201,'Factura de Crédito MiPyME A'],[203,'Nota de Crédito MiPyME A']];
-const tipoNombre=t=>(TIPOS_CMP.find(x=>x[0]===Number(t))||[0,'Tipo '+t])[1];
+const tipoNombre=t=>Number(t)===9001?'Liquidación primaria de granos':Number(t)===9002?'Liquidación de venta (hacienda)':(TIPOS_CMP.find(x=>x[0]===Number(t))||[0,'Tipo '+t])[1];
 const ALIC=[21,10.5,27,5,2.5,0];
 /** Desglose por alícuota a partir de las columnas originales de ARCA ("Neto Grav. IVA 21%", "IVA 21%"). */
 function alicDeRaw(raw){
@@ -1287,11 +1289,11 @@ function vVentas(){
   <div class="card row" style="margin-bottom:12px"><label>Cliente<br><select onchange="ui.cid=this.value;show('ventas')">${clientOpts()}</select></label>
   <label>Período<br><input type="month" value="${v.periodo}" onchange="ui.vta.periodo=this.value;show('ventas')"></label>
   <label style="flex:1;min-width:230px">Excel de "Mis Comprobantes Emitidos" (.xls / .xlsx)<br><input type="file" id="vfile" accept=".xls,.xlsx" style="width:100%"></label>
-  <button class="b" onclick="ventasPrevisualizar()">Ver vista previa</button><button class="g" onclick="ui.vta.form=!ui.vta.form;draw()">Agregar factura a mano</button></div>
-  ${v.form?ventaForm():''}
+  <button class="b" onclick="ventasPrevisualizar()">Ver vista previa</button><button class="g" onclick="ui.vta.form=!ui.vta.form;draw()">Agregar factura a mano</button><button class="g" onclick="liqAbrir()">Cargar liquidación (PDF)</button></div>
+  ${v.form?ventaForm():''}${liqForm()}
   <div class="grid" style="margin-bottom:12px"><div class="card kpi"><b>${R.length}</b><span>Facturas del período</span></div><div class="card kpi"><b>${money(neto)}</b><span>Neto gravado</span></div><div class="card kpi"><b>${money(deb)}</b><span>IVA débito fiscal (las notas de crédito restan)</span></div><div class="card kpi"><b>${money(tot)}</b><span>Total facturado</span></div></div>
   <div class="tw"><table><thead><tr><th>Fecha</th><th>Comprobante</th><th>Cliente de la venta</th><th>Neto gravado</th><th>IVA</th><th>Total</th><th>Origen</th><th></th></tr></thead><tbody>
-  ${R.length?R.map(x=>{const nc=esNC(x.tipo_cmp),m=n=>n===null||n===undefined?'-':money(sgnVal(x.tipo_cmp,n));return `<tr><td>${fAR(x.fecha)}</td><td>${esc(tipoNombre(x.tipo_cmp))}${nc?' <span class="tag" style="background:var(--org);color:var(--orgt)">resta</span>':''}<span class="s">${nroF(x.punto_venta,x.numero)}</span></td><td>${esc(x.receptor_nombre||'')}<span class="s">${esc(x.receptor_cuit||'')}</span></td><td>${m(x.neto_gravado)}</td><td>${m(x.iva)}</td><td>${m(x.importe_total)}</td><td>${x.origen==='manual'?'A mano':'Excel'}</td><td><button class="dng sm" onclick="ventasQuitar('${x.id}')">Quitar</button></td></tr>`}).join(''):'<tr><td colspan="8" style="color:var(--mut)">Todavía no hay facturas emitidas en este período. Subí el Excel de emitidos o agregalas a mano.</td></tr>'}</tbody></table></div>`;
+  ${R.length?R.map(x=>{const nc=esNC(x.tipo_cmp),m=n=>n===null||n===undefined?'-':money(sgnVal(x.tipo_cmp,n));return `<tr><td>${fAR(x.fecha)}</td><td>${esc(tipoNombre(x.tipo_cmp))}${nc?' <span class="tag" style="background:var(--org);color:var(--orgt)">resta</span>':''}<span class="s">${nroF(x.punto_venta,x.numero)}</span></td><td>${esc(x.receptor_nombre||'')}<span class="s">${esc(x.receptor_cuit||'')}</span></td><td>${m(x.neto_gravado)}</td><td>${m(x.iva)}</td><td>${m(x.importe_total)}</td><td>${x.origen==='manual'?'A mano':'Excel'}</td><td style="white-space:nowrap">${x.archivo_path?`<button class="g sm" onclick="verArchivo('${x.archivo_path}')">Ver PDF</button> `:''}<button class="dng sm" onclick="ventasQuitar('${x.id}')">Quitar</button></td></tr>`}).join(''):'<tr><td colspan="8" style="color:var(--mut)">Todavía no hay facturas emitidas en este período. Subí el Excel de emitidos o agregalas a mano.</td></tr>'}</tbody></table></div>`;
 }
 function ventaForm(){
   return `<form class="card" style="margin-bottom:14px" onsubmit="return ventasAgregar(event)"><b>Agregar factura emitida</b><div class="fgrid" style="margin-top:8px">
@@ -1332,6 +1334,7 @@ async function ventasAgregar(e){
 }
 async function ventasQuitar(id){
   const x=ui.vta.rows.find(r=>r.id===id);if(!x||!confirm(`¿Quitar la factura ${nroF(x.punto_venta,x.numero)}?`))return;
+  if(x.archivo_path){const rr=await sb.storage.from('clientes').remove([x.archivo_path]);if(rr.error){flash(errTxt(rr.error),'err');return draw()}}
   const {error}=await sb.from('sales_invoices').delete().eq('id',id);
   if(error)flash(errTxt(error),'err');else{try{await loadVentas();flash('Factura quitada.')}catch(e){flash(errTxt(e),'err')}}
   draw();
@@ -1436,6 +1439,587 @@ function vIvaDetalle(c){
   ${keys.length?`<div class="tw"><table><thead><tr><th>Alícuota</th><th>Ventas, neto</th><th>Ventas, IVA</th><th>Compras, neto</th><th>Compras, IVA</th></tr></thead><tbody>${keys.map(k=>`<tr><td>${String(k).replace('.',',')}%</td><td>${money((dv[k]||{neto:0}).neto)}</td><td>${money((dv[k]||{iva:0}).iva)}</td><td>${money((dc[k]||{neto:0}).neto)}</td><td>${money((dc[k]||{iva:0}).iva)}</td></tr>`).join('')}${Math.abs(restoV)>0.01||Math.abs(restoC)>0.01?`<tr><td>Sin desglose</td><td></td><td>${money(restoV)}</td><td></td><td>${money(restoC)}</td></tr>`:''}</tbody></table></div>`:'<div class="card" style="color:var(--mut)">Sin desglose por alícuota: los datos cargados no traen las columnas por alícuota.</div>'}
   <p class="s" style="margin-top:12px">No incluye prorrateo de crédito fiscal, ajustes de períodos anteriores, ni otros conceptos de la declaración jurada. Las percepciones y retenciones tienen que cargarse a mano en los ajustes.</p></div>`;
 }
+/* ===== Administración: copia de seguridad completa =====
+   Todo ocurre en el navegador del administrador: no pasa por Vercel ni por ningún servidor propio, así que no hay
+   límite de tiempo ni de tamaño de respuesta de funciones. El ZIP se escribe en streaming (disco) para no llenar la memoria.
+   Solo LEE de Supabase (consultas select, descargas de archivos y la función backup_esquema): nunca modifica ni borra nada. */
+const BK={LIM_FS:3.5*1024**3,LIM_MEM:200*1024**2,PAGINA:1000,CONC:3,SQL_MEM:64*1024**2,LOTE_SQL:200,ALTA_ERR:0};
+const bkEnc=new TextEncoder();
+const bkPad=n=>String(n).padStart(2,'0');
+function bkNombre(parte,fecha){const d=fecha||new Date();return 'Backup-EstudioTheiler-'+d.getFullYear()+'-'+bkPad(d.getMonth()+1)+'-'+bkPad(d.getDate())+'_'+bkPad(d.getHours())+bkPad(d.getMinutes())+(parte?'-parte'+bkPad(parte):'')+'.zip'}
+const bkMB=b=>(b/1048576).toFixed(b>=104857600?0:1)+' MB';
+const bkSeg=ms=>{const s=Math.round(ms/1000);return s<60?s+' s':Math.floor(s/60)+' min '+bkPad(s%60)+' s'};
+
+/* ---- CRC32 (para comprobar que lo guardado se puede leer) ---- */
+const BK_CRC=(()=>{const t=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c>>>0}return t})();
+function bkCrc32(u8){let c=0xFFFFFFFF;for(let i=0;i<u8.length;i++)c=BK_CRC[(c^u8[i])&255]^(c>>>8);return (c^0xFFFFFFFF)>>>0}
+
+/* ---- Literales SQL ---- */
+function bkPgArray(a){return '{'+a.map(x=>x===null?'NULL':typeof x==='number'||typeof x==='boolean'?String(x):'"'+String(x).replace(/\\/g,'\\\\').replace(/"/g,'\\"')+'"').join(',')+'}'}
+function bkLit(v,col){
+  if(v===null||v===undefined)return 'null';
+  if(col.categoria==='arreglo'&&Array.isArray(v))return "'"+bkPgArray(v).replace(/'/g,"''")+"'::"+col.tipo;
+  if(col.categoria==='json')return "'"+JSON.stringify(v).replace(/\u0000/g,'').replace(/'/g,"''")+"'::"+col.tipo;
+  if(typeof v==='number')return Number.isFinite(v)?String(v):'null';
+  if(typeof v==='boolean')return v?'true':'false';
+  return "'"+String(v).replace(/\u0000/g,'').replace(/'/g,"''")+"'";
+}
+function bkInsert(tabla,meta,filas){
+  const cols=meta.columnas.filter(c=>!c.generada),ident=cols.some(c=>c.identidad);
+  return 'insert into public.'+tabla+' ('+cols.map(c=>'"'+c.nombre+'"').join(', ')+')'+(ident?' overriding system value':'')+' values\n'+
+    filas.map(f=>'  ('+cols.map(c=>bkLit(f[c.nombre],c)).join(', ')+')').join(',\n')+';\n';
+}
+
+/* ---- Escritor ZIP en streaming, con partes si el archivo se vuelve enorme ---- */
+class BkZip{
+  constructor(destino,limite){this.dest=destino;this.limite=limite;this.parte=0;this.partes=[]}
+  async _abrir(){this.parte++;this.w=await this.dest.abrirParte(this.parte);this.zip=new fflate.Zip();this.cola=Promise.resolve();this.bytes=0;this.err=null;this.ent=[];
+    this.zip.ondata=(e,c)=>{if(e){this.err=e;return}this.bytes+=c.length;const w=this.w;this.cola=this.cola.then(()=>w.write(c))}}
+  async _cerrar(){
+    const idx=bkEnc.encode(JSON.stringify({parte:this.parte,entradas:this.ent},null,1));const nomIdx='indices/parte-'+bkPad(this.parte)+'.json';await this._txt(nomIdx,idx,false);
+    const w=this.w;this.zip.end();await this.cola;if(this.err)throw this.err;await w.close();
+    this.partes.push({parte:this.parte,nombre:w.nombre,bytes:this.bytes,entradas:this.ent.concat([{nombre:nomIdx,bytes:idx.length}]),leer:()=>w.leer()});}
+  async iniciar(){await this._abrir()}
+  async _rotar(){if(this.bytes>this.limite){await this._cerrar();await this._abrir()}}
+  async _txt(nombre,u8,registrar){const f=new fflate.ZipDeflate(nombre,{level:6});this.zip.add(f);f.push(u8,true);await this.cola;if(this.err)throw this.err;if(registrar!==false)this.ent.push({nombre,bytes:u8.length})}
+  async texto(nombre,txt){await this._rotar();await this._txt(nombre,bkEnc.encode(txt))}
+  async flujo(nombre,gen,comprimir){
+    await this._rotar();const f=comprimir?new fflate.ZipDeflate(nombre,{level:6}):new fflate.ZipPassThrough(nombre);this.zip.add(f);let total=0;
+    for await(const ch of gen){const u=typeof ch==='string'?bkEnc.encode(ch):ch;total+=u.length;f.push(u,false);await this.cola;if(this.err)throw this.err}
+    f.push(new Uint8Array(0),true);await this.cola;if(this.err)throw this.err;this.ent.push({nombre,bytes:total});return total}
+  async finalizar(){await this._cerrar();return this.partes}
+  async abortar(){try{await this.w.abort()}catch(e){}}
+}
+
+/* ---- Lectura del ZIP ya guardado: directorio central y prueba de lectura de entradas ---- */
+async function bkLeerDirectorio(blob){
+  const n=blob.size,buf=await blob.slice(Math.max(0,n-65557),n).arrayBuffer(),v=new DataView(buf);let i=buf.byteLength-22;
+  for(;i>=0;i--)if(v.getUint32(i,true)===0x06054b50)break;
+  if(i<0)throw new Error('No se encontró el final del ZIP: el archivo está incompleto');
+  const total=v.getUint16(i+10,true),sz=v.getUint32(i+12,true),off=v.getUint32(i+16,true);
+  if(total===0xFFFF||sz===0xFFFFFFFF||off===0xFFFFFFFF)throw new Error('ZIP64 no soportado por la verificación');
+  const cd=await blob.slice(off,off+sz).arrayBuffer(),d=new DataView(cd),ents=[];let p=0;
+  while(p<cd.byteLength&&d.getUint32(p,true)===0x02014b50){
+    const metodo=d.getUint16(p+10,true),crc=d.getUint32(p+16,true),comp=d.getUint32(p+20,true),size=d.getUint32(p+24,true),nl=d.getUint16(p+28,true),el=d.getUint16(p+30,true),cl=d.getUint16(p+32,true),lh=d.getUint32(p+42,true);
+    ents.push({nombre:new TextDecoder().decode(new Uint8Array(cd,p+46,nl)),bytes:size,comprimido:comp,crc,metodo,lh});p+=46+nl+el+cl}
+  return {total,entradas:ents};
+}
+async function bkLeerEntrada(blob,e){
+  const h=new DataView(await blob.slice(e.lh,e.lh+30).arrayBuffer());
+  if(h.getUint32(0,true)!==0x04034b50)throw new Error('Encabezado dañado en '+e.nombre);
+  const ini=e.lh+30+h.getUint16(26,true)+h.getUint16(28,true),raw=new Uint8Array(await blob.slice(ini,ini+e.comprimido).arrayBuffer());
+  const datos=e.metodo===8?fflate.inflateSync(raw):raw;
+  if(datos.length!==e.bytes)throw new Error('Tamaño distinto en '+e.nombre);
+  if(bkCrc32(datos)!==e.crc)throw new Error('CRC distinto en '+e.nombre);
+  return datos;
+}
+async function bkVerificarParte(p){
+  const blob=await p.leer();
+  if(blob.size!==p.bytes)throw new Error('La parte '+p.parte+' pesa '+blob.size+' bytes y se esperaban '+p.bytes);
+  const dir=await bkLeerDirectorio(blob);
+  if(dir.total!==p.entradas.length||dir.entradas.length!==p.entradas.length)throw new Error('La parte '+p.parte+' tiene '+dir.total+' elementos y se esperaban '+p.entradas.length);
+  const por=new Map(dir.entradas.map(e=>[e.nombre,e]));
+  for(const e of p.entradas){const x=por.get(e.nombre);if(!x)throw new Error('Falta en el ZIP: '+e.nombre);if(x.bytes!==e.bytes)throw new Error('Tamaño distinto en el ZIP: '+e.nombre)}
+  // prueba de lectura real (descomprime y compara CRC) de hasta 4 elementos, incluido el índice de la parte
+  const prueba=['indices/parte-'+bkPad(p.parte)+'.json',...dir.entradas.filter(e=>!e.nombre.startsWith('indices/')&&e.bytes>0).sort((a,b)=>a.bytes-b.bytes).slice(0,3).map(e=>e.nombre)];
+  for(const nom of prueba)await bkLeerEntrada(blob,por.get(nom));
+  return {elementos:dir.total,leidos:prueba.length};
+}
+
+/* ---- Destinos: archivo en disco (Chrome/Edge), carpeta, o partes en memoria (otros navegadores) ---- */
+function bkDestinoMemoria(descargar){
+  return {limite:BK.LIM_MEM,modo:'memoria',
+    abrirParte:async n=>{const trozos=[];let blob=null;const nombre=bkNombre(n);
+      return {nombre,write:async c=>{trozos.push(c.slice())},close:async()=>{blob=new Blob(trozos,{type:'application/zip'});trozos.length=0},abort:async()=>{trozos.length=0},leer:async()=>blob}},
+    entregar:async p=>{if(descargar)await descargar(await p.leer(),p.nombre)}};
+}
+function bkDestinoArchivo(handle){
+  let usado=false;
+  return {limite:Number.MAX_SAFE_INTEGER,modo:'archivo',abrirParte:async()=>{
+    if(usado)throw new Error('El backup superó el tamaño previsto para un solo archivo. Repetilo y elegí una carpeta en lugar de un archivo.');
+    usado=true;const w=await handle.createWritable();return {nombre:handle.name,write:c=>w.write(c),close:()=>w.close(),abort:()=>w.abort(),leer:()=>handle.getFile()}}};
+}
+function bkDestinoCarpeta(dir,base){
+  return {limite:BK.LIM_FS,modo:'carpeta',abrirParte:async n=>{const nombre=bkNombre(n),h=await dir.getFileHandle(nombre,{create:true}),w=await h.createWritable();return {nombre,write:c=>w.write(c),close:()=>w.close(),abort:()=>w.abort(),leer:()=>h.getFile()}}};
+}
+
+/* ---- Lectura de datos y archivos ---- */
+async function bkContar(tabla){const {count,error}=await sb.from(tabla).select('*',{count:'exact',head:true});if(error)throw new Error('No se pudo contar '+tabla+': '+(error.message||error));return count}
+async function* bkPaginas(tabla,pk){
+  // Se avanza según lo que realmente llegó y se corta recién con una página vacía: no depende del límite de filas del servidor.
+  for(let desde=0;;){
+    let q=sb.from(tabla).select('*');for(const c of pk)q=q.order(c,{ascending:true});
+    let r,intento=0;for(;;){r=await q.range(desde,desde+BK.PAGINA-1);if(!r.error)break;if(++intento>3)throw new Error('No se pudo leer '+tabla+': '+(r.error.message||r.error));await new Promise(ok=>setTimeout(ok,800*intento))}
+    if(!r.data.length)return;yield r.data;desde+=r.data.length}
+}
+async function bkListarArchivos(bucket){
+  const out=[],pila=[''];
+  while(pila.length){const pre=pila.pop();
+    for(let off=0;;){const {data,error}=await sb.storage.from(bucket).list(pre,{limit:1000,offset:off,sortBy:{column:'name',order:'asc'}});
+      if(error)throw new Error('No se pudo listar '+bucket+': '+(error.message||error));
+      if(!data.length)break;
+      for(const it of data){const p=pre?pre+'/'+it.name:it.name;if(it.id===null||it.id===undefined||!it.metadata)pila.push(p);else out.push({bucket,path:p,size:Number(it.metadata.size||0),mime:it.metadata.mimetype||''})}
+      off+=data.length}}
+  return out;
+}
+const BK_K=new Uint32Array([0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2]);
+/** SHA-256 propio: se usa cuando el navegador no ofrece crypto.subtle (por ejemplo, si la página se abre como archivo local sin HTTPS). */
+function bkSha256js(u8){
+  const H=new Uint32Array([0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19]),l=u8.length,pad=((l+9+63)>>6)<<6,m=new Uint8Array(pad);
+  m.set(u8);m[l]=0x80;const dv=new DataView(m.buffer);dv.setUint32(pad-8,Math.floor(l/0x20000000));dv.setUint32(pad-4,(l<<3)>>>0);const w=new Uint32Array(64);
+  for(let off=0;off<pad;off+=64){
+    for(let i=0;i<16;i++)w[i]=dv.getUint32(off+i*4);
+    for(let i=16;i<64;i++){const a=w[i-15],b=w[i-2];w[i]=w[i-16]+(((a>>>7)|(a<<25))^((a>>>18)|(a<<14))^(a>>>3))+w[i-7]+(((b>>>17)|(b<<15))^((b>>>19)|(b<<13))^(b>>>10))}
+    let a=H[0],b=H[1],c=H[2],d=H[3],e=H[4],f=H[5],g=H[6],h=H[7];
+    for(let i=0;i<64;i++){const t1=(h+(((e>>>6)|(e<<26))^((e>>>11)|(e<<21))^((e>>>25)|(e<<7)))+((e&f)^(~e&g))+BK_K[i]+w[i])>>>0,t2=((((a>>>2)|(a<<30))^((a>>>13)|(a<<19))^((a>>>22)|(a<<10)))+((a&b)^(a&c)^(b&c)))>>>0;
+      h=g;g=f;f=e;e=(d+t1)>>>0;d=c;c=b;b=a;a=(t1+t2)>>>0}
+    H[0]+=a;H[1]+=b;H[2]+=c;H[3]+=d;H[4]+=e;H[5]+=f;H[6]+=g;H[7]+=h}
+  return [...H].map(x=>x.toString(16).padStart(8,'0')).join('');
+}
+const bkSha=async u8=>(typeof crypto!=='undefined'&&crypto.subtle)?[...new Uint8Array(await crypto.subtle.digest('SHA-256',u8))].map(x=>x.toString(16).padStart(2,'0')).join(''):bkSha256js(u8);
+function bkRefsUsuarios(ddl){const o=[],re=/alter table public\.(\w+) add constraint \S+ FOREIGN KEY \((\w+)\) REFERENCES (?:public\.)?profiles\(id\)/g;let m;while((m=re.exec(ddl)))if(m[1]!=='profiles')o.push({tabla:m[1],columna:m[2]});return o}
+
+/* ---- Plan: qué se va a respaldar (solo lee y cuenta) ---- */
+async function bkPlanificar(H){
+  H.log('Pidiendo la estructura de la base…');
+  const {data:esq,error}=await sb.rpc('backup_esquema');
+  if(error){if(error.code==='42501'||/administradores/i.test(error.message||''))throw new Error('Tu usuario no es administrador: solo los administradores pueden generar backups.');
+    if(/backup_esquema|schema cache|PGRST202/i.test(error.message||''))throw new Error('Falta instalar la función backup_esquema en la base de datos.');throw new Error('No se pudo leer la estructura: '+(error.message||error))}
+  const tablas=[];let filas=0;
+  for(const nombre of esq.orden){const n=await bkContar(nombre);tablas.push({nombre,filas:n});filas+=n;H.log('Tabla '+nombre+': '+n+' filas')}
+  const archivos=[];
+  for(const b of esq.buckets){H.log('Listando archivos de "'+b.id+'"…');const l=await bkListarArchivos(b.id);archivos.push(...l);H.log('Bucket '+b.id+': '+l.length+' archivos')}
+  const bytes=archivos.reduce((a,x)=>a+x.size,0);
+  return {esq,tablas,filas,archivos,bytesArchivos:bytes,creado:new Date()};
+}
+
+/* ---- Ejecución del backup ---- */
+async function bkEjecutar(destino,plan,H){
+  const t0=Date.now(),esq=plan.esq,meta=Object.fromEntries(esq.tablas.map(t=>[t.nombre,t]));
+  const res={tablas:{},archivos:{ok:0,bytes:0,errores:[],indice:[]},avisos:[],partes:[],fatal:null};
+  const z=new BkZip(destino,destino.limite),refsPath=new Set(),perfiles=[];
+  const cancel=()=>{if(H.cancelado())throw Object.assign(new Error('Cancelado por el usuario'),{cancelado:true})};
+  await z.iniciar();
+  try{
+    /* 1) estructura y configuración */
+    H.paso('esquema','run');H.prog(2);
+    const refs=bkRefsUsuarios(esq.ddl);
+    await z.texto('LEEME.md',bkLeeme(plan,refs));
+    await z.texto('sql/01_estructura.sql',esq.ddl);
+    await z.texto('sql/02_almacenamiento.sql',esq.ddl_storage||'-- sin configuración de almacenamiento\n');
+    await z.texto('sql/03_trigger_auth.sql',(esq.ddl_auth||'-- sin disparadores sobre auth.users\n'));
+    let appHtml=null;try{const r=await fetch(location.href.split('#')[0],{cache:'no-store'});if(r.ok)appHtml=await r.text()}catch(e){}
+    if(appHtml)await z.texto('app/index.html',appHtml);else res.avisos.push('No se pudo copiar el código de la aplicación (app/index.html). Está en tu repositorio de GitHub.');
+    await z.texto('config/configuracion_no_secreta.json',JSON.stringify({formato:1,proyecto_url:(typeof SUPABASE_URL!=='undefined'?SUPABASE_URL:null),version_app:(typeof APP_VERSION!=='undefined'?APP_VERSION:null),postgres:esq.postgres,buckets:esq.buckets,tablas:esq.orden,estructura:esq.conteos,
+      nota:'Esta copia no incluye claves de servicio, contraseñas ni tokens. La clave pública (publishable) que usa el navegador figura en app/index.html.'},null,2));
+    H.paso('esquema','ok','Estructura: '+esq.conteos.tablas+' tablas, '+esq.conteos.politicas+' políticas, '+esq.conteos.funciones+' funciones');H.prog(5);cancel();
+
+    /* 2) datos de todas las tablas */
+    H.paso('datos','run');let hechas=0;
+    for(let i=0;i<esq.orden.length;i++){
+      const t=esq.orden[i],m=meta[t];cancel();
+      const antes=await bkContar(t);let filas=0,sqlPartes=[],sqlBytes=0,sqlOk=true,primero=true;
+      const gen=(async function*(){
+        yield '[\n';
+        for await(const pag of bkPaginas(t,m.pk)){
+          cancel();yield (primero?'':',\n')+pag.map(r=>JSON.stringify(r)).join(',\n');primero=false;filas+=pag.length;hechas+=pag.length;
+          if(m.columnas.some(c=>c.nombre==='path'))for(const r of pag)if(r.path)refsPath.add(r.path);
+          if(t==='profiles')perfiles.push(...pag);
+          if(t!=='profiles'&&sqlOk)for(let k=0;k<pag.length;k+=BK.LOTE_SQL){const s=bkInsert(t,m,pag.slice(k,k+BK.LOTE_SQL));sqlBytes+=s.length;if(sqlBytes>BK.SQL_MEM){sqlOk=false;sqlPartes=[];break}sqlPartes.push(s)}
+          H.log('  '+t+': '+filas+' filas');H.prog(5+Math.round(20*hechas/Math.max(1,plan.filas)));
+        }
+        yield '\n]\n';
+      })();
+      const bytesJson=await z.flujo('datos/'+t+'.json',gen,true);
+      const despues=await bkContar(t),lo=Math.min(antes,despues),hi=Math.max(antes,despues);
+      let sqlEntrada=false;
+      if(t!=='profiles'&&filas>0){
+        if(sqlOk){await z.texto('sql/04_datos/'+bkPad(i+1)+'_'+t+'.sql','-- Datos de public.'+t+' ('+filas+' filas). Ejecutar con session_replication_role = replica (ver LEEME.md).\nset session_replication_role = replica;\n'+sqlPartes.join('\n')+'set session_replication_role = default;\n');sqlEntrada=true}
+        else res.avisos.push('La tabla '+t+' es demasiado grande para generar SQL en el navegador: usar datos/'+t+'.json.');
+      }
+      res.tablas[t]={filas,antes,despues,bytes_json:bytesJson,sql:sqlEntrada,orden:i+1};
+      if(filas<lo||filas>hi){res.avisos.push('Tabla '+t+': se exportaron '+filas+' filas pero la base tenía entre '+lo+' y '+hi+' (cambió durante el backup o hubo un problema de lectura).');res.tablas[t].inconsistente=true}
+      H.paso('datos','run',(i+1)+' de '+esq.orden.length+' tablas');
+    }
+    const seqs=esq.tablas.flatMap(t=>t.columnas.filter(c=>c.identidad).map(c=>({t:t.nombre,c:c.nombre})));
+    await z.texto('sql/06_secuencias.sql','-- Reajusta los contadores automáticos (identity) para que las filas nuevas no choquen con las restauradas.\n'+
+      (seqs.length?seqs.map(x=>"select setval(pg_get_serial_sequence('public."+x.t+"', '"+x.c+"'), coalesce((select max(\""+x.c+"\") from public."+x.t+"), 1), (select max(\""+x.c+"\") is not null from public."+x.t+"));").join('\n')+'\n':'-- no hay contadores automáticos\n'));
+    H.paso('datos',Object.values(res.tablas).some(x=>x.inconsistente)?'aviso':'ok',hechas+' filas en '+esq.orden.length+' tablas');H.prog(25);cancel();
+
+    /* 3) usuarios (sin contraseñas: no se pueden exportar) */
+    H.paso('usuarios','run');
+    const usuarios=[];
+    for(const p of perfiles){let email=null;if(p.username){try{const {data}=await sb.rpc('email_para_usuario',{u:p.username});if(data)email=data}catch(e){}}
+      usuarios.push({id:p.id,username:p.username||null,email,full_name:p.full_name,role:p.role,active:p.active,all_clients:p.all_clients===true})}
+    await z.texto('usuarios/usuarios.json',JSON.stringify(usuarios,null,2));
+    await z.texto('sql/05_vincular_usuarios.sql',bkSqlVincular(usuarios,refs,meta));
+    const sinEmail=usuarios.filter(u=>!u.email).length;
+    if(sinEmail)res.avisos.push(sinEmail+' usuario(s) no tienen email conocido: hay que vincularlos a mano al restaurar.');
+    H.paso('usuarios','ok',usuarios.length+' usuarios (sin contraseñas)');H.prog(27);cancel();
+
+    /* 4) archivos de Storage */
+    H.paso('archivos','run','0 de '+plan.archivos.length);
+    const items=plan.archivos,cola=new Map(),descargar=async it=>{
+      let ult;for(let n=0;n<3;n++){try{const {data,error}=await sb.storage.from(it.bucket).download(it.path);if(error)throw new Error(error.message||String(error));
+        const u8=new Uint8Array(await data.arrayBuffer());if(it.size>0&&u8.length!==it.size)throw new Error('tamaño recibido '+u8.length+' distinto del esperado '+it.size);return {u8,sha:await bkSha(u8)}}
+        catch(e){ult=e;await new Promise(ok=>setTimeout(ok,600*(n+1)))}}
+      return {error:ult&&ult.message||'error desconocido'}};
+    const sig=i=>{if(i<items.length&&!cola.has(i))cola.set(i,descargar(items[i]))};
+    for(let i=0;i<Math.min(BK.CONC,items.length);i++)sig(i);
+    let bytesHechos=0;
+    for(let i=0;i<items.length;i++){
+      cancel();const it=items[i],r=await cola.get(i);cola.delete(i);sig(i+BK.CONC);
+      if(r.error){res.archivos.errores.push({ruta:it.bucket+'/'+it.path,motivo:r.error});H.log('  ERROR en un archivo ('+it.bucket+'): '+r.error,'err')}
+      else{
+        const ruta='archivos/'+it.bucket+'/'+it.path.replace(/^\/+/,'');
+        await z.flujo(ruta,(async function*(){for(let k=0;k<r.u8.length;k+=1048576)yield r.u8.subarray(k,Math.min(r.u8.length,k+1048576));if(!r.u8.length)yield new Uint8Array(0)})(),false);
+        res.archivos.ok++;res.archivos.bytes+=r.u8.length;res.archivos.indice.push({bucket:it.bucket,ruta:it.path,bytes:r.u8.length,sha256:r.sha,tipo:it.mime});
+      }
+      bytesHechos+=it.size;H.paso('archivos','run',(i+1)+' de '+items.length+' ('+bkMB(res.archivos.bytes)+')');
+      H.prog(27+Math.round(63*(plan.bytesArchivos?bytesHechos/plan.bytesArchivos:(i+1)/items.length)));
+    }
+    await z.texto('archivos/_indice.json',JSON.stringify(res.archivos.indice,null,1));
+    const sinRef=items.filter(x=>!refsPath.has(x.path)).length,faltan=[...refsPath].filter(p=>!items.some(x=>x.path===p)).length;
+    res.archivos.sin_referencia=sinRef;res.archivos.referenciados_inexistentes=faltan;
+    if(faltan)res.avisos.push(faltan+' archivo(s) están referenciados en las tablas pero no existen en Storage.');
+    H.paso('archivos',res.archivos.errores.length?'aviso':'ok',res.archivos.ok+' archivos ('+bkMB(res.archivos.bytes)+')'+(res.archivos.errores.length?', '+res.archivos.errores.length+' con error':''));H.prog(90);cancel();
+
+    /* 5) comprobación SQL y manifiesto */
+    H.paso('cierre','run');
+    await z.texto('sql/07_verificar.sql',bkSqlVerificar(res,esq));
+    await z.texto('restaurar/aplicar_sql.sh',BK_APLICAR_SH);
+    await z.texto('restaurar/subir_archivos.mjs',BK_SUBIR_MJS);
+    const man={formato:1,generado:plan.creado.toISOString(),version_app:(typeof APP_VERSION!=='undefined'?APP_VERSION:null),
+      tablas:Object.fromEntries(Object.entries(res.tablas).map(([k,v])=>[k,{filas:v.filas,filas_antes:v.antes,filas_despues:v.despues,sql:v.sql}])),
+      archivos:{esperados:items.length,incluidos:res.archivos.ok,bytes:res.archivos.bytes,errores:res.archivos.errores,sin_referencia:sinRef,referenciados_inexistentes:faltan},
+      estructura:esq.conteos,avisos:res.avisos,duracion_ms:Date.now()-t0,
+      estado:res.archivos.errores.length||res.avisos.length?'completo_con_avisos':'completo'};
+    await z.texto('manifest.json',JSON.stringify(man,null,2));
+    const partes=await z.finalizar();res.partes=partes;
+    H.paso('cierre','ok','ZIP cerrado: '+partes.length+(partes.length===1?' archivo':' partes'));H.prog(94);
+
+    /* 6) verificación del ZIP guardado: se vuelve a abrir y se leen entradas de verdad */
+    H.paso('verificar','run');res.verificacion=[];
+    for(const p of partes){cancel();const v=await bkVerificarParte(p);res.verificacion.push({parte:p.parte,nombre:p.nombre,bytes:p.bytes,...v});H.log('Verificada '+p.nombre+': '+v.elementos+' elementos, '+v.leidos+' leídos y comprobados')}
+    if(destino.entregar)for(const p of partes)await destino.entregar(p);
+    H.paso('verificar','ok',partes.length+' archivo(s) comprobados');H.prog(100);
+    res.duracion=Date.now()-t0;res.estado=man.estado;return res;
+  }catch(e){
+    await z.abortar();res.fatal=e;res.duracion=Date.now()-t0;res.estado=e.cancelado?'cancelado':'error';return res;
+  }
+}
+
+/* ---- SQL de apoyo para restaurar ---- */
+function bkSqlVincular(usuarios,refs,meta){
+  const q=s=>s===null||s===undefined?'null':"'"+String(s).replace(/'/g,"''")+"'";
+  const rolTipo=(meta.profiles&&meta.profiles.columnas.find(c=>c.nombre==='role')||{tipo:'text'}).tipo;
+  let s='-- Vincula los usuarios NUEVOS (creados en Authentication con el mismo email) con los datos restaurados.\n-- Ejecutar DESPUÉS de cargar los datos (sql/04_datos) y antes de usar la aplicación.\nset session_replication_role = replica;\n'+
+    'create temp table _mapa_usuarios (old_id uuid, email text, username text, full_name text, role text, active boolean, all_clients boolean);\n';
+  if(usuarios.length)s+='insert into _mapa_usuarios values\n'+usuarios.map(u=>'  ('+[q(u.id),q(u.email),q(u.username),q(u.full_name),q(u.role),u.active===false?'false':'true',u.all_clients?'true':'false'].join(', ')+')').join(',\n')+';\n';
+  s+="do $$ declare r record; begin for r in select m.* from _mapa_usuarios m left join auth.users u on lower(u.email) = lower(m.email) where u.id is null loop\n  raise notice 'FALTA crear el usuario % (email %): sus datos no se vincularán', r.username, coalesce(r.email,'sin email'); end loop; end $$;\n";
+  s+='update public.profiles p set username = m.username, full_name = m.full_name, role = m.role::'+rolTipo+', active = m.active, all_clients = m.all_clients\n  from _mapa_usuarios m join auth.users u on lower(u.email) = lower(m.email) where p.id = u.id;\n';
+  for(const r of refs)s+='update public.'+r.tabla+' t set '+r.columna+' = u.id from _mapa_usuarios m join auth.users u on lower(u.email) = lower(m.email) where t.'+r.columna+' = m.old_id and t.'+r.columna+' <> u.id;\n';
+  return s+'set session_replication_role = default;\n';
+}
+function bkSqlVerificar(res,esq){
+  let s='-- Compara las filas restauradas con las del backup. Todas las filas deben decir OK.\n';
+  s+=esq.orden.map(t=>"select '"+t+"' as tabla, "+(res.tablas[t]?res.tablas[t].filas:0)+" as esperado, (select count(*) from public."+t+") as restauradas, case when (select count(*) from public."+t+") = "+(res.tablas[t]?res.tablas[t].filas:0)+" then 'OK' else 'REVISAR' end as estado").join('\nunion all\n')+'\norder by tabla;\n';
+  return s;
+}
+
+const BK_APLICAR_SH=`#!/usr/bin/env bash
+# Aplica los archivos SQL de esta copia, en orden, sobre la base indicada. Usar primero en un proyecto de PRUEBA.
+# Uso: DB_URL="postgresql://postgres:CLAVE@HOST:5432/postgres" ./aplicar_sql.sh [estructura|datos|vincular]
+set -euo pipefail
+: "\${DB_URL:?Definí DB_URL con la cadena de conexión del proyecto NUEVO}"
+cd "$(dirname "$0")/.."
+run() { echo ">> $1"; psql "$DB_URL" -v ON_ERROR_STOP=1 -q -f "$1"; }
+case "\${1:-todo}" in
+  estructura) run sql/01_estructura.sql; run sql/02_almacenamiento.sql; run sql/03_trigger_auth.sql ;;
+  datos) for f in sql/04_datos/*.sql; do run "$f"; done; run sql/06_secuencias.sql ;;
+  vincular) run sql/05_vincular_usuarios.sql ;;
+  verificar) psql "$DB_URL" -f sql/07_verificar.sql ;;
+  *) echo "Pasos: estructura -> (crear usuarios en Authentication) -> datos -> vincular -> verificar"; exit 1 ;;
+esac
+`;
+const BK_SUBIR_MJS=`// Sube los archivos de esta copia (carpeta archivos/) a un proyecto de Supabase NUEVO.
+// Requiere Node 18+. Las claves se pasan por variables de entorno y NO se guardan en ningún lado:
+//   SUPABASE_URL=https://XXXX.supabase.co SUPABASE_SERVICE_KEY=... node subir_archivos.mjs
+// Probar primero con un proyecto de prueba. Si algo falla, el archivo se informa y se sigue con el resto.
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { join, dirname, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
+const URL_ = process.env.SUPABASE_URL, KEY = process.env.SUPABASE_SERVICE_KEY;
+if (!URL_ || !KEY) { console.error('Faltan SUPABASE_URL y SUPABASE_SERVICE_KEY'); process.exit(1); }
+const base = join(dirname(fileURLToPath(import.meta.url)), '..', 'archivos');
+const tipos = { pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', doc: 'application/msword', xls: 'application/vnd.ms-excel',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' };
+function* recorrer(d) { for (const n of readdirSync(d)) { const p = join(d, n); statSync(p).isDirectory() ? yield* recorrer(p) : yield p; } }
+let ok = 0, mal = 0;
+for (const f of recorrer(base)) {
+  const rel = relative(base, f).split('\\\\').join('/');
+  if (rel === '_indice.json') continue;
+  const [bucket, ...resto] = rel.split('/'), ruta = resto.map(encodeURIComponent).join('/');
+  const ext = rel.split('.').pop().toLowerCase();
+  const r = await fetch(\`\${URL_}/storage/v1/object/\${encodeURIComponent(bucket)}/\${ruta}\`, { method: 'POST',
+    headers: { Authorization: 'Bearer ' + KEY, apikey: KEY, 'x-upsert': 'true', 'Content-Type': tipos[ext] || 'application/octet-stream' }, body: readFileSync(f) });
+  if (r.ok) ok++; else { mal++; console.error('ERROR', r.status, rel); }
+}
+console.log(\`Subidos: \${ok}. Con error: \${mal}.\`);
+process.exit(mal ? 2 : 0);
+`;
+
+function bkLeeme(plan,refs){
+  const f=plan.creado,fecha=bkPad(f.getDate())+'/'+bkPad(f.getMonth()+1)+'/'+f.getFullYear()+' '+bkPad(f.getHours())+':'+bkPad(f.getMinutes());
+  return `# Copia de seguridad completa - Estudio Theiler
+
+Generada el ${fecha} desde la aplicación (versión: ${typeof APP_VERSION!=='undefined'?APP_VERSION:'?'}).
+Contenido esperado al momento de generar: ${plan.esq.conteos.tablas} tablas con ${plan.filas} filas, y ${plan.archivos.length} archivos (${bkMB(plan.bytesArchivos)}).
+El resultado real (lo que efectivamente se guardó, errores y avisos) figura en **manifest.json**.
+
+## IMPORTANTE: cuidá este archivo
+- Contiene datos reales de clientes, empleados y documentos, **sin cifrar**. Guardalo en un disco externo de un lugar seguro, preferentemente cifrado (BitLocker, VeraCrypt) o comprimido con contraseña con 7-Zip (AES-256).
+- No contiene claves de servicio, contraseñas ni tokens. Las contraseñas de los usuarios **no se pueden exportar**: al restaurar hay que asignarles una nueva.
+- Si falla algo, el ZIP puede venir en varias partes (archivos "parteNN"). Extraelas todas en la misma carpeta.
+
+## Qué hay adentro
+- \`datos/*.json\`: todas las filas de cada tabla (copia completa de los datos).
+- \`sql/\`: estructura de la base y los datos como SQL, listos para aplicar en orden.
+- \`archivos/<bucket>/...\`: los archivos de Storage (PDF, imágenes, etc.) con su ruta original, e \`archivos/_indice.json\` con tamaño y SHA-256 de cada uno.
+- \`usuarios/usuarios.json\`: usuarios (sin contraseñas) para volver a crearlos.
+- \`app/index.html\` y \`config/\`: el código de la aplicación y la configuración no secreta.
+- \`restaurar/\`: herramientas para restaurar. \`manifest.json\`: resumen y comprobaciones.
+
+## Cómo restaurar (probalo SIEMPRE primero en un proyecto de prueba)
+1. Creá un proyecto nuevo en Supabase (gratis). **No restaures sobre producción sin haber probado.** Una restauración sobre un proyecto con datos puede pisarlos.
+2. Estructura: ejecutá en el SQL Editor (o con \`restaurar/aplicar_sql.sh estructura\`), en este orden: \`sql/01_estructura.sql\`, \`sql/02_almacenamiento.sql\` y \`sql/03_trigger_auth.sql\`.
+3. Usuarios: en Authentication > Users creá cada usuario con el mismo email (ver \`usuarios/usuarios.json\`) y una contraseña nueva. Se crea solo su perfil.
+4. Datos: ejecutá los archivos de \`sql/04_datos/\` en orden numérico y después \`sql/06_secuencias.sql\` (o simplemente \`aplicar_sql.sh datos\`, que hace todo). Usan \`session_replication_role = replica\`: si el editor de Supabase da error de permisos, usá psql (con \`aplicar_sql.sh\`).
+5. Vinculá los usuarios: ejecutá \`sql/05_vincular_usuarios.sql\`. Reasigna los datos a las cuentas nuevas por email y avisa los usuarios que faltan crear.
+6. Archivos: \`SUPABASE_URL=... SUPABASE_SERVICE_KEY=... node restaurar/subir_archivos.mjs\` (Node 18+; la clave es la del proyecto nuevo y no debe compartirse).
+7. Verificá: ejecutá \`sql/07_verificar.sql\`: todas las filas tienen que decir OK. Abrí la aplicación y revisá clientes, comprobantes y documentos.
+8. Apuntá la aplicación al proyecto nuevo: cambiá la URL y la clave pública (publishable) en las constantes SUPABASE_URL y SUPABASE_KEY de \`app/index.html\`.
+
+## Lo que NO está en esta copia
+- Contraseñas de usuarios, claves del proyecto y secretos.
+- Ajustes del panel de Supabase: Authentication (URL del sitio, proveedores, plantillas de email, registro público desactivado), SMTP, dominios. Anotalos o sacales captura.
+- Usuarios sin email conocido: hay que vincularlos a mano.
+
+## Referencias entre datos
+Las relaciones están en las claves foráneas de \`sql/01_estructura.sql\` y los datos se cargan en el orden correcto. Las columnas que apuntan a usuarios son: ${refs.map(r=>r.tabla+'.'+r.columna).join(', ')||'(ninguna)'}.
+Los archivos se relacionan con las tablas client_documents, payslips y tax_filing_files por el campo \`path\`, que coincide con la ruta dentro de \`archivos/clientes/\`.
+`;
+}
+
+/* ---- Interfaz: sección Administración > Copia de seguridad ---- */
+ui.bk={fase:'inicio',plan:null,pasos:[],log:[],pct:0,res:null,error:null,cancelar:false,corriendo:false,modo:'',desde:0};
+const BK_PASOS=[['esquema','Estructura de la base de datos'],['datos','Datos de todas las tablas'],['usuarios','Usuarios (sin contraseñas)'],['archivos','Archivos de Storage (PDF, imágenes)'],['cierre','Armado del archivo ZIP'],['verificar','Verificación del ZIP guardado']];
+function bkHooks(){return {
+  paso:(id,e,d)=>{const p=ui.bk.pasos.find(x=>x.id===id);if(p){p.e=e;if(d!==undefined)p.d=d}bkRender()},
+  prog:p=>{ui.bk.pct=Math.max(ui.bk.pct,Math.min(100,p));bkRender()},
+  log:(m,t)=>{ui.bk.log.push((t==='err'?'[ERROR] ':'')+m);if(ui.bk.log.length>400)ui.bk.log.splice(0,100);bkRender()},
+  cancelado:()=>ui.bk.cancelar}}
+let _bkT=0;
+function bkRender(){if(_bkT)return;_bkT=setTimeout(()=>{_bkT=0;const el=document.getElementById('bkpanel');if(el)el.innerHTML=bkPanelHtml()},150)}
+function bkUltimo(){try{return JSON.parse(localStorage.getItem('et_ultimo_backup')||'null')}catch(e){return null}}
+function bkGuardarUltimo(r){try{localStorage.setItem('et_ultimo_backup',JSON.stringify({fecha:new Date().toISOString(),estado:r.estado,archivos:r.partes.map(p=>p.nombre),filas:Object.values(r.tablas).reduce((a,x)=>a+x.filas,0),adjuntos:r.archivos.ok}))}catch(e){}}
+function bkRecordatorio(){
+  if(!isAdmin())return '';const u=bkUltimo(),dias=u?Math.floor((Date.now()-new Date(u.fecha).getTime())/864e5):null;
+  if(u&&u.estado!=='error'&&dias<=7)return '';
+  return `<div class="msg warn" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap"><span style="flex:1;min-width:220px">${u?`Hace ${dias} días que no generás una copia de seguridad desde este navegador.`:'Todavía no generaste ninguna copia de seguridad desde este navegador.'} Conviene hacerla seguido y guardarla en un disco externo.</span><button class="b sm" onclick="show('admin')">Ir a Administración</button></div>`;
+}
+function bkDescargar(blob,nombre){const u=URL.createObjectURL(blob),a=document.createElement('a');a.href=u;a.download=nombre;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),120000)}
+async function bkAnalizar(){
+  const B=ui.bk;if(B.corriendo||B.fase==='analizando')return;
+  if(!isAdmin()){B.fase='error';B.error='Solo los administradores pueden generar backups.';return bkRender()}
+  if(typeof fflate==='undefined'){B.fase='error';B.error='No se pudo cargar la librería de compresión (¿sin conexión a internet?). Recargá la página e intentá de nuevo.';return bkRender()}
+  Object.assign(B,{fase:'analizando',plan:null,res:null,error:null,log:[],pct:0,cancelar:false,pasos:BK_PASOS.map(([id,t])=>({id,t,e:'pend',d:''}))});
+  const [h]=[bkHooks()];draw();
+  try{B.plan=await bkPlanificar(h);B.fase='listo'}catch(e){B.fase='error';B.error=e.message||String(e)}
+  draw();
+}
+function bkSoporte(){return window.showSaveFilePicker?'archivo':window.showDirectoryPicker?'carpeta':'memoria'}
+async function bkComenzar(){
+  const B=ui.bk;if(B.corriendo||!B.plan)return;let destino;
+  try{
+    const est=B.plan.bytesArchivos+B.plan.filas*3000;
+    if(window.showSaveFilePicker&&est<BK.LIM_FS){const h=await window.showSaveFilePicker({suggestedName:bkNombre(0),types:[{description:'Archivo ZIP',accept:{'application/zip':['.zip']}}]});destino=bkDestinoArchivo(h);B.modo='archivo'}
+    else if(window.showDirectoryPicker){const d=await window.showDirectoryPicker({mode:'readwrite'});destino=bkDestinoCarpeta(d);B.modo='carpeta'}
+    else{destino=bkDestinoMemoria(async(blob,nombre)=>{bkDescargar(blob,nombre);await new Promise(ok=>setTimeout(ok,900))});B.modo='memoria'}
+  }catch(e){if(e&&e.name==='AbortError'){flash('No elegiste dónde guardar el backup: no se generó nada.','warn');return draw()}B.fase='error';B.error='No se pudo abrir el selector de ubicación: '+(e.message||e);return draw()}
+  B.corriendo=true;B.fase='corriendo';B.cancelar=false;B.pct=0;B.desde=Date.now();B.log=[];B.pasos.forEach(p=>{p.e='pend';p.d=''});draw();
+  let lock=null;try{if(navigator.wakeLock)lock=await navigator.wakeLock.request('screen')}catch(e){}
+  const r=await bkEjecutar(destino,B.plan,bkHooks());
+  try{if(lock)await lock.release()}catch(e){}
+  B.corriendo=false;B.res=r;
+  if(r.estado==='error'){B.fase='error';B.error=(r.fatal&&r.fatal.message)||'Error desconocido'}
+  else if(r.estado==='cancelado'){B.fase='cancelado'}
+  else{B.fase='fin';bkGuardarUltimo(r)}
+  draw();
+}
+function bkCancelar(){ui.bk.cancelar=true;bkRender()}
+function bkReiniciar(){Object.assign(ui.bk,{fase:'inicio',plan:null,res:null,error:null,log:[],pct:0,corriendo:false});draw()}
+function bkResumenTexto(){const r=ui.bk.res;if(!r)return '';return ['Backup Estudio Theiler','Estado: '+r.estado,'Archivos ZIP: '+r.partes.map(p=>p.nombre+' ('+bkMB(p.bytes)+')').join(', '),
+  'Tablas: '+Object.keys(r.tablas).length+' ('+Object.values(r.tablas).reduce((a,x)=>a+x.filas,0)+' filas)','Archivos de Storage: '+r.archivos.ok+' ('+bkMB(r.archivos.bytes)+')','Errores: '+r.archivos.errores.length,'Avisos: '+r.avisos.length,'Duración: '+bkSeg(r.duracion)].join('\n')}
+function bkCopiar(){const t=bkResumenTexto();(navigator.clipboard?navigator.clipboard.writeText(t):Promise.reject()).then(()=>{flash('Resumen copiado.');draw()},()=>{flash('No se pudo copiar.','err');draw()})}
+function bkPanelHtml(){
+  const B=ui.bk,soporte=bkSoporte(),ic={pend:'○',run:'◐',ok:'✓',aviso:'!',err:'✕'},col={pend:'var(--mut)',run:'var(--blut)',ok:'var(--grnt)',aviso:'var(--ambt)',err:'var(--redt)'};
+  const pasos=()=>`<div class="card" style="margin:12px 0">${B.pasos.map(p=>`<div style="display:flex;gap:10px;padding:6px 0;border-bottom:1px solid var(--bd)"><b style="color:${col[p.e]};width:18px;text-align:center">${ic[p.e]}</b><span style="flex:1">${esc(p.t)}</span><span class="s" style="text-align:right">${esc(p.d||'')}</span></div>`).join('')}</div>`;
+  const logHtml=()=>B.log.length?`<details style="margin-top:8px"><summary class="s" style="cursor:pointer">Ver detalle (${B.log.length} líneas)</summary><pre style="max-height:240px;overflow:auto;font-size:12px;white-space:pre-wrap;color:var(--mut)">${esc(B.log.slice(-120).join('\n'))}</pre></details>`:'';
+  if(B.fase==='inicio')return `<p>Genera <b>un solo archivo ZIP</b> con todos los datos de la aplicación, los archivos de Storage (facturas, PDF, imágenes), la estructura de la base y las instrucciones para restaurar. Solo lee: no modifica ni borra nada. No incluye contraseñas ni claves.</p><button class="b" onclick="bkAnalizar()">Generar backup</button>`;
+  if(B.fase==='analizando')return `<div class="msg info">Analizando qué hay que respaldar…</div>${logHtml()}`;
+  if(B.fase==='listo'){const p=B.plan;return `<div class="msg info">Esto es lo que se va a respaldar:</div><div class="grid" style="margin-bottom:12px"><div class="card kpi"><b>${p.esq.conteos.tablas}</b><span>tablas con ${p.filas} filas</span></div><div class="card kpi"><b>${p.archivos.length}</b><span>archivos (${bkMB(p.bytesArchivos)})</span></div></div>
+    <p class="s" style="margin-bottom:10px">${soporte==='archivo'?'Tu navegador deja guardar directo en el disco: elegí una carpeta del disco externo y el archivo se escribe sin pasar por la memoria.':soporte==='carpeta'?'Elegí una carpeta del disco externo: se guardará ahí.':'Tu navegador (por ejemplo Firefox o Safari) no puede guardar directo en el disco: el backup se descargará en partes de unos 200 MB. Para guardar directo en un disco externo usá Chrome o Edge en la computadora.'}</p>
+    <p class="s" style="margin-bottom:12px">Cada backup descarga todos los archivos desde Supabase: ${bkMB(p.bytesArchivos)} de transferencia. En el plan gratuito el límite es de unos 5 GB por mes.</p>
+    <div class="row"><button class="b" onclick="bkComenzar()">Elegir dónde guardar y comenzar</button><button class="g" onclick="bkReiniciar()">Cancelar</button></div>`}
+  if(B.fase==='corriendo')return `<div style="display:flex;justify-content:space-between;margin-bottom:6px"><b>${B.cancelar?'Cancelando…':'Generando el backup…'}</b><span class="s">${B.pct}% · ${bkSeg(Date.now()-B.desde)}</span></div><div style="height:12px;border-radius:99px;background:var(--hd);overflow:hidden;border:1px solid var(--bd)"><div style="height:100%;width:${B.pct}%;background:var(--pri);transition:width .2s"></div></div>${pasos()}<div class="row"><button class="g" onclick="bkCancelar()" ${B.cancelar?'disabled':''}>Cancelar</button><span class="s">No cierres esta página hasta que termine.</span></div>${logHtml()}`;
+  if(B.fase==='cancelado')return `<div class="msg warn">El backup se canceló y no se guardó ningún archivo.</div><button class="b" onclick="bkReiniciar()">Volver</button>`;
+  if(B.fase==='error')return `<div class="msg err"><b>No se pudo generar el backup.</b><br>${esc(B.error||'')}<br><span class="s" style="color:inherit">No se guardó nada incompleto. Podés volver a intentar; si se repite, avisá con este mensaje.</span></div>${B.pasos.length?pasos():''}<div class="row"><button class="b" onclick="bkReiniciar()">Volver a intentar</button></div>${logHtml()}`;
+  if(B.fase==='fin'){const r=B.res,ok=r.estado==='completo',filas=Object.values(r.tablas).reduce((a,x)=>a+x.filas,0);
+    return `<div class="msg ${ok?'ok':'warn'}"><b>${ok?'Backup generado y verificado.':'Backup generado, pero con avisos: revisalos antes de confiar en él.'}</b><br>Guardado como: ${esc(r.partes.map(p=>p.nombre).join(', '))}${r.partes.length>1?'. Son '+r.partes.length+' partes: guardalas todas juntas.':''}</div>
+    <div class="grid" style="margin-bottom:12px"><div class="card kpi"><b>${Object.keys(r.tablas).length}</b><span>tablas (${filas} filas)</span></div><div class="card kpi"><b>${r.archivos.ok}</b><span>archivos (${bkMB(r.archivos.bytes)})</span></div><div class="card kpi"><b>${bkMB(r.partes.reduce((a,p)=>a+p.bytes,0))}</b><span>tamaño del backup</span></div><div class="card kpi"><b>${bkSeg(r.duracion)}</b><span>duración</span></div></div>
+    ${pasos()}
+    <div class="card" style="margin-bottom:12px"><b>Comprobaciones</b><div class="s" style="margin-top:6px">${r.verificacion.map(v=>`✓ ${esc(v.nombre)}: ${v.elementos} elementos; el tamaño coincide, el índice se lee bien y ${v.leidos} elementos se descomprimieron y pasaron la prueba de integridad (CRC).`).join('<br>')}<br>✓ Cantidad de filas de cada tabla comprobada contra la base (antes y después de leerla).<br>✓ ${r.archivos.ok} de ${B.plan.archivos.length} archivos descargados con el tamaño esperado y su huella SHA-256 registrada.</div></div>
+    ${r.archivos.errores.length?`<div class="msg err"><b>${r.archivos.errores.length} archivo(s) no se pudieron incluir:</b><br>${r.archivos.errores.slice(0,10).map(e=>esc(e.ruta+': '+e.motivo)).join('<br>')}${r.archivos.errores.length>10?'<br>…':''}</div>`:''}
+    ${r.avisos.length?`<div class="msg warn"><b>Avisos:</b><br>${r.avisos.map(esc).join('<br>')}</div>`:''}
+    <div class="msg info">Guardalo en un disco externo, en un lugar seguro y, si es posible, con cifrado. Contiene datos reales sin cifrar. Probá una restauración en un proyecto de prueba (las instrucciones están en <b>LEEME.md</b>, adentro del ZIP).</div>
+    <div class="row"><button class="g" onclick="bkCopiar()">Copiar resumen</button><button class="b" onclick="bkReiniciar()">Listo</button></div>${logHtml()}`}
+  return '';
+}
+function vAdmin(){
+  if(!isAdmin())return '<h2>Administración</h2><div class="card">Esta sección es solo para administradores.</div>';
+  const u=bkUltimo(),f=u?new Date(u.fecha):null;
+  return `<h2>Administración</h2><div class="card" style="padding:20px"><h3 style="margin-top:0">Copia de seguridad completa</h3>
+  ${u?`<p class="s" style="margin-bottom:12px">Último backup desde este navegador: ${f.toLocaleDateString('es-AR')} ${f.toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'})}, ${u.estado==='completo'?'completo':'con avisos'} (${u.filas} filas y ${u.adjuntos} archivos).</p>`:''}
+  <div id="bkpanel">${bkPanelHtml()}</div></div>`;
+}
+window.addEventListener('beforeunload',e=>{if(ui.bk&&ui.bk.corriendo){e.preventDefault();e.returnValue=''}});
+
+/* ===== Liquidaciones de granos y de venta de hacienda (PDF) ===== */
+/* No hay Excel de ARCA para estas liquidaciones: se guarda el PDF y se leen los importes del texto del PDF.
+   La lectura es ASISTIDA: nunca se guarda nada sin que la persona revise los importes contra el PDF. */
+const LIQ={liq_granos:{cod:9001,nombre:'Liquidación primaria de granos'},liq_venta:{cod:9002,nombre:'Liquidación de venta (hacienda)'}};
+const LIQ_MONTO=/-?\d{1,3}(?:\.\d{3})+,\d{2}|-?\d+,\d{2}|-?\d{1,3}(?:,\d{3})+\.\d{2}|-?\d+\.\d{2}(?!\d)/g;
+const liqNum=s=>{s=s.trim();const neg=s.startsWith('-');s=s.replace('-','');const v=/,\d{2}$/.test(s)?Number(s.replace(/\./g,'').replace(',','.')):Number(s.replace(/,/g,''));return neg?-v:v};
+const liqNorm=s=>String(s).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+const liqPlata=n=>Math.round((n+Number.EPSILON)*100)/100;
+
+function liqLineas(items){
+  const filas=[];
+  for(const it of items){if(!it.str||!it.str.trim())continue;const y=it.transform[5],x=it.transform[4];let f=filas.find(r=>Math.abs(r.y-y)<2.5);if(!f){f={y,items:[]};filas.push(f)}f.items.push({x,s:it.str})}
+  filas.sort((a,b)=>b.y-a.y);
+  return filas.map(f=>f.items.sort((a,b)=>a.x-b.x).map(i=>i.s).join(' ').replace(/\s+/g,' ').trim()).filter(Boolean);
+}
+function cargarScript(src){return new Promise((ok,mal)=>{const s=document.createElement('script');s.src=src;s.onload=ok;s.onerror=()=>mal(new Error('No se pudo cargar '+src));document.head.appendChild(s)})}
+async function pdfTexto(file){
+  if(typeof pdfjsLib==='undefined')await cargarScript('https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js').catch(()=>{});
+  if(typeof pdfjsLib==='undefined')throw new Error('No se pudo cargar el lector de PDF (¿sin conexión a internet?). Podés cargar los importes a mano.');
+  if(!pdfjsLib.GlobalWorkerOptions.workerSrc){try{const r=await fetch('https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js');pdfjsLib.GlobalWorkerOptions.workerSrc=URL.createObjectURL(new Blob([await r.text()],{type:'text/javascript'}))}catch(e){}}
+  const doc=await pdfjsLib.getDocument({data:new Uint8Array(await file.arrayBuffer())}).promise,lineas=[];
+  for(let n=1;n<=doc.numPages&&n<=15;n++){const pg=await doc.getPage(n),tc=await pg.getTextContent();lineas.push(...liqLineas(tc.items))}
+  return lineas;
+}
+
+/** Busca neto gravado, IVA, total, fecha, número y contraparte. Valida: IVA = neto x alícuota y neto + IVA = total. */
+function liqExtraer(lineas,cuitCliente){
+  const RATES=[10.5,21,27,5,2.5],cand=[],avisos=[];
+  lineas.forEach((l,i)=>{
+    const n=liqNorm(l),sinPct=l.replace(/\d{1,2}(?:[.,]\d{1,2})?\s*%/g,' '),m=(sinPct.match(LIQ_MONTO)||[]).map(liqNum).filter(x=>isFinite(x));if(!m.length)return;
+    const roles=[];
+    if(/neto\s*gravado|importe\s*neto|subtotal|base\s*imponible|total\s*bruto|importe\s*bruto|precio\s*neto|valor\s*(de\s*(la\s*)?)?(operacion|hacienda|granos|venta)|total\s*operacion|operacion\s*gravada|\bneto\b/.test(n)&&!/a\s*(cobrar|pagar)|retenc|percepc|deduc/.test(n))roles.push('neto');
+    if(/\biva\b/.test(n)&&!/retenc|percepc|rg\s*\d|inscripto|exento|no\s*responsable/.test(n))roles.push('iva');
+    if((/importe\s*total|total\s*liquidacion|total\s*general|total\s*a\s*(pagar|cobrar)|neto\s*a\s*(cobrar|pagar)|liquido\s*(final|producto|a\s*cobrar)?|total\s*comprobante|^total\b|\btotal\s*[:$]?\s*[\d.-]/.test(n))&&!/iva|retenc|deduc|percepc|gastos|comision/.test(n))roles.push('total');
+    const a=n.match(/(\d{1,2}(?:[.,]\d{1,2})?)\s*%/);
+    if(roles.length)cand.push({i,linea:l,montos:m,roles,alic:a?Number(a[1].replace(',','.')):null});
+  });
+  const netos=cand.filter(c=>c.roles.includes('neto')),ivas=cand.filter(c=>c.roles.includes('iva')),tots=cand.filter(c=>c.roles.includes('total'));
+  let mejor=null;
+  for(const cn of netos)for(const nv of cn.montos)for(const ci of ivas)for(const iv of ci.montos){
+    const tasas=ci.alic?[ci.alic]:cn.alic?[cn.alic]:RATES;
+    for(const t of tasas){
+      if(nv>0&&iv>0&&Math.abs(nv*t/100-iv)<=Math.max(1,nv*0.0005)){
+        let tot=null;for(const ct of tots)for(const tv of ct.montos)if(Math.abs(nv+iv-tv)<=1.5)tot=tv;
+        const score=(tot!==null?2:0)+(ci.alic?1:0);
+        if(!mejor||score>mejor.score)mejor={neto:nv,iva:iv,alic:t,total:tot,score}}}}
+  const r={neto:null,iva:null,alic:null,total:null,confianza:'baja',avisos,candidatos:cand.slice(0,16).map(c=>({linea:c.linea.slice(0,110),montos:c.montos.slice(0,4),roles:c.roles}))};
+  if(mejor){Object.assign(r,{neto:mejor.neto,iva:mejor.iva,alic:mejor.alic,total:mejor.total,confianza:mejor.total!==null?'alta':'media'});
+    if(mejor.total===null){r.total=liqPlata(mejor.neto+mejor.iva);avisos.push('No se encontró el total en el PDF: se calculó como neto más IVA.')}}
+  else{
+    const pick=(arr,f)=>{const c=arr[0];return c?f(c.montos):null};
+    r.neto=pick(netos,m=>Math.max(...m));r.iva=pick(ivas,m=>Math.max(...m));r.total=pick(tots,m=>Math.max(...m));r.alic=(ivas[0]&&ivas[0].alic)||null;
+    avisos.push('No se pudo confirmar que el IVA coincida con el neto por la alícuota: revisá los importes con mucho cuidado.')}
+  // fecha
+  const fechas=[];lineas.forEach(l=>{const re=/(\d{1,2})\/(\d{1,2})\/(\d{4})/g;let x;while((x=re.exec(l)))fechas.push({f:pDate(x[0]),pref:/fecha|emision|emitid/.test(liqNorm(l))})});
+  const fv=fechas.filter(x=>x.f);r.fecha=(fv.find(x=>x.pref)||fv[0]||{}).f||null;
+  // número: punto de venta y número, o COE de 12 dígitos
+  r.pv=null;r.num=null;
+  for(const l of lineas){const m=l.match(/(\d{4,5})\s*[-–]\s*(\d{8})\b/);if(m){r.pv=Number(m[1]);r.num=Number(m[2]);break}}
+  if(r.num===null)for(const l of lineas){const m=liqNorm(l).match(/coe\D{0,12}(\d{12})/);if(m){r.pv=0;r.num=Number(m[1]);r.coe=true;break}}
+  // contraparte: primer CUIT que no sea el del cliente
+  const cuits=[];lineas.forEach((l,i)=>{const re=/\b(20|23|24|27|30|33|34)[- ]?(\d{8})[- ]?(\d)\b/g;let x;while((x=re.exec(l))){const c=x[1]+x[2]+x[3];if(c!==cuitCliente&&!cuits.some(y=>y.c===c))cuits.push({c,i,l})}});
+  r.cuit=cuits[0]?cuits[0].c:null;
+  if(cuits[0]){const t=cuits[0].l.split(/cuit/i)[0].replace(/^.*?:\s*/,'').trim();if(t.length>=3&&t.length<=70&&!/\d{6,}/.test(t))r.nombre=t}
+  if(!lineas.length)avisos.unshift('El PDF no tiene texto que se pueda leer (parece una imagen escaneada). Cargá los importes a mano.');
+  return r;
+}
+
+/* ---- Interfaz: se usa dentro de la sección Ventas ---- */
+const LQ=()=>ui.vta.liq||(ui.vta.liq={abierta:false,tipo:'liq_granos',datos:null,file:null,cand:[],avisos:[],confianza:null,leyendo:false});
+function liqAbrir(){const L=LQ();L.abierta=!L.abierta;if(!L.abierta){L.datos=null;L.file=null;L.cand=[];L.avisos=[]}draw()}
+async function liqPdf(inp){
+  const L=LQ(),f=inp.files[0];inp.value='';if(!f)return;
+  const e=await esPdf(f);if(e){flash(e,'err');return draw()}
+  L.file=f;L.leyendo=true;L.avisos=[];L.cand=[];L.datos={fecha:'',pv:'',num:'',neto:'',iva:'',alic:'10.5',total:'',cuit:'',nombre:''};draw();
+  const cliente=ui.clients.find(c=>c.id===ui.vta.cid);
+  try{
+    const lineas=await pdfTexto(f),r=liqExtraer(lineas,cliente?cliente.cuit:'');
+    L.datos={fecha:r.fecha||'',pv:r.pv===null?'':String(r.pv),num:r.num===null?'':String(r.num),neto:r.neto===null?'':String(r.neto),iva:r.iva===null?'':String(r.iva),alic:String(r.alic||L.datos.alic),total:r.total===null?'':String(r.total),cuit:r.cuit||'',nombre:r.nombre||''};
+    L.cand=r.candidatos;L.avisos=r.avisos;L.confianza=r.confianza;
+  }catch(x){L.avisos=['No se pudo leer el PDF: '+(x.message||x)+' Cargá los importes a mano.'];L.confianza='baja'}
+  L.leyendo=false;draw();
+}
+function liqCampo(k,v){const L=LQ();if(L.datos)L.datos[k]=String(v).trim()}
+function liqTipo(v){LQ().tipo=v}
+function liqUsar(k,v){const L=LQ();L.datos[k]=String(v);draw()}
+function liqCalcIva(){const L=LQ(),n=pNum(L.datos.neto),a=Number(L.datos.alic);if(n===null){flash('Cargá primero el neto gravado.','err');return draw()}L.datos.iva=String(liqPlata(n*a/100));L.datos.total=String(liqPlata(n+n*a/100));draw()}
+function liqForm(){
+  const L=LQ();if(!L.abierta)return '';const d=L.datos,col={alta:'ok',media:'warn',baja:'err'};
+  const inp=(k,t,ph,extra)=>`<label>${t}<input value="${esc(d?d[k]:'')}" ${extra||''} placeholder="${ph||''}" onchange="liqCampo('${k}',this.value)"></label>`;
+  return `<div class="card" style="margin-bottom:14px"><b>Cargar liquidación de granos u hacienda (PDF)</b>
+  <p class="s" style="margin:4px 0 10px">Se guarda el PDF y se leen los importes del texto del PDF. Siempre revisá los importes contra el documento antes de guardar: la lectura puede equivocarse.</p>
+  <div class="fgrid"><label>Tipo de liquidación<select onchange="liqTipo(this.value)"><option value="liq_granos" ${L.tipo==='liq_granos'?'selected':''}>${LIQ.liq_granos.nombre}</option><option value="liq_venta" ${L.tipo==='liq_venta'?'selected':''}>${LIQ.liq_venta.nombre}</option></select></label>
+  <label>Archivo PDF<input type="file" accept="application/pdf,.pdf" onchange="liqPdf(this)"></label></div>
+  ${L.leyendo?'<div class="msg info" style="margin-top:10px">Leyendo el PDF…</div>':''}
+  ${d&&!L.leyendo?`${L.confianza?`<div class="msg ${col[L.confianza]}" style="margin-top:10px">Lectura del PDF: confianza <b>${L.confianza}</b>. ${L.confianza==='alta'?'El IVA coincide con el neto por la alícuota y el total cierra.':L.confianza==='media'?'El IVA coincide con el neto por la alícuota, pero no se pudo confirmar el total.':'No se pudieron confirmar los importes.'}</div>`:''}
+    ${L.avisos.map(a=>`<div class="msg warn">${esc(a)}</div>`).join('')}
+    <div class="fgrid" style="margin-top:10px">${inp('fecha','Fecha (AAAA-MM-DD)','2026-09-15')}${inp('pv','Punto de venta (0 si solo tiene COE)','0')}${inp('num','Número de liquidación o COE','')}
+      ${inp('neto','Neto gravado','0,00')}<label>Alícuota de IVA<select onchange="liqCampo('alic',this.value)">${ALIC.map(a=>`<option value="${a}" ${Number(d.alic)===a?'selected':''}>${String(a).replace('.',',')}%</option>`).join('')}</select></label>${inp('iva','IVA','0,00')}${inp('total','Total (opcional)','')}${inp('cuit','CUIT del comprador (opcional)','')}${inp('nombre','Nombre del comprador (opcional)','')}</div>
+    <div class="row" style="margin-top:10px"><button class="g" onclick="liqCalcIva()">Calcular IVA y total desde el neto</button><button class="b" onclick="liqGuardar()">Guardar liquidación</button><button class="g" onclick="liqAbrir()">Cancelar</button></div>
+    ${L.cand.length?`<details style="margin-top:12px"><summary class="s" style="cursor:pointer">Importes encontrados en el PDF (tocá para usar uno)</summary><div class="tw" style="margin-top:8px"><table><tbody>${L.cand.map(c=>`<tr><td class="s" style="min-width:240px">${esc(c.linea)}</td><td>${c.montos.map(m=>`<div style="white-space:nowrap">${money(m)} <button class="g sm" onclick="liqUsar('neto','${m}')">Neto</button> <button class="g sm" onclick="liqUsar('iva','${m}')">IVA</button> <button class="g sm" onclick="liqUsar('total','${m}')">Total</button></div>`).join('')}</td></tr>`).join('')}</tbody></table></div></details>`:''}`:''}</div>`;
+}
+async function liqGuardar(){
+  const L=LQ(),d=L.datos,v=ui.vta,bad=m=>{flash(m,'err');draw()};
+  if(!L.file||!d)return bad('Elegí primero el PDF.');
+  const fecha=d.fecha,pv=pNum(d.pv||'0'),num=pNum(d.num),neto=pNum(d.neto),iva=pNum(d.iva),alic=Number(d.alic);let total=pNum(d.total);
+  if(!pDate(fecha))return bad('La fecha no es válida (formato AAAA-MM-DD).');
+  if(pv===null||!Number.isInteger(pv)||pv<0||num===null||!Number.isInteger(num)||num<=0)return bad('El punto de venta y el número tienen que ser enteros (el punto de venta puede ser 0).');
+  if(neto===null||!(neto>0)||iva===null||iva<0)return bad('Cargá el neto gravado (mayor a cero) y el IVA.');
+  if(total===null||!(total>0))total=liqPlata(neto+iva);
+  if(Math.abs(neto*alic/100-iva)>Math.max(1,neto*0.0005)&&!confirm(`El IVA (${money(iva)}) no coincide con el neto por ${String(alic).replace('.',',')}% (${money(neto*alic/100)}).\n¿Guardar igual?`))return;
+  const cli=ui.clients.find(c=>c.id===v.cid),tipo=LIQ[L.tipo];
+  const safe=L.file.name.normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^A-Za-z0-9._-]+/g,'_').slice(-80),path=`${v.cid}/ventas/${crypto.randomUUID()}-${safe}`;
+  const up=await sb.storage.from('clientes').upload(path,L.file,{contentType:'application/pdf',upsert:false});
+  if(up.error)return bad('No se pudo subir el PDF: '+errTxt(up.error));
+  const a=String(alic).replace('.',','),raw={['Neto Grav. IVA '+a+'%']:neto};if(alic>0)raw['IVA '+a+'%']=iva;
+  try{
+    const {data:p,error:e1}=await sb.from('client_periods').upsert({client_id:v.cid,periodo:fecha.slice(0,7)+'-01'},{onConflict:'client_id,periodo'}).select('id').single();if(e1)throw e1;
+    const {error}=await sb.from('sales_invoices').insert({client_id:v.cid,period_id:p.id,fecha,tipo_cmp:tipo.cod,punto_venta:pv,numero:num,receptor_cuit:String(d.cuit||'').replace(/\D/g,'')||null,receptor_nombre:d.nombre||null,neto_gravado:neto,no_gravado:0,exento:0,otros_tributos:0,iva,importe_total:total,origen:'manual',raw,clase:L.tipo,archivo_path:path,archivo_nombre:L.file.name,datos_extraidos:{confianza:L.confianza,avisos:L.avisos},created_by:me.id});
+    if(error)throw error;
+    v.periodo=fecha.slice(0,7);L.abierta=false;L.datos=null;L.file=null;L.cand=[];L.avisos=[];await loadVentas();flash(`${tipo.nombre} guardada. Ya cuenta en el IVA aproximado de ${v.periodo.slice(5)}/${v.periodo.slice(0,4)}.`);
+  }catch(x){await sb.storage.from('clientes').remove([path]);flash(/duplicate/i.test(x.message||'')?'Ya cargaste una liquidación con ese punto de venta y número.':errTxt(x),'err')}
+  draw();
+}
+
 init();
 </script>
 </body>
