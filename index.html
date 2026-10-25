@@ -170,7 +170,7 @@ function planImport(parsed,meta,existing,ctx){
 
 
 /* ===== Supabase ===== */
-const APP_VERSION='29/10/2026, escáner sin depender de internet y tickets por foto';
+const APP_VERSION='30/10/2026, informes tributarios e informe impositivo integral';
 const SUPABASE_URL='https://tugdqcoxcpsiynlvnqdu.supabase.co';
 const SUPABASE_KEY='sb_publishable_2-96VeZrsNNftRXkzA1l_A_YG7ThJrL'; // clave pública: los permisos los da la base (RLS)
 const sb=(typeof supabase!=='undefined')?supabase.createClient(SUPABASE_URL,SUPABASE_KEY):null;
@@ -766,13 +766,13 @@ async function abrirFicha(id,tab,periodo){
   if(ui.ficha.tab==='pedir')return initPedir();
   draw();
 }
-function cerrarFicha(){ui.ficha=null;draw()}
+function cerrarFicha(){ui.ficha=null;ui.inf=null;draw()}
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&ui.ficha)cerrarFicha()});
 const fst=v=>({tot:v.length,fal:v.filter(x=>x.doc_status==='no_recibida').length,sin:v.filter(x=>x.proc_status==='liquidado_sin_documentacion').length,rev:v.filter(x=>x.doc_status==='pendiente_revision'||x.proc_status==='requiere_revision').length});
 const delC=(d,c)=>tieneImp(c,d.impuesto)&&d.terminaciones.includes(Number(c.cuit.slice(-1)));
 function vFicha(){
   const f=ui.ficha;if(!f)return'';const c=ui.clients.find(x=>x.id===f.id);if(!c)return'';
-  const T=[['resumen','Resumen'],['present','Presentaciones'],['pedir','Pedir facturas'],['datos','Datos'],['contactos','Contactos'],['comprobantes','Comprobantes'],['docs','Documentos'],['venc','Vencimientos'],['imports','Importaciones']],cls=f.fresh?'dr in':'dr';f.fresh=false;
+  const T=[['resumen','Resumen'],['present','Presentaciones'],['pedir','Pedir facturas'],['datos','Datos'],['contactos','Contactos'],['comprobantes','Comprobantes'],['docs','Documentos'],['informes','Informes tributarios'],['venc','Vencimientos'],['imports','Importaciones']],cls=f.fresh?'dr in':'dr';f.fresh=false;
   return `<div class="ov" onclick="cerrarFicha()"><aside class="${cls}" onclick="event.stopPropagation()" role="dialog" aria-label="Ficha de ${esc(c.razon_social)}">
   <div class="drh"><div class="term big">${c.cuit.slice(-1)}<small>termina en</small></div><div style="flex:1;min-width:0"><h2>${esc(c.razon_social)}</h2><div style="color:var(--mut)">${c.nombre_comercial?esc(c.nombre_comercial)+'<br>':''}CUIT ${cuitF(c.cuit)}${c.active===false?' (inactivo)':''}</div></div><div class="row" style="gap:8px"><button class="b" onclick="abrirArca()">Entrar a ARCA</button><button class="g" onclick="cerrarFicha()">Cerrar</button></div></div>
   <div class="tabs">${T.map(([k,t])=>`<button class="${f.tab===k?'on':''}" onclick="selTab('${k}')">${t}</button>`).join('')}</div>
@@ -781,6 +781,7 @@ function vFicha(){
 function fVencRows(c,max,dias){return ui.dl.filter(d=>{const n=diasHasta(d.fecha);return n>=-7&&n<=dias&&delC(d,c)}).slice(0,max)}
 function fTab(c,f){
   const ed=canEdit();
+  if(f.tab==='informes')return vInformes(c,f);
   if(f.tab==='resumen'){
     const s=sumSt(f.per);
     return `<div class="grid">${[['Comprobantes',s.tot],['Sin factura recibida',s.fal],['Liquidados sin factura',s.sin],['Por revisar',s.rev]].map(([t,n])=>`<div class="card kpi"><b>${n}</b><span>${t}</span></div>`).join('')}</div>
@@ -2024,6 +2025,719 @@ async function pdfTexto(file){
   const doc=await pdfjsLib.getDocument({data:new Uint8Array(await file.arrayBuffer())}).promise,lineas=[];
   for(let n=1;n<=doc.numPages&&n<=15;n++){const pg=await doc.getPage(n),tc=await pg.getTextContent();const r=liqLineas(tc.items);lineas.push(...r);if(n===1)lineas.items=r.items}
   return lineas;
+}
+
+
+/* ===== Informes tributarios: lectura de archivos, estados y consolidación (funciones puras, sin pantalla) =====
+   Regla de oro: no se inventa nada. Un dato que el archivo no trae queda en null ("No informado"). */
+const INF_IMP=[['IVA','IVA'],['IIBB_CBA','Ingresos Brutos Córdoba'],['IIBB_CM','Ingresos Brutos Convenio Multilateral'],['IIBB_OTRA','Ingresos Brutos otra jurisdicción'],['GANANCIAS','Ganancias'],['BIENES_PERS','Bienes Personales'],['MONOTRIBUTO','Monotributo'],['AUTONOMOS','Autónomos'],['SEG_SOCIAL','Seguridad social / F.931'],['RETPER','Retenciones y percepciones'],['INTERNOS','Impuestos internos'],['MUNICIPAL','Tasas municipales'],['INFO','Regímenes de información'],['OTRO','Otro / sin identificar']];
+const INF_IMP_N=Object.fromEntries(INF_IMP);
+const INF_CAT={obligacion:'Obligación o deuda',pago:'Pago registrado',saldo_favor:'Saldo a favor',ddjj:'Declaración jurada o posición'};
+const INF_TIPOS_DOC={deuda:'Detalle de deuda u obligaciones',cuenta_corriente:'Cuenta corriente tributaria (movimientos)',ddjj:'Declaraciones juradas o posición del impuesto',pagos:'Pagos',pdf:'PDF de ARCA (lectura asistida)',manual:'Carga manual',otro:'Otro documento'};
+const infN=s=>norm(s);
+const infP2=n=>String(n).padStart(2,'0');
+const infR2=n=>Math.round((n+Number.EPSILON)*100)/100;
+
+/** Número en formato argentino o inglés; entre paréntesis o con guion final es negativo. Devuelve null si no es un número. */
+function infNum(v){
+  if(v===null||v===undefined||v==='')return null;
+  if(typeof v==='number')return isFinite(v)?v:null;
+  let s=String(v).trim().replace(/[$\s]|ARS|USD|U\$S/gi,'');if(!s)return null;
+  let neg=false;if(/^\(.*\)$/.test(s)){neg=true;s=s.slice(1,-1)}if(/-$/.test(s)){neg=true;s=s.slice(0,-1)}if(/^-/.test(s)){neg=!neg?true:neg;s=s.slice(1)}
+  let n;
+  if(/^\d{1,3}(\.\d{3})*,\d+$/.test(s))n=Number(s.replace(/\./g,'').replace(',','.'));
+  else if(/^\d{1,3}(\.\d{3})+$/.test(s))n=Number(s.replace(/\./g,''));
+  else if(/^\d{1,3}(,\d{3})*\.\d+$/.test(s))n=Number(s.replace(/,/g,''));
+  else if(/^\d+,\d+$/.test(s))n=Number(s.replace(',','.'));
+  else if(/^\d{1,3}(,\d{3})+$/.test(s))n=Number(s.replace(/,/g,''));
+  else if(/^\d+(\.\d+)?$/.test(s))n=Number(s);
+  else return null;
+  return isFinite(n)?(neg?-n:n):null;
+}
+/** Fecha dd/mm/aaaa, dd/mm/aa, aaaa-mm-dd o número de Excel. */
+function infFecha(v){
+  if(v===null||v===undefined||v==='')return null;
+  if(typeof v==='number')return pDate(v);
+  const s=String(v).trim(),m=s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2})(?!\d)/);
+  if(m)return vDate(2000+Number(m[3]),Number(m[2]),Number(m[1]));
+  return pDate(s);
+}
+const INF_MES={ene:1,feb:2,mar:3,abr:4,may:5,jun:6,jul:7,ago:8,sep:9,set:9,oct:10,nov:11,dic:12};
+/** Período fiscal: mensual (2026-09-01) o anual (2025-01-01). */
+function infPeriodo(v){
+  if(v===null||v===undefined||v==='')return null;
+  const mes=(y,m)=>(m>=1&&m<=12&&y>=1990&&y<=2100)?{p:`${y}-${infP2(m)}-01`,t:'m',txt:`${y}-${infP2(m)}`}:null;
+  if(typeof v==='number'){
+    if(v>=36526&&v<=60000){const d=pDate(v);return d?mes(Number(d.slice(0,4)),Number(d.slice(5,7))):null}
+    if(v>=11990&&v<=122100&&Number.isInteger(v)&&v%10000>=1990&&v%10000<=2100&&Math.floor(v/10000)>=1&&Math.floor(v/10000)<=12)return mes(v%10000,Math.floor(v/10000));
+    if(v>=199001&&v<=210012)return mes(Math.floor(v/100),v%100);
+    if(v>=1990&&v<=2100)return {p:`${v}-01-01`,t:'a',txt:String(v)};
+    return null;
+  }
+  const s=String(v).trim(),n=infN(s);let m;
+  if((m=s.match(/^(\d{4})[-\/.](\d{1,2})$/)))return mes(+m[1],+m[2]);
+  if((m=s.match(/^(\d{1,2})[-\/.](\d{4})$/)))return mes(+m[2],+m[1]);
+  if((m=s.match(/^(\d{4})(\d{2})$/))&&mes(+m[1],+m[2]))return mes(+m[1],+m[2]);
+  if((m=s.match(/^(\d{2})(\d{4})$/))&&mes(+m[2],+m[1]))return mes(+m[2],+m[1]);
+  if((m=s.match(/^(\d{4})-(\d{2})-(\d{2})/)))return mes(+m[1],+m[2]);
+  if((m=s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})/)))return mes(+m[3],+m[2]);
+  if((m=n.match(/^(ene|feb|mar|abr|may|jun|jul|ago|sep|set|oct|nov|dic)\w*\s*(\d{2}|\d{4})$/))){const y=m[2].length===2?2000+ +m[2]:+m[2];return mes(y,INF_MES[m[1]])}
+  if((m=n.match(/(anual|ejercicio|ano fiscal|periodo fiscal)?\D*\b(19|20)(\d{2})\b/))&&/anual|ejercicio|ano fiscal/.test(n))return {p:`${m[2]}${m[3]}-01-01`,t:'a',txt:m[2]+m[3]};
+  if((m=s.match(/^(\d{4})$/)))return {p:`${m[1]}-01-01`,t:'a',txt:m[1]};
+  return null;
+}
+/** Reconoce el impuesto por su nombre. Si no se reconoce, queda "Otro / sin identificar" (no se adivina por el código). */
+function infImpuesto(txt){
+  const n=infN(txt);if(!n)return 'OTRO';
+  if(/convenio multilateral|\bc m\b|\bcm0?5\b/.test(n))return 'IIBB_CM';
+  if(/ingresos brutos|\biibb\b|\bdgr\b/.test(n))return /cordoba|\bcba\b/.test(n)?'IIBB_CBA':(/convenio/.test(n)?'IIBB_CM':'IIBB_OTRA');
+  if(/valor agregado|\biva\b/.test(n)&&!/retenc|percepc/.test(n))return 'IVA';
+  if(/retenc|percepc/.test(n))return 'RETPER';
+  if(/ganancia/.test(n))return 'GANANCIAS';
+  if(/bienes personales/.test(n))return 'BIENES_PERS';
+  if(/monotributo/.test(n))return 'MONOTRIBUTO';
+  if(/autonomo/.test(n))return 'AUTONOMOS';
+  if(/seguridad social|f\s?931|\bsuss\b|sicoss|contribuciones patronales|cargas sociales|empleador/.test(n))return 'SEG_SOCIAL';
+  if(/internos/.test(n))return 'INTERNOS';
+  if(/tasa|municipal|comercio e industria|\bdrei\b/.test(n))return 'MUNICIPAL';
+  if(/regimen de informacion|informativo|informacion/.test(n))return 'INFO';
+  return 'OTRO';
+}
+const INF_ALIAS={
+  impuesto:['impuesto','tributo','descripcion impuesto','denominacion impuesto','obligacion','impuesto concepto','impuesto/concepto','impuesto regimen'],
+  codigo:['codigo impuesto','cod impuesto','cod imp','codigo de impuesto','impuesto codigo','nro impuesto','cod'],
+  concepto:['concepto','subconcepto','concepto subconcepto','descripcion','detalle','descripcion concepto'],
+  periodo:['periodo','periodo fiscal','per','mes','anio fiscal','ejercicio','periodo fiscal anio'],
+  vencimiento:['vencimiento','fecha vencimiento','fecha de vencimiento','fecha vto','vto','fecha de vto','fecha vto ','f vencimiento'],
+  presentacion:['fecha presentacion','fecha de presentacion','presentacion','fecha de presentacion ddjj','fecha presentada'],
+  original:['importe original','capital','importe','monto','impuesto determinado','importe determinado','deuda original','monto original','importe adeudado','impuesto a pagar','deuda capital'],
+  pagado:['pagado','importe pagado','pagos','pago','importe cancelado','cancelado','pagos realizados','total pagado'],
+  saldo:['saldo','saldo pendiente','saldo adeudado','saldo a pagar','saldo deudor','deuda pendiente','deuda','saldo de capital'],
+  resarcitorio:['interes resarcitorio','intereses resarcitorios','int resarcitorio','intereses resarcitorios ','interes','intereses'],
+  punitorio:['interes punitorio','intereses punitorios','int punitorio'],
+  total:['total','total adeudado','total deuda','importe total','total a pagar','deuda total','total actualizado'],
+  estado:['estado','situacion','estado obligacion','estado de la obligacion'],
+  jurisdiccion:['jurisdiccion','provincia','jur','cod jurisdiccion'],
+  moneda:['moneda'],
+  fecha:['fecha','fecha de movimiento','fecha movimiento','fecha de pago','fecha pago','fecha de acreditacion','fecha operacion'],
+  debito:['debito','debe','importe debito','importe debe'],
+  credito:['credito','haber','importe credito','importe haber'],
+  debito_fiscal:['debito fiscal','total debito fiscal'],
+  credito_fiscal:['credito fiscal','total credito fiscal'],
+  saldo_tecnico:['saldo tecnico','saldo tecnico a favor','saldo tecnico a favor del responsable','saldo tecnico a favor del contribuyente','saldo tecnico del periodo'],
+  saldo_libre:['saldo de libre disponibilidad','libre disponibilidad','saldo libre disp','saldo libre disponibilidad'],
+  retenciones:['retenciones','retenciones y percepciones','retenciones percepciones computadas','retenciones computadas','retenciones sufridas'],
+  percepciones:['percepciones','percepciones computadas','percepciones sufridas'],
+  pagos_cuenta:['pagos a cuenta','pagos a cuenta y otros','otros pagos a cuenta'],
+  saldo_anterior:['saldo anterior','saldo periodo anterior','saldo tecnico periodo anterior','saldo de periodos anteriores'],
+  recaudaciones:['recaudaciones bancarias','recaudacion bancaria','sircreb','recaudaciones'],
+  base:['base imponible','base imponible declarada','base'],
+  alicuota:['alicuota','alicuota aplicada','alicuota %'],
+  coeficiente:['coeficiente','coeficiente unificado','coeficiente de distribucion'],
+  resultado:['resultado impositivo','resultado fiscal','resultado impositivo del ejercicio'],
+  anticipos:['anticipos','anticipos ingresados','anticipos computados'],
+  regimen:['regimen','tipo de contribuyente','categoria','tipo contribuyente']
+};
+const INF_NUM_EXTRA=['debito_fiscal','credito_fiscal','saldo_tecnico','saldo_libre','retenciones','percepciones','pagos_cuenta','saldo_anterior','recaudaciones','base','alicuota','coeficiente','resultado','anticipos'];
+function infCabeceras(row){const m={};(row||[]).forEach((c,j)=>{const k=infN(c);if(!k)return;for(const [f,al] of Object.entries(INF_ALIAS))if(al.map(infN).includes(k)&&m[f]===undefined){m[f]=j;break}});return m}
+/** Busca la fila de títulos entre las primeras 40 filas (la que más columnas reconoce, con al menos 2). */
+function infDetectar(rows){
+  let best=null;
+  for(let i=0;i<Math.min(rows.length,40);i++){const m=infCabeceras(rows[i]),n=Object.keys(m).length;if(n>=2&&(m.impuesto!==undefined||m.periodo!==undefined||m.concepto!==undefined)&&(!best||n>best.n))best={h:i,map:m,n}}
+  return best;
+}
+function infTipoDoc(map){
+  if(map.debito_fiscal!==undefined||map.saldo_tecnico!==undefined||(map.base!==undefined&&map.alicuota!==undefined)||map.presentacion!==undefined&&map.original!==undefined&&map.saldo===undefined)return 'ddjj';
+  if(map.debito!==undefined&&map.credito!==undefined)return 'cuenta_corriente';
+  if(map.pagado!==undefined&&map.saldo===undefined&&map.original===undefined)return 'pagos';
+  return 'deuda';
+}
+/** Estado de cada registro a partir de reglas verificables. Lo que no se puede asegurar queda "Pendiente de verificar". */
+function infEstado(it,hoy){
+  const sal=it.saldo,ven=it.vencimiento,inf=infN(it.estado_informado||'');
+  if(it.categoria==='pago')return {k:'pago',t:'Pago registrado'};
+  if(it.categoria==='saldo_favor')return {k:'favor',t:'Saldo a favor'};
+  if(it.categoria==='ddjj'){
+    if(it.fecha_presentacion)return {k:'presentada',t:'Presentada'};
+    if(/present|aceptad|rectific/.test(inf)&&!/no present|sin present|omis|falta/.test(inf))return {k:'presentada',t:'Presentada'};
+    if(/no present|sin present|omis|falta de present/.test(inf)&&ven&&ven<hoy)return {k:'ddjj_vencida',t:'Vencida sin presentación confirmada'};
+    return {k:'verificar',t:'Pendiente de verificar'};
+  }
+  if(sal===null||sal===undefined)return {k:'verificar',t:'Pendiente de verificar'};
+  if(sal<=0.005)return {k:'sin_saldo',t:'Sin saldo pendiente'};
+  if(!ven)return {k:'verificar',t:'Pendiente de verificar'};
+  return ven<hoy?{k:'vencida',t:'Vencida'}:{k:'no_vencida',t:'No vencida'};
+}
+function infKey(it){
+  const base=[it.categoria,it.impuesto,it.codigo||'',infN(it.concepto||''),it.periodo||it.periodo_txt||'',infN(it.jurisdiccion||''),it.moneda||'ARS'];
+  if(it.categoria==='pago')base.push((it.datos&&it.datos.fecha_pago)||it.fecha_pago||it.vencimiento||'',it.importe_pagado===null||it.importe_pagado===undefined?'':infR2(it.importe_pagado));
+  return base.join('|');
+}
+const INF_CAMPOS_NUM=['importe_original','importe_pagado','saldo','int_resarcitorio','int_punitorio','total'];
+const infIgual=(a,b)=>INF_CAMPOS_NUM.every(k=>{const x=a[k],y=b[k];return (x===null||x===undefined)&&(y===null||y===undefined)||(x!==null&&x!==undefined&&y!==null&&y!==undefined&&Math.abs(Number(x)-Number(y))<0.005)});
+function infFila(r,map,tipoDoc,ctx){
+  const g=f=>map[f]===undefined?undefined:r[map[f]];
+  const impTxt=String(g('impuesto')??'').trim(),concepto=String(g('concepto')??'').trim()||null,per=infPeriodo(g('periodo'));
+  const it={categoria:tipoDoc==='pagos'?'pago':tipoDoc==='ddjj'?'ddjj':'obligacion',impuesto:impTxt?infImpuesto(impTxt+(g('jurisdiccion')?' '+g('jurisdiccion'):'')):infImpuesto(concepto||''),impuesto_txt:impTxt||null,codigo:g('codigo')!==undefined&&String(g('codigo')).trim()!==''?String(g('codigo')).trim():null,concepto,jurisdiccion:g('jurisdiccion')!==undefined&&String(g('jurisdiccion')).trim()!==''?String(g('jurisdiccion')).trim():null,
+    periodo:per?per.p:null,periodo_tipo:per?per.t:null,periodo_txt:per?per.txt:(g('periodo')!==undefined&&String(g('periodo')).trim()!==''?String(g('periodo')).trim():null),
+    vencimiento:infFecha(g('vencimiento')),fecha_presentacion:infFecha(g('presentacion')),importe_original:infNum(g('original')),importe_pagado:infNum(g('pagado')),saldo:infNum(g('saldo')),int_resarcitorio:infNum(g('resarcitorio')),int_punitorio:infNum(g('punitorio')),total:infNum(g('total')),
+    estado_informado:g('estado')!==undefined&&String(g('estado')).trim()!==''?String(g('estado')).trim():null,moneda:(()=>{const m=String(g('moneda')??'').trim().toUpperCase();return !m||m==='$'||m==='ARS'||m==='PES'||m==='PESOS'?'ARS':m})(),fecha_reporte:ctx.fechaReporte||null,datos:{},raw:{}};
+  if(tipoDoc==='pagos'){it.fecha_pago=infFecha(g('fecha'));if(it.importe_pagado===null)it.importe_pagado=it.importe_original;it.importe_original=null;if(it.fecha_pago)it.datos.fecha_pago=it.fecha_pago}
+  for(const f of INF_NUM_EXTRA){const v=infNum(g(f));if(v!==null)it.datos[f]=v}
+  if(g('regimen')!==undefined&&String(g('regimen')).trim())it.datos.regimen=String(g('regimen')).trim();
+  return it;
+}
+/** Convierte las filas de una tabla en registros. Cuenta corriente: agrupa los movimientos (débitos − créditos); no usa el saldo corrido. */
+function infItems(rows,h,map,tipoDoc,ctx){
+  ctx=ctx||{};const heads=(rows[h]||[]).map(x=>String(x??'').trim()),out=[],omit=[];
+  for(let i=h+1;i<rows.length;i++){
+    const r=rows[i]||[];if(r.every(c=>String(c??'').trim()===''))continue;
+    const txt=infN(r.join(' '));if(/^(total|totales|subtotal)\b/.test(txt.replace(/^\d+\s*/,''))||/\b(total general|total del reporte)\b/.test(txt)){omit.push(i+1);continue}
+    const it=infFila(r,map,tipoDoc==='cuenta_corriente'?'deuda':tipoDoc,ctx);
+    if(tipoDoc==='cuenta_corriente'){it._deb=infNum(r[map.debito])||0;it._cre=infNum(r[map.credito])||0;it._fmov=map.fecha!==undefined?infFecha(r[map.fecha]):null}
+    const util=it.impuesto_txt||it.concepto||it.periodo||INF_CAMPOS_NUM.some(k=>it[k]!==null)||Object.keys(it.datos).length||(it._deb||it._cre);
+    if(!util){omit.push(i+1);continue}
+    heads.forEach((n,c)=>{if(n&&r[c]!==null&&r[c]!==undefined&&String(r[c]).trim()!=='')it.raw[n]=r[c]});it._fila=i+1;out.push(it);
+  }
+  if(tipoDoc!=='cuenta_corriente')return {items:out,omitidas:omit};
+  const g=new Map();
+  for(const it of out){const k=[it.impuesto,it.codigo||'',infN(it.concepto||''),it.periodo_txt||'',infN(it.jurisdiccion||''),it.moneda].join('|');let a=g.get(k);
+    if(!a){a={...it,importe_original:0,importe_pagado:0,saldo:null,raw:{movimientos:0},datos:{...it.datos,saldo_calculado:true,nota_calculo:'Calculado con los movimientos de la cuenta corriente: débitos menos créditos'},_filas:[]};g.set(k,a)}
+    a.importe_original=infR2(a.importe_original+it._deb);a.importe_pagado=infR2(a.importe_pagado+it._cre);a.raw.movimientos++;a._filas.push(it._fila);
+    if(!a.vencimiento&&it.vencimiento)a.vencimiento=it.vencimiento;if(it._fmov&&(!a.datos.ultimo_movimiento||it._fmov>a.datos.ultimo_movimiento))a.datos.ultimo_movimiento=it._fmov}
+  const res=[];
+  for(const a of g.values()){a.saldo=infR2(a.importe_original-a.importe_pagado);
+    if(a.saldo<-0.005){a.categoria='saldo_favor';a.importe_original=null;a.importe_pagado=null;a.saldo=Math.abs(a.saldo);a.estado_informado='Créditos mayores a los débitos en la cuenta corriente'}
+    delete a._deb;delete a._cre;delete a._fmov;a._fila=a._filas[0];res.push(a)}
+  return {items:res,omitidas:omit};
+}
+/** PDF: lectura conservadora. Una línea con período y al menos un importe se propone como fila para revisar; nunca se da por buena. */
+function infItemsPdf(lineas,ctx){
+  const out=[];let tit='';const reP=/(?<!\d)(0?[1-9]|1[0-2])[\/\-](20\d{2})(?!\d)|(?<!\d)(20\d{2})(0[1-9]|1[0-2])(?!\d)/;
+  for(const l of lineas){
+    const n=infN(l),ms=liqMontos(l),pm=l.match(reP);
+    if(!pm||!ms.length){if(!ms.length&&l.length<90&&/(iva|ganancias|ingresos brutos|monotributo|seguridad social|bienes personales|autonomos|retenciones|percepciones)/.test(n))tit=l;continue}
+    const per=infPeriodo(pm[1]?`${pm[2]}-${pm[1]}`:`${pm[3]}${pm[4]}`),antes=l.slice(0,pm.index).replace(/[\d.,$\/\-\s]+$/,'').trim(),imp=antes&&infImpuesto(antes)!=='OTRO'?antes:tit||antes;
+    const fechas=[...l.matchAll(/(\d{1,2})\/(\d{1,2})\/(\d{4})/g)].map(x=>vDate(+x[3],+x[2],+x[1])).filter(Boolean);
+    const montos=ms.filter(v=>!(Math.abs(v)<1&&v!==0));
+    const it={categoria:'obligacion',impuesto:infImpuesto(imp),impuesto_txt:imp||null,codigo:null,concepto:null,jurisdiccion:null,periodo:per?per.p:null,periodo_tipo:per?per.t:null,periodo_txt:per?per.txt:null,vencimiento:fechas[0]||null,fecha_presentacion:null,
+      importe_original:montos.length?montos[0]:null,importe_pagado:null,saldo:montos.length>1?montos[montos.length-1]:null,int_resarcitorio:null,int_punitorio:null,total:null,estado_informado:null,moneda:'ARS',fecha_reporte:ctx&&ctx.fechaReporte||null,datos:{},raw:{linea:l,montos_detectados:montos},_revisar:true};
+    out.push(it);
+  }
+  return {items:out,omitidas:[]};
+}
+/** Compara los registros nuevos con los vigentes: nuevo, igual, difiere o repetido dentro del archivo. */
+function infComparar(items,vigentes){
+  const mapa=new Map();vigentes.forEach(v=>{const k=v.dedupe_key||infKey(v);if(!mapa.has(k))mapa.set(k,v)});const vistos=new Set();
+  items.forEach(it=>{it.dedupe_key=infKey(it);const e=mapa.get(it.dedupe_key);
+    if(vistos.has(it.dedupe_key)){it._dup='repetida';it._acc='omitir'}
+    else if(!e){it._dup='nuevo';it._acc='agregar'}
+    else if(infIgual(it,e)){it._dup='igual';it._acc='omitir';it._exId=e.id}
+    else{it._dup='difiere';it._acc='omitir';it._exId=e.id;it._ex=e}
+    vistos.add(it.dedupe_key)});
+  return items;
+}
+const infSum=(a,f)=>a.reduce((s,x)=>s+(Number(typeof f==='function'?f(x):x[f])||0),0);
+const infDias=(iso,hoy)=>Math.round((Date.UTC(+iso.slice(0,4),+iso.slice(5,7)-1,+iso.slice(8,10))-Date.UTC(+hoy.slice(0,4),+hoy.slice(5,7)-1,+hoy.slice(8,10)))/864e5);
+/** Indicadores. Solo cuenta pesos; otras monedas se informan aparte. Capital = saldo informado; total = el del archivo o saldo + intereses. */
+function infResumen(items,hoy,docs){
+  const vig=items.filter(x=>x.vigente!==false),ars=vig.filter(x=>(x.moneda||'ARS')==='ARS'),otras=vig.filter(x=>(x.moneda||'ARS')!=='ARS');
+  vig.forEach(x=>{x._e=infEstado(x,hoy)});
+  const obl=ars.filter(x=>x.categoria==='obligacion'),conSaldo=obl.filter(x=>x.saldo>0.005),venc=conSaldo.filter(x=>x._e.k==='vencida'),nov=conSaldo.filter(x=>x._e.k==='no_vencida'),ver=conSaldo.filter(x=>x._e.k==='verificar');
+  const totalDe=x=>x.total!==null&&x.total!==undefined?Number(x.total):(Number(x.saldo)||0)+(Number(x.int_resarcitorio)||0)+(Number(x.int_punitorio)||0);
+  const favor=ars.filter(x=>x.categoria==='saldo_favor'),prox=conSaldo.filter(x=>x.vencimiento&&x.vencimiento>=hoy&&infDias(x.vencimiento,hoy)<=30);
+  const fechas=[...vig.map(x=>x.fecha_reporte).filter(Boolean),...(docs||[]).map(d=>d.doc_date).filter(Boolean)].sort();
+  const hayReporteDeuda=(docs||[]).some(d=>['deuda','cuenta_corriente','pdf'].includes(d.doc_type))||obl.length>0;
+  return {n:vig.length,hayReporteDeuda,otras:otras.length,
+    capital:infR2(infSum(conSaldo,'saldo')),intereses:infR2(infSum(conSaldo,x=>(Number(x.int_resarcitorio)||0)+(Number(x.int_punitorio)||0))),total:infR2(infSum(conSaldo,totalDe)),
+    vencidaTotal:infR2(infSum(venc,totalDe)),noVencidaTotal:infR2(infSum(nov,totalDe)),verificarTotal:infR2(infSum(ver,totalDe)),
+    cantPend:conSaldo.length,cantVenc:venc.length,cantNoVenc:nov.length,cantVerif:ver.length,cantProx:prox.length,prox:prox.sort((a,b)=>a.vencimiento<b.vencimiento?-1:1),
+    favor:infR2(infSum(favor,x=>x.saldo!==null&&x.saldo!==undefined?x.saldo:x.importe_original)),cantFavor:favor.length,ultima:fechas.length?fechas[fechas.length-1]:null,totalDe,
+    sinIntereses:conSaldo.filter(x=>x.int_resarcitorio===null&&x.int_punitorio===null).length};
+}
+function infPorImpuesto(items,hoy){
+  const r=infResumen(items,hoy,[]),vig=items.filter(x=>x.vigente!==false&&(x.moneda||'ARS')==='ARS'),m=new Map();
+  for(const it of vig){const k=it.impuesto+(it.jurisdiccion&&/^IIBB/.test(it.impuesto)?'|'+it.jurisdiccion:'');let a=m.get(k);if(!a){a={k,impuesto:it.impuesto,jur:/^IIBB/.test(it.impuesto)?it.jurisdiccion:null,capital:0,intereses:0,total:0,venc:0,pagos:0,favor:0,cant:0};m.set(k,a)}
+    if(it.categoria==='obligacion'&&it.saldo>0.005){a.capital+=it.saldo;a.intereses+=(Number(it.int_resarcitorio)||0)+(Number(it.int_punitorio)||0);a.total+=r.totalDe(it);a.cant++;if(it._e&&it._e.k==='vencida')a.venc++}
+    if(it.categoria==='pago')a.pagos+=Number(it.importe_pagado)||0;if(it.categoria==='saldo_favor')a.favor+=Number(it.saldo!==null&&it.saldo!==undefined?it.saldo:it.importe_original)||0}
+  return [...m.values()].map(a=>({...a,capital:infR2(a.capital),intereses:infR2(a.intereses),total:infR2(a.total),pagos:infR2(a.pagos),favor:infR2(a.favor)})).sort((a,b)=>b.total-a.total);
+}
+function infPorPeriodoDeuda(items,hoy){
+  const r=infResumen(items,hoy,[]),m=new Map();
+  for(const it of items.filter(x=>x.vigente!==false&&(x.moneda||'ARS')==='ARS'&&x.categoria==='obligacion'&&x.saldo>0.005)){const k=it.periodo_txt||'Sin período';let a=m.get(k);if(!a){a={k,periodo:it.periodo,capital:0,intereses:0,total:0,cant:0};m.set(k,a)}a.capital+=it.saldo;a.intereses+=(Number(it.int_resarcitorio)||0)+(Number(it.int_punitorio)||0);a.total+=r.totalDe(it);a.cant++}
+  return [...m.values()].map(a=>({...a,capital:infR2(a.capital),intereses:infR2(a.intereses),total:infR2(a.total)})).sort((a,b)=>(b.periodo||'')>(a.periodo||'')?1:-1);
+}
+/** Agrupa por impuesto, jurisdicción y período: declaración jurada, deudas y pagos del mismo período. */
+function infPeriodos(items,imps,hoy){
+  const m=new Map();
+  for(const it of items.filter(x=>x.vigente!==false&&imps.includes(x.impuesto)&&(x.moneda||'ARS')==='ARS')){
+    const k=(it.jurisdiccion||'')+'|'+(it.periodo||it.periodo_txt||'sin período');let r=m.get(k);
+    if(!r){r={k,jur:it.jurisdiccion||'',periodo:it.periodo,tipo:it.periodo_tipo,txt:it.periodo_txt,ddjj:[],obl:[],pagos:[],favor:[]};m.set(k,r)}
+    ({ddjj:r.ddjj,obligacion:r.obl,pago:r.pagos,saldo_favor:r.favor})[it.categoria].push(it)}
+  const rows=[...m.values()].map(r=>{
+    const d=r.ddjj[0]||null,dd=d?d.datos||{}:{},pag=r.pagos.length?infR2(infSum(r.pagos,'importe_pagado')):null,pagCta=r.obl.some(o=>o.importe_pagado!==null&&o.importe_pagado!==undefined)?infR2(infSum(r.obl,'importe_pagado')):null;
+    const deuda=r.obl.length?infR2(infSum(r.obl.filter(o=>o.saldo>0.005),'saldo')):null,int=r.obl.length?infR2(infSum(r.obl.filter(o=>o.saldo>0.005),o=>(Number(o.int_resarcitorio)||0)+(Number(o.int_punitorio)||0))):null;
+    const est=d?infEstado(d,hoy):null,incons=[];
+    const det=d&&d.importe_original!==null&&d.importe_original!==undefined?d.importe_original:null;
+    if(det!==null&&det>0.005&&(pag!==null||pagCta!==null)&&Math.max(pag||0,pagCta||0)<det-1&&!(deuda>0.005))incons.push('Pagos informados menores al importe determinado y sin deuda registrada: verificar en ARCA');
+    if(det!==null&&det>0.005&&pag===null&&pagCta===null&&!(deuda>0.005))incons.push('Importe determinado sin pagos ni deuda registrados en los documentos cargados');
+    if(dd.debito_fiscal!==undefined&&dd.credito_fiscal!==undefined&&dd.saldo_tecnico!==undefined&&dd.saldo_anterior===undefined&&dd.retenciones===undefined&&dd.pagos_cuenta===undefined&&Math.abs((dd.debito_fiscal-dd.credito_fiscal)-Math.abs(dd.saldo_tecnico))>1.5&&false)incons.push('');
+    if(r.obl.some(o=>o.saldo>0.005&&o.vencimiento&&o.vencimiento<hoy)&&d&&est&&est.k==='presentada'&&det!==null&&det<=0.005)incons.push('Declaración en cero con deuda registrada para el mismo período: verificar');
+    return {...r,d,dd,est,det,pag,pagCta,deuda,int,incons};
+  });
+  return rows.sort((a,b)=>((b.periodo||'')>(a.periodo||'')?1:(b.periodo||'')<(a.periodo||'')?-1:0)||a.jur.localeCompare(b.jur));
+}
+/** Qué impuestos corresponden al cliente según su perfil (no se marca como faltante lo que no le corresponde). */
+function infPerfil(c){
+  const i=(c&&c.impuestos)||[],r=[];
+  if(i.includes('IVA'))r.push('IVA');
+  if(i.includes('IIBB'))r.push('IIBB_CBA');if(i.includes('CM'))r.push('IIBB_CM');
+  if(i.includes('F931'))r.push('SEG_SOCIAL');
+  if(i.includes('GAN_ANT')||i.includes('GAN_DDJJ')||i.includes('GANANCIAS_PH'))r.push('GANANCIAS');
+  if(i.includes('BP')||i.includes('GANANCIAS_PH'))r.push('BIENES_PERS');
+  if(i.includes('MONOTRIBUTO'))r.push('MONOTRIBUTO');
+  return [...new Set(r)];
+}
+/** Cobertura: para cada impuesto del perfil, qué meses (últimos n) tienen información cargada y cuáles no. */
+function infCobertura(items,perfil,hoy,n){
+  const meses=[];let y=+hoy.slice(0,4),m=+hoy.slice(5,7);for(let i=0;i<n;i++){m--;if(m<1){m=12;y--}meses.unshift(`${y}-${infP2(m)}`)}
+  const filas=perfil.filter(k=>k!=='GANANCIAS'&&k!=='BIENES_PERS').map(k=>({imp:k,meses:meses.map(mm=>({mes:mm,info:items.some(x=>x.vigente!==false&&(x.impuesto===k||(k==='IIBB_CBA'&&x.impuesto==='IIBB_OTRA'&&false))&&x.periodo&&x.periodo.slice(0,7)===mm)}))}));
+  return {meses,filas};
+}
+/** Diferencias entre dos cortes (listas compactas). Lo que no aparece en el último no se da por cancelado. */
+function infSnapshot(items){return items.filter(x=>x.vigente!==false).map(x=>({k:x.dedupe_key||infKey(x),i:x.impuesto,p:x.periodo_txt||null,c:x.categoria,o:x.importe_original,g:x.importe_pagado,s:x.saldo,r:x.int_resarcitorio,u:x.int_punitorio,t:x.total,m:x.moneda||'ARS'}))}
+function infDiff(a,b){
+  const A=new Map(a.map(x=>[x.k,x])),B=new Map(b.map(x=>[x.k,x])),nuevos=[],noEst=[],cambios=[],per=[];
+  for(const [k,x] of B){const y=A.get(k);if(!y)nuevos.push(x);else{const d=['o','g','s','r','u','t'].some(f=>Math.abs((Number(x[f])||0)-(Number(y[f])||0))>0.005||((x[f]===null||x[f]===undefined)!==(y[f]===null||y[f]===undefined)));if(d)cambios.push({k,i:x.i,p:x.p,c:x.c,antes:y,ahora:x})}}
+  for(const [k,y] of A)if(!B.has(k))noEst.push(y);
+  const pa=new Set(a.map(x=>x.i+'|'+x.p)),pb=new Set(b.map(x=>x.i+'|'+x.p));for(const k of pb)if(!pa.has(k))per.push(k);
+  return {nuevos,noEst,cambios,periodosNuevos:per};
+}
+
+/* ===== Informes tributarios: pantalla, carga, panel e historial ===== */
+const INF_ESTADO_CLS={vencida:'red',no_vencida:'blu',verificar:'amb',sin_saldo:'gry',pago:'grn',favor:'grn',presentada:'grn',ddjj_vencida:'red'};
+const infTag=e=>`<span class="tag" style="background:var(--${INF_ESTADO_CLS[e.k]||'gry'});color:var(--${INF_ESTADO_CLS[e.k]||'gry'}t)">${esc(e.t)}</span>`;
+const infM=v=>v===null||v===undefined?'<span class="s">No informado</span>':esc(money(v));
+const infMt=v=>v===null||v===undefined?'No informado':money(v);
+const infPer=it=>it.periodo_txt?(it.periodo_tipo==='m'?it.periodo_txt.slice(5)+'/'+it.periodo_txt.slice(0,4):it.periodo_txt):'No informado';
+const infFD=d=>d?fAR(d):'No informado';
+const infImpN=it=>INF_IMP_N[it.impuesto]||it.impuesto;
+const INF_SECC=[['general','Resumen'],['iva','IVA'],['iibb','Ingresos Brutos'],['gan','Ganancias'],['otros','Otros impuestos'],['ddjj','Declaraciones juradas'],['hist','Historial y comparación']];
+function infEstado0(){return {cid:null,loading:true,docs:[],items:[],notes:{observaciones:'',tareas:[]},reports:[],sec:'general',filt:{imp:'',per:'',est:'',q:'',ord:'venc'},up:null,det:null,cmp:{a:'',b:''},busy:false}}
+async function infCargar(cid,keep){
+  const I=ui.inf=keep&&ui.inf&&ui.inf.cid===cid?ui.inf:{...infEstado0(),cid};I.loading=true;draw();
+  try{
+    const [d,it,n,r]=await Promise.all([fetchAll((a,b)=>sb.from('tax_docs').select('*').eq('client_id',cid).order('uploaded_at',{ascending:false}).range(a,b)),fetchAll((a,b)=>sb.from('tax_items').select('*').eq('client_id',cid).order('created_at').range(a,b)),sb.from('tax_client_notes').select('*').eq('client_id',cid).maybeSingle(),fetchAll((a,b)=>sb.from('tax_reports').select('*').eq('client_id',cid).order('generated_at',{ascending:false}).range(a,b))]);
+    if(n&&n.error)throw n.error;
+    I.docs=d;I.items=it;I.reports=r;I.notes=n&&n.data?{observaciones:n.data.observaciones||'',tareas:Array.isArray(n.data.tareas)?n.data.tareas:[]}:{observaciones:'',tareas:[]};I.error=null;
+  }catch(e){I.error='No se pudo cargar el módulo: '+errTxt(e)}
+  I.loading=false;draw();
+}
+/* ---------- carga de archivos ---------- */
+const infSha=async buf=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',buf))].map(x=>x.toString(16).padStart(2,'0')).join('');
+async function infElegir(files){
+  const I=ui.inf;if(!I||!files||!files.length)return;if(!canEdit()){flash('No tenés permiso para cargar documentación.','err');return draw()}
+  const lista=[...files],ok=[];
+  for(const f of lista){
+    const ext=(f.name.split('.').pop()||'').toLowerCase();
+    if(!['pdf','xlsx','xls','csv'].includes(ext)){flash(`"${f.name}": formato no admitido. Usá PDF, Excel (xlsx o xls) o CSV.`,'err');continue}
+    if(f.size===0){flash(`"${f.name}" está vacío.`,'err');continue}
+    if(f.size>25*1024*1024){flash(`"${f.name}" pesa más de 25 MB.`,'err');continue}
+    ok.push(f)}
+  if(!ok.length)return draw();
+  // un archivo por vez para poder revisarlo; el resto queda en cola
+  I.cola=ok.slice(1);await infAnalizar(ok[0]);
+}
+async function infAnalizar(f){
+  const I=ui.inf;I.busy=true;draw();
+  const up={file:f,nombre:f.name,ext:(f.name.split('.').pop()||'').toLowerCase(),items:[],omit:[],avisos:[],tipoDoc:'otro',fechaReporte:'',rows:null,h:null,map:null,error:null,hash:null};
+  try{
+    const buf=await f.arrayBuffer();up.hash=await infSha(buf);const mg=new Uint8Array(buf.slice(0,4));
+    const igual=I.docs.find(d=>d.file_sha256===up.hash);if(igual)up.avisos.push(`Este mismo archivo ya se cargó el ${fAR(igual.uploaded_at.slice(0,10))} ("${igual.file_name}"). Los datos que ya existen se marcan como repetidos y no se duplican.`);
+    if(up.ext==='pdf'){
+      const L=await pdfTexto(f);up.tipoDoc='pdf';
+      if(!L.length)up.error='No se pudo leer texto del PDF (parece una imagen escaneada). Cargá los datos manualmente.';
+      else{const r=infItemsPdf(L,{});up.items=r.items;up.lineas=L.length;up.avisos.push('La lectura de PDF es asistida: revisá cada fila antes de incorporarla.');if(!up.items.length)up.error='No se encontraron filas con período e importes en el PDF. Podés cargar los datos manualmente o usar el Excel/CSV del mismo reporte.'}
+      const fd=L.join(' ').match(/(\d{2}\/\d{2}\/\d{4})/);if(fd)up.fechaReporte=infFecha(fd[1])||'';
+    }else{
+      let rows;try{
+        if(up.ext==='xlsx'&&!(mg[0]===0x50&&mg[1]===0x4B))throw new Error('formato');
+        if(up.ext==='xls'&&!((mg[0]===0xD0&&mg[1]===0xCF)||(mg[0]===0x50&&mg[1]===0x4B)||mg[0]===0x3C||mg[0]===0xEF))throw new Error('formato');
+        if(up.ext==='csv'){const txt=new TextDecoder(/�/.test(new TextDecoder('utf-8').decode(buf).slice(0,4000))?'windows-1252':'utf-8').decode(buf).replace(/^﻿/,'');const sep=(txt.split('\n')[0].match(/;/g)||[]).length>=(txt.split('\n')[0].match(/,/g)||[]).length?';':',';rows=XLSX.utils.sheet_to_json(XLSX.read(txt,{type:'string',FS:sep,raw:true}).Sheets.Sheet1,{header:1,raw:true,defval:null})}
+        else{const wb=XLSX.read(buf,{type:'array'});up.hojas=wb.SheetNames;let best=null;for(const n of wb.SheetNames){const r=XLSX.utils.sheet_to_json(wb.Sheets[n],{header:1,raw:true,defval:null});const d=infDetectar(r);if(d&&(!best||d.n>best.d.n))best={r,d,n}}rows=best?best.r:XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,raw:true,defval:null});if(best&&wb.SheetNames.length>1)up.avisos.push(`Se leyó la hoja "${best.n}".`)}
+      }catch(e){up.error='No se pudo abrir el archivo: puede estar dañado o protegido con contraseña.'}
+      if(!up.error){
+        up.rows=rows;if(!rows||!rows.length||rows.every(r=>(r||[]).every(c=>c===null||String(c).trim()==='')))up.error='El archivo no tiene datos.';
+        else{const d=infDetectar(rows);if(d){up.h=d.h;up.map=d.map;infRearmar(up)}else{up.h=0;up.map={};up.avisos.push('No pude reconocer las columnas de este formato. Indicá abajo a qué corresponde cada columna.');up.mapear=true}}
+      }
+    }
+  }catch(e){up.error='No se pudo leer el archivo: '+errTxt(e)}
+  infMarcar(up);I.up=up;I.busy=false;draw();
+}
+function infRearmar(up){
+  up.tipoDoc=infTipoDoc(up.map);const r=infItems(up.rows,up.h,up.map,up.tipoDoc,{fechaReporte:up.fechaReporte||null});up.items=r.items;up.omit=r.omitidas;
+  if(!up.items.length)up.avisos.push('Con esas columnas no se encontraron filas utilizables.');
+  infMarcar(up);
+}
+function infMarcar(up){const man=up.items.map(i=>i._man?i._acc:null);infComparar(up.items,ui.inf.items.filter(x=>x.vigente));up.items.forEach((i,k)=>{if(man[k]&&(man[k]!=='reemplazar'||i._exId)){i._acc=man[k]}else i._man=false})}
+function infMapa(f,v){const up=ui.inf.up;if(v==='')delete up.map[f];else up.map[f]=Number(v);infRearmar(up);draw()}
+function infFilaTitulos(v){const up=ui.inf.up;up.h=Number(v)-1;up.map=infCabeceras(up.rows[up.h]);infRearmar(up);draw()}
+function infFechaRep(v){const up=ui.inf.up;up.fechaReporte=v;up.items.forEach(i=>i.fecha_reporte=v||null);draw()}
+function infTipoSet(v){const up=ui.inf.up;up.tipoDoc=v;if(up.rows){const r=infItems(up.rows,up.h,up.map,v,{fechaReporte:up.fechaReporte||null});up.items=r.items;up.omit=r.omitidas;infMarcar(up)}draw()}
+function infCelda(i,k,v){
+  const it=ui.inf.up.items[i];if(!it)return;
+  if(['importe_original','importe_pagado','saldo','int_resarcitorio','int_punitorio','total'].includes(k)){it[k]=v.trim()===''?null:infNum(v)}
+  else if(k==='vencimiento'||k==='fecha_presentacion'){it[k]=v.trim()===''?null:infFecha(v)}
+  else if(k==='periodo'){const p=infPeriodo(v.trim());if(p){it.periodo=p.p;it.periodo_tipo=p.t;it.periodo_txt=p.txt}else if(v.trim()===''){it.periodo=null;it.periodo_tipo=null;it.periodo_txt=null}}
+  else if(k==='impuesto'){it.impuesto=v}
+  else if(k==='categoria'){it.categoria=v}
+  else if(k==='moneda'){it.moneda=(v.trim().toUpperCase()||'ARS')}
+  else if(k==='jurisdiccion'){it.jurisdiccion=v.trim()||null}
+  else if(k==='acc'){it._acc=v;it._man=true;draw();return}
+  it._revisar=false;infMarcar(ui.inf.up);draw();
+}
+function infFilaNueva(){
+  const I=ui.inf;if(!I.up)I.up={manual:true,nombre:'Carga manual',tipoDoc:'manual',items:[],omit:[],avisos:['Carga manual: lo que escribas se guarda como cargado a mano, no como obtenido de ARCA.'],fechaReporte:''};
+  I.up.items.push({categoria:'obligacion',impuesto:'IVA',impuesto_txt:null,codigo:null,concepto:null,jurisdiccion:null,periodo:null,periodo_tipo:null,periodo_txt:null,vencimiento:null,fecha_presentacion:null,importe_original:null,importe_pagado:null,saldo:null,int_resarcitorio:null,int_punitorio:null,total:null,estado_informado:null,moneda:'ARS',fecha_reporte:I.up.fechaReporte||null,datos:{},raw:{manual:true}});
+  infMarcar(I.up);draw();
+}
+function infQuitarFila(i){const up=ui.inf.up;up.items.splice(i,1);draw()}
+function infCancelar(){const I=ui.inf;I.up=null;if(I.cola&&I.cola.length){const n=I.cola.shift();return infAnalizar(n)}draw()}
+async function infGuardar(){
+  const I=ui.inf,up=I.up;if(!up||I.busy)return;if(!canEdit()){flash('No tenés permiso para guardar.','err');return draw()}
+  const aGuardar=up.items.filter(i=>i._acc==='agregar'||i._acc==='reemplazar');
+  if(!aGuardar.length){flash('No hay filas para incorporar: todas están marcadas como omitidas.','warn');return draw()}
+  const reem=aGuardar.filter(i=>i._acc==='reemplazar'&&i._exId);
+  if(reem.length&&!confirm(`Vas a reemplazar ${reem.length} registro(s) que ya existen con valores distintos.\n\nLos anteriores quedan guardados como no vigentes (no se borran) y dejan de sumar en los totales. ¿Continuar?`))return;
+  const dup=aGuardar.filter(i=>i._acc==='agregar'&&i._dup!=='nuevo');
+  if(dup.length&&!confirm(`${dup.length} fila(s) ya existen y las elegiste agregar igual. Esto puede duplicar deudas en los totales. ¿Confirmás?`))return;
+  I.busy=true;draw();let path=null,docId=null;
+  try{
+    if(up.file){path=`${I.cid}/impuestos/${crypto.randomUUID()}-${up.nombre.replace(/[^\w.\-]+/g,'_')}`;const r=await sb.storage.from('clientes').upload(path,up.file,{contentType:up.file.type||'application/octet-stream',upsert:false});if(r.error)throw r.error}
+    const estado=up.items.some(i=>i._revisar)||up.avisos.length?'con_observaciones':'procesado';
+    const {data:dd,error:e1}=await sb.from('tax_docs').insert({client_id:I.cid,file_name:up.nombre,storage_path:path,file_sha256:up.hash||null,doc_type:up.tipoDoc||'otro',doc_date:up.fechaReporte||null,status:up.manual?'manual':estado,rows_total:up.items.length,rows_saved:aGuardar.length,notes:up.avisos.join(' | ')||null,uploaded_by:me.id}).select('id').single();
+    if(e1)throw e1;docId=dd.id;
+    const filas=aGuardar.map(i=>{const d={...i.datos};return {client_id:I.cid,doc_id:docId,categoria:i.categoria,impuesto:i.impuesto,impuesto_txt:i.impuesto_txt,codigo:i.codigo,concepto:i.concepto,jurisdiccion:i.jurisdiccion,periodo:i.periodo,periodo_tipo:i.periodo_tipo,periodo_txt:i.periodo_txt,vencimiento:i.vencimiento,fecha_presentacion:i.fecha_presentacion,importe_original:i.importe_original,importe_pagado:i.importe_pagado,saldo:i.saldo,int_resarcitorio:i.int_resarcitorio,int_punitorio:i.int_punitorio,total:i.total,estado_informado:i.estado_informado,moneda:i.moneda||'ARS',fecha_reporte:i.fecha_reporte||up.fechaReporte||null,datos:d,raw:i.raw||{},vigente:true,dedupe_key:i.dedupe_key||infKey(i),created_by:me.id}});
+    for(let k=0;k<filas.length;k+=200){const r=await sb.from('tax_items').insert(filas.slice(k,k+200));if(r.error)throw r.error}
+    if(reem.length){const r=await sb.from('tax_items').update({vigente:false,updated_by:me.id,updated_at:new Date().toISOString()}).in('id',reem.map(x=>x._exId));if(r.error)throw r.error}
+    const n=aGuardar.length;I.up=null;I.busy=false;
+    if(I.cola&&I.cola.length){await infCargar(I.cid,true);flash(`Se incorporaron ${n} registros. Sigue el próximo archivo.`,'ok');return infAnalizar(I.cola.shift())}
+    await infCargar(I.cid,true);flash(`Se incorporaron ${n} registros al informe tributario.`,'ok');draw();
+  }catch(e){
+    if(docId)await sb.from('tax_docs').delete().eq('id',docId);if(path)await sb.storage.from('clientes').remove([path]);
+    I.busy=false;flash('No se pudo guardar: '+errTxt(e)+'. No quedó nada a medias.','err');draw();
+  }
+}
+async function infQuitarDoc(id){
+  const I=ui.inf,d=I.docs.find(x=>x.id===id);if(!d||!canEdit())return;
+  const n=I.items.filter(x=>x.doc_id===id&&x.vigente).length;
+  if(!confirm(`Vas a retirar "${d.file_name}".\n\n${n} registro(s) vigentes dejan de sumar en los totales y se elimina el archivo original. ¿Continuar?`))return;
+  try{
+    let r=await sb.from('tax_items').update({vigente:false,updated_by:me.id,updated_at:new Date().toISOString()}).eq('doc_id',id);if(r.error)throw r.error;
+    r=await sb.from('tax_docs').delete().eq('id',id);if(r.error)throw r.error;
+    if(d.storage_path)await sb.storage.from('clientes').remove([d.storage_path]);
+    await infCargar(I.cid,true);flash('Documento retirado.','ok');draw();
+  }catch(e){flash(errTxt(e),'err');draw()}
+}
+async function infGuardarNotas(ev){
+  ev.preventDefault();const I=ui.inf,fd=new FormData(ev.target);I.notes.observaciones=String(fd.get('obs')||'');
+  const r=await sb.from('tax_client_notes').upsert({client_id:I.cid,observaciones:I.notes.observaciones,tareas:I.notes.tareas,updated_by:me.id,updated_at:new Date().toISOString()},{onConflict:'client_id'});
+  flash(r.error?errTxt(r.error):'Observaciones guardadas.',r.error?'err':'ok');draw();return false;
+}
+async function infTareaAgregar(ev){
+  ev.preventDefault();const I=ui.inf,t=String(new FormData(ev.target).get('t')||'').trim();if(!t)return false;
+  const n=[...I.notes.tareas,{id:uid(),t,hecha:false,por:me.id,f:hoyISO()}];
+  const r=await sb.from('tax_client_notes').upsert({client_id:I.cid,observaciones:I.notes.observaciones,tareas:n,updated_by:me.id,updated_at:new Date().toISOString()},{onConflict:'client_id'});
+  if(r.error)flash(errTxt(r.error),'err');else I.notes.tareas=n;draw();return false;
+}
+async function infTareaToggle(id,borrar){
+  const I=ui.inf,n=borrar?I.notes.tareas.filter(x=>x.id!==id):I.notes.tareas.map(x=>x.id===id?{...x,hecha:!x.hecha}:x);
+  const r=await sb.from('tax_client_notes').upsert({client_id:I.cid,observaciones:I.notes.observaciones,tareas:n,updated_by:me.id,updated_at:new Date().toISOString()},{onConflict:'client_id'});
+  if(r.error)flash(errTxt(r.error),'err');else I.notes.tareas=n;draw();
+}
+/* ---------- vistas ---------- */
+const infSel=(k,v)=>{ui.inf.sec=k;draw()};
+function infFiltros(){return ui.inf.filt}
+function infSetF(k,v){ui.inf.filt[k]=v;draw()}
+function infFiltrar(items,hoy){
+  const F=ui.inf.filt,q=infN(F.q);
+  let r=items.filter(x=>x.vigente);r.forEach(x=>{x._e=infEstado(x,hoy)});
+  if(F.imp)r=r.filter(x=>x.impuesto===F.imp);if(F.per)r=r.filter(x=>(x.periodo_txt||'').startsWith(F.per));if(F.est)r=r.filter(x=>x._e.k===F.est);
+  if(q)r=r.filter(x=>infN([x.impuesto_txt,x.concepto,x.codigo,x.jurisdiccion,infImpN(x),x.periodo_txt].join(' ')).includes(q));
+  const o={venc:(a,b)=>(a.vencimiento||'9')<(b.vencimiento||'9')?-1:1,per:(a,b)=>(b.periodo||'')>(a.periodo||'')?1:-1,saldo:(a,b)=>(Number(b.saldo)||0)-(Number(a.saldo)||0),imp:(a,b)=>infImpN(a).localeCompare(infImpN(b))}[F.ord]||(()=>0);
+  return r.sort(o);
+}
+function infUploadCard(){
+  const I=ui.inf,ed=canEdit();
+  if(!ed)return '<div class="msg info">Tu usuario puede consultar los informes pero no cargar documentación.</div>';
+  return `<div class="card" id="infdrop" ondragover="event.preventDefault();this.style.outline='2px dashed var(--blut)'" ondragleave="this.style.outline=''" ondrop="event.preventDefault();this.style.outline='';infElegir(event.dataTransfer.files)" style="margin-bottom:14px">
+  <div class="row" style="gap:10px;flex-wrap:wrap;align-items:center"><div style="flex:1;min-width:220px"><b>Cargar documentación de ARCA</b><span class="s">PDF, Excel (xlsx/xls) o CSV · arrastrá los archivos acá o elegilos. No se guardan credenciales ni se accede a ARCA.</span></div>
+  <label class="b" style="cursor:pointer">Elegir archivos<input type="file" multiple accept=".pdf,.xlsx,.xls,.csv" style="display:none" onchange="infElegir(this.files);this.value=''"></label>
+  <button class="g" onclick="infFilaNueva()">Cargar a mano</button></div>${I.busy&&!I.up?'<div class="msg info" style="margin-top:10px">Leyendo el archivo…</div>':''}</div>`;
+}
+const INF_CAMPOS_MAPA=[['impuesto','Impuesto'],['codigo','Código'],['concepto','Concepto'],['periodo','Período'],['vencimiento','Vencimiento'],['presentacion','Fecha de presentación'],['original','Importe original'],['pagado','Pagado'],['saldo','Saldo'],['resarcitorio','Int. resarcitorio'],['punitorio','Int. punitorio'],['total','Total'],['estado','Estado'],['jurisdiccion','Jurisdicción'],['moneda','Moneda'],['fecha','Fecha (movimiento/pago)'],['debito','Débito'],['credito','Crédito'],['debito_fiscal','Débito fiscal'],['credito_fiscal','Crédito fiscal'],['saldo_tecnico','Saldo técnico'],['saldo_libre','Saldo libre disp.'],['retenciones','Retenciones'],['percepciones','Percepciones'],['pagos_cuenta','Pagos a cuenta'],['saldo_anterior','Saldo anterior'],['recaudaciones','Recaudaciones bancarias'],['base','Base imponible'],['alicuota','Alícuota'],['coeficiente','Coeficiente'],['resultado','Resultado impositivo'],['anticipos','Anticipos']];
+function infVistaPrevia(){
+  const I=ui.inf,up=I.up;if(!up)return '';
+  const ed=r=>`style="min-width:90px"`;
+  const avisos=up.avisos.map(a=>`<div class="msg warn">${esc(a)}</div>`).join('');
+  let map='';
+  if(up.rows){
+    const heads=(up.rows[up.h]||[]).map((x,j)=>[j,String(x??'').trim()||'(columna '+(j+1)+')']);
+    map=`<details ${up.mapear?'open':''} style="margin:8px 0"><summary>Columnas detectadas (${Object.keys(up.map).length}) · corregir</summary><div class="fgrid" style="margin-top:8px">
+    <label>Fila de títulos<input type="number" min="1" max="${Math.min(up.rows.length,60)}" value="${up.h+1}" onchange="infFilaTitulos(this.value)"></label>
+    ${INF_CAMPOS_MAPA.map(([k,t])=>`<label>${t}<select onchange="infMapa('${k}',this.value)"><option value="">— no está —</option>${heads.map(([j,n])=>`<option value="${j}" ${up.map[k]===j?'selected':''}>${esc(n)}</option>`).join('')}</select></label>`).join('')}</div></details>`;
+  }
+  const dupTxt={nuevo:'Nuevo',igual:'Ya cargado (igual)',difiere:'Ya existe con otros importes',repetida:'Repetida en este archivo'};
+  const imps=INF_IMP.map(([k,t])=>`<option value="${k}">${esc(t)}</option>`).join('');
+  const sel=(v,list)=>list.map(([k,t])=>`<option value="${k}" ${k===v?'selected':''}>${esc(t)}</option>`).join('');
+  const rows=up.items.map((it,i)=>`<tr ${it._revisar?'style="background:var(--amb)"':''}><td>${i+1}${it._revisar?'<span class="s">Revisar</span>':''}</td>
+  <td><select onchange="infCelda(${i},'categoria',this.value)">${sel(it.categoria,Object.entries(INF_CAT))}</select></td>
+  <td><select onchange="infCelda(${i},'impuesto',this.value)">${sel(it.impuesto,INF_IMP)}</select>${it.impuesto_txt?`<span class="s">${esc(it.impuesto_txt)}</span>`:''}</td>
+  <td><input size="9" value="${esc(it.periodo_txt||'')}" onchange="infCelda(${i},'periodo',this.value)" placeholder="mm/aaaa"></td>
+  <td><input size="10" value="${esc(it.vencimiento?fAR(it.vencimiento):'')}" onchange="infCelda(${i},'vencimiento',this.value)" placeholder="dd/mm/aaaa"></td>
+  ${['importe_original','importe_pagado','saldo','int_resarcitorio','int_punitorio','total'].map(k=>`<td><input size="11" inputmode="decimal" value="${it[k]===null||it[k]===undefined?'':String(it[k]).replace('.',',')}" onchange="infCelda(${i},'${k}',this.value)" placeholder="No informado"></td>`).join('')}
+  <td><input size="9" value="${esc(it.jurisdiccion||'')}" onchange="infCelda(${i},'jurisdiccion',this.value)"></td><td><input size="4" value="${esc(it.moneda||'ARS')}" onchange="infCelda(${i},'moneda',this.value)"></td>
+  <td>${it._dup?`<span class="s">${dupTxt[it._dup]}</span>`:'<span class="s">Nuevo</span>'}<select onchange="infCelda(${i},'acc',this.value)"><option value="agregar" ${it._acc==='agregar'?'selected':''}>Agregar</option><option value="omitir" ${it._acc==='omitir'?'selected':''}>Omitir</option>${it._exId?`<option value="reemplazar" ${it._acc==='reemplazar'?'selected':''}>Reemplazar el existente</option>`:''}</select></td>
+  <td><button class="g" title="Quitar fila" onclick="infQuitarFila(${i})">✕</button></td></tr>`).join('');
+  const n=up.items.filter(i=>i._acc==='agregar'||i._acc==='reemplazar').length;
+  return `<div class="card" style="margin-bottom:14px;border:1px solid var(--blut)"><h3 style="margin-top:0">Vista previa · ${esc(up.nombre)}</h3>
+  ${up.error?`<div class="msg err">${esc(up.error)}</div>`:''}${avisos}
+  <div class="fgrid"><label>Tipo de documento<select onchange="infTipoSet(this.value)">${Object.entries(INF_TIPOS_DOC).map(([k,t])=>`<option value="${k}" ${up.tipoDoc===k?'selected':''}>${t}</option>`).join('')}</select></label>
+  <label>Fecha del reporte o consulta<input type="date" value="${esc(up.fechaReporte||'')}" onchange="infFechaRep(this.value)"></label></div>${map}
+  ${up.omit&&up.omit.length?`<div class="s">Filas ignoradas por ser totales o estar vacías: ${up.omit.join(', ')}.</div>`:''}
+  ${up.items.length?`<div class="tw" style="margin:10px 0"><table style="min-width:1250px"><thead><tr><th>#</th><th>Clase</th><th>Impuesto</th><th>Período</th><th>Vencim.</th><th>Original</th><th>Pagado</th><th>Saldo</th><th>Int. resarc.</th><th>Int. punit.</th><th>Total</th><th>Jurisdicción</th><th>Mon.</th><th>Acción</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`:''}
+  <div class="s">Lo que el archivo no trae queda como “No informado”: no se completa ni se calcula. La acción “Reemplazar” conserva el registro anterior como no vigente.</div>
+  <div class="row" style="gap:8px;margin-top:10px"><button class="b" ${I.busy||!n?'disabled':''} onclick="infGuardar()">${I.busy?'Guardando…':`Incorporar ${n} registro(s) al informe`}</button><button class="g" onclick="infFilaNueva()">Agregar fila a mano</button><button class="g" onclick="infCancelar()">Cancelar</button></div></div>`;
+}
+function infKpis(R,hoy){
+  const k=(t,v,s)=>`<div class="card kpi"><b style="font-size:${String(v).length>14?22:28}px">${v}</b><span>${t}</span>${s?`<span class="s">${s}</span>`:''}</div>`;
+  return `<div class="grid">${k('Deuda total identificada',esc(money(R.total)),R.sinIntereses?`${R.sinIntereses} sin intereses informados`:'')}${k('Capital adeudado',esc(money(R.capital)))}${k('Intereses identificados',esc(money(R.intereses)))}${k('Obligaciones pendientes',R.cantPend)}${k('Vencidas',R.cantVenc,esc(money(R.vencidaTotal)))}${k('Próximas a vencer (30 días)',R.cantProx)}${k('Saldo a favor identificado',esc(money(R.favor)))}${k('Última actualización',R.ultima?fAR(R.ultima):'Sin datos')}</div>
+  ${R.n?`<div class="msg ${R.cantVerif?'warn':'info'}" style="margin-top:10px">Los importes son los <b>identificados en los archivos cargados</b> (${R.n} registros vigentes), en pesos. Es un total parcial: no incluye nada que no esté en la documentación. ${R.cantVerif?`${R.cantVerif} obligación(es) con saldo no se pueden clasificar (falta vencimiento): quedan como “Pendiente de verificar”.`:''} ${R.otras?`${R.otras} registro(s) en otra moneda no se suman.`:''}</div>`:''}`;
+}
+function infTabla(items,hoy,opts){
+  opts=opts||{};const rows=items.map(it=>`<tr><td>${esc(infImpN(it))}${it.codigo?`<span class="s">Cód. ${esc(it.codigo)}</span>`:''}${it.concepto?`<span class="s">${esc(it.concepto)}</span>`:''}${it.jurisdiccion?`<span class="s">${esc(it.jurisdiccion)}</span>`:''}</td><td>${esc(infPer(it))}</td><td>${infFD(it.vencimiento)}</td><td>${infM(it.categoria==='pago'?it.importe_pagado:it.importe_original)}</td><td>${infM(it.saldo)}</td><td>${infM(it.int_resarcitorio)}</td><td>${infM(it.int_punitorio)}</td><td>${it.total===null||it.total===undefined?infM(it.saldo===null||it.saldo===undefined?null:(Number(it.saldo)||0)+(Number(it.int_resarcitorio)||0)+(Number(it.int_punitorio)||0)):infM(it.total)}</td><td>${infTag(it._e||infEstado(it,hoy))}<span class="s">${esc(INF_CAT[it.categoria])}${it.moneda&&it.moneda!=='ARS'?' · '+esc(it.moneda):''}</span></td><td><span class="s">${esc(infDocN(it.doc_id))}</span></td></tr>`).join('');
+  return `<div class="tw"><table style="min-width:980px"><thead><tr><th>Impuesto</th><th>Período</th><th>Vencim.</th><th>${opts.pago?'Pagado':'Original'}</th><th>Saldo</th><th>Int. resarc.</th><th>Int. punit.</th><th>Total</th><th>Estado</th><th>Origen</th></tr></thead><tbody>${rows||'<tr><td colspan="10" style="text-align:center;color:var(--mut)">Sin registros</td></tr>'}</tbody></table></div>`;
+}
+const infDocN=id=>{const d=ui.inf.docs.find(x=>x.id===id);return d?d.file_name:'(documento retirado)'};
+function infTarjetasImp(items,hoy){
+  const rows=infPorImpuesto(items,hoy);if(!rows.length)return '';
+  return `<h3>Resumen por impuesto</h3><div class="tw"><table style="min-width:720px"><thead><tr><th>Impuesto</th><th>Capital</th><th>Intereses</th><th>Total</th><th>Vencidas</th><th>Pagos</th><th>Saldo a favor</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(INF_IMP_N[r.impuesto]||r.impuesto)}${r.jur?`<span class="s">${esc(r.jur)}</span>`:''}</td><td>${esc(money(r.capital))}</td><td>${esc(money(r.intereses))}</td><td><b>${esc(money(r.total))}</b></td><td>${r.venc}</td><td>${esc(money(r.pagos))}</td><td>${esc(money(r.favor))}</td></tr>`).join('')}</tbody></table></div><div class="s">Cada impuesto se muestra por separado: no hay un “total general” que mezcle conceptos no comparables, salvo la deuda identificada de arriba (suma de saldos con intereses, sin duplicar).</div>`;
+}
+function infGeneral(c,hoy){
+  const I=ui.inf,R=infResumen(I.items,hoy,I.docs),F=I.filt,vis=infFiltrar(I.items,hoy);
+  const pers=[...new Set(I.items.filter(x=>x.vigente&&x.periodo_txt).map(x=>x.periodo_txt.slice(0,4)))].sort().reverse();
+  const impsEn=[...new Set(I.items.filter(x=>x.vigente).map(x=>x.impuesto))];
+  const pp=infPorPeriodoDeuda(I.items,hoy);
+  return `${infKpis(R,hoy)}
+  <h3>Detalle</h3><div class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:8px"><input placeholder="Buscar…" value="${esc(F.q)}" onchange="infSetF('q',this.value)" style="min-width:150px">
+  <select onchange="infSetF('imp',this.value)"><option value="">Todos los impuestos</option>${impsEn.map(k=>`<option value="${k}" ${F.imp===k?'selected':''}>${esc(INF_IMP_N[k]||k)}</option>`).join('')}</select>
+  <select onchange="infSetF('per',this.value)"><option value="">Todos los años</option>${pers.map(p=>`<option ${F.per===p?'selected':''}>${p}</option>`).join('')}</select>
+  <select onchange="infSetF('est',this.value)"><option value="">Todos los estados</option>${[['vencida','Vencida'],['no_vencida','No vencida'],['verificar','Pendiente de verificar'],['sin_saldo','Sin saldo pendiente'],['pago','Pago registrado'],['favor','Saldo a favor'],['presentada','Presentada']].map(([k,t])=>`<option value="${k}" ${F.est===k?'selected':''}>${t}</option>`).join('')}</select>
+  <select onchange="infSetF('ord',this.value)">${[['venc','Ordenar por vencimiento'],['per','Por período'],['saldo','Por saldo'],['imp','Por impuesto']].map(([k,t])=>`<option value="${k}" ${F.ord===k?'selected':''}>${t}</option>`).join('')}</select></div>
+  ${infTabla(vis,hoy)}${infTarjetasImp(I.items,hoy)}
+  ${pp.length?`<h3>Resumen por período fiscal</h3><div class="tw"><table style="min-width:520px"><thead><tr><th>Período</th><th>Registros</th><th>Capital</th><th>Intereses</th><th>Total</th></tr></thead><tbody>${pp.map(r=>`<tr><td>${esc(r.k)}</td><td>${r.cant}</td><td>${esc(money(r.capital))}</td><td>${esc(money(r.intereses))}</td><td><b>${esc(money(r.total))}</b></td></tr>`).join('')}</tbody></table></div>`:''}
+  ${infCoberturaHtml(c,hoy)}${infNotasHtml()}`;
+}
+function infCoberturaHtml(c,hoy){
+  const I=ui.inf,perfil=infPerfil(c);if(!perfil.length)return '<h3>Cobertura de la información</h3><div class="msg info">Este cliente no tiene impuestos mensuales cargados en su perfil. Completá su perfil en la pestaña Datos para ver la cobertura.</div>';
+  const cb=infCobertura(I.items,perfil,hoy,12);
+  return `<h3>Cobertura de la información (últimos 12 meses)</h3><div class="tw"><table style="min-width:760px"><thead><tr><th>Impuesto</th>${cb.meses.map(m=>`<th>${m.slice(5)}/${m.slice(2,4)}</th>`).join('')}</tr></thead><tbody>${cb.filas.map(f=>`<tr><td>${esc(INF_IMP_N[f.imp])}</td>${f.meses.map(m=>`<td style="text-align:center">${m.info?'<span style="color:var(--grnt)">●</span>':'<span style="color:var(--mut)">–</span>'}</td>`).join('')}</tr>`).join('')}</tbody></table></div><div class="s">● hay información cargada · – sin información cargada (no significa que no exista ni que esté cumplida). Solo se listan los impuestos del perfil del cliente.</div>`;
+}
+function infNotasHtml(){
+  const I=ui.inf,ed=canEdit();
+  return `<h3>Observaciones y tareas pendientes</h3><form class="card" onsubmit="return infGuardarNotas(event)"><label>Observaciones del contador (salen en el informe)<textarea name="obs" rows="4" ${ed?'':'disabled'}>${esc(I.notes.observaciones)}</textarea></label>${ed?'<button class="b" style="margin-top:8px">Guardar observaciones</button>':''}</form>
+  <div class="card" style="margin-top:10px">${I.notes.tareas.map(t=>`<div class="row" style="gap:8px;align-items:center;padding:4px 0"><input type="checkbox" ${t.hecha?'checked':''} ${ed?'':'disabled'} onchange="infTareaToggle('${t.id}')"><span style="flex:1;${t.hecha?'text-decoration:line-through;color:var(--mut)':''}">${esc(t.t)}</span>${ed?`<button class="g" onclick="infTareaToggle('${t.id}',true)">✕</button>`:''}</div>`).join('')||'<span class="s">Sin tareas.</span>'}
+  ${ed?`<form class="row" style="gap:8px;margin-top:8px" onsubmit="return infTareaAgregar(event)"><input name="t" placeholder="Nueva tarea: qué hay que revisar o hacer" style="flex:1"><button class="g">Agregar</button></form>`:''}</div>`;
+}
+/* ---- barras con períodos sin información diferenciados de los importes en cero ---- */
+function infGrafico(rows,titulo){
+  const m=rows.filter(r=>r.tipo==='m'&&r.periodo).slice(0,24).reverse();if(m.length<2)return '';
+  const W=640,H=170,pad=28,vals=m.flatMap(r=>[r.det,r.pag===null?r.pagCta:r.pag].filter(v=>v!==null&&v!==undefined)),mx=Math.max(1,...vals.map(Math.abs)),bw=(W-pad*2)/m.length;
+  const y=v=>H-24-(Math.abs(v)/mx)*(H-50);
+  const bar=(v,x,w,col)=>v===null||v===undefined?'':`<rect x="${x}" y="${y(v)}" width="${w}" height="${Math.max(1,H-24-y(v))}" fill="${col}" opacity=".9"><title>${esc(money(v))}</title></rect>`;
+  const s=m.map((r,i)=>{const x=pad+i*bw,pg=r.pag===null?r.pagCta:r.pag;
+    const sin=r.det===null&&pg===null&&!r.deuda;
+    return (sin?`<text x="${x+bw/2}" y="${H-30}" text-anchor="middle" font-size="9" fill="#8896b3">s/i</text>`:bar(r.det,x+2,bw/2-2,'#5b7cff')+bar(pg,x+bw/2,bw/2-2,'#34d399'))+`<text x="${x+bw/2}" y="${H-8}" text-anchor="middle" font-size="9" fill="#8896b3">${r.periodo.slice(5,7)}/${r.periodo.slice(2,4)}</text>`}).join('');
+  return `<h4>${esc(titulo)}</h4><svg viewBox="0 0 ${W} ${H}" style="width:100%;max-width:${W}px" role="img" aria-label="${esc(titulo)}">${s}</svg><div class="s"><span style="color:#5b7cff">■</span> Determinado · <span style="color:#34d399">■</span> Pagado · s/i = sin información cargada (distinto de un importe en cero)</div>`;
+}
+function infSeccionPeriodica(c,hoy,imps,titulo,extra){
+  const I=ui.inf,rows=infPeriodos(I.items,imps,hoy);
+  if(!rows.length)return `<div class="msg info">No hay información cargada de ${esc(titulo)}. Cargá una declaración jurada, un detalle de deuda o un reporte de pagos. No se asume que no exista: solo que todavía no se incorporó.</div>`;
+  const dd=(r,k)=>r.dd[k]===undefined?null:r.dd[k];
+  const tr=rows.map(r=>`<tr style="cursor:pointer" onclick="infDetalle('${esc(r.k)}')"><td>${r.jur?esc(r.jur)+'<span class="s">':''}${esc(r.tipo==='m'&&r.periodo?r.periodo.slice(5,7)+'/'+r.periodo.slice(0,4):(r.txt||'Sin período'))}${r.jur?'</span>':''}</td><td>${r.est?infTag(r.est):'<span class="s">Sin DDJJ cargada</span>'}</td>${extra.cols.map(k=>`<td>${infM(dd(r,k))}</td>`).join('')}<td>${infM(r.det)}</td><td>${infM(r.pag===null?r.pagCta:r.pag)}</td><td>${infM(r.deuda)}</td><td>${infM(r.int)}</td><td>${r.d&&r.d.vencimiento?fAR(r.d.vencimiento):r.obl[0]&&r.obl[0].vencimiento?fAR(r.obl[0].vencimiento):'<span class="s">No informado</span>'}</td><td>${r.incons.length?`<span class="tag" style="background:var(--amb);color:var(--ambt)">${r.incons.length}</span>`:''}</td></tr>`).join('');
+  const anual=new Map();rows.filter(r=>r.periodo).forEach(r=>{const y=r.periodo.slice(0,4);const a=anual.get(y)||{y,n:0,det:0,pag:0,deuda:0,sinDet:0};a.n++;if(r.det!==null)a.det+=r.det;else a.sinDet++;const p=r.pag===null?r.pagCta:r.pag;if(p!==null)a.pag+=p;if(r.deuda)a.deuda+=r.deuda;anual.set(y,a)});
+  return `<div class="tw"><table style="min-width:${900+extra.cols.length*90}px"><thead><tr><th>Período</th><th>DDJJ</th>${extra.heads.map(h=>`<th>${h}</th>`).join('')}<th>Determinado</th><th>Pagado</th><th>Deuda</th><th>Intereses</th><th>Vencimiento</th><th>Alertas</th></tr></thead><tbody>${tr}</tbody></table></div>
+  <div class="s">Tocá un período para ver el detalle. “No informado” = el documento no trae ese dato. Los valores de DDJJ vienen de los archivos; no se calculan desde ventas y compras.</div>
+  <h4>Resumen anual acumulado</h4><div class="tw"><table style="min-width:520px"><thead><tr><th>Año</th><th>Períodos con datos</th><th>Determinado</th><th>Pagado</th><th>Deuda</th></tr></thead><tbody>${[...anual.values()].sort((a,b)=>b.y-a.y).map(a=>`<tr><td>${a.y}</td><td>${a.n}</td><td>${esc(money(a.det))}${a.sinDet?`<span class="s">${a.sinDet} período(s) sin importe determinado</span>`:''}</td><td>${esc(money(a.pag))}</td><td>${esc(money(a.deuda))}</td></tr>`).join('')}</tbody></table></div>${infGrafico(rows,'Evolución mensual')}`;
+}
+function infDetalle(k){ui.inf.det=ui.inf.det===k?null:k;draw()}
+function infDetalleHtml(imps,hoy){
+  const I=ui.inf;if(!I.det)return '';const r=infPeriodos(I.items,imps,hoy).find(x=>x.k===I.det);if(!r)return '';
+  const todos=[...r.ddjj,...r.obl,...r.pagos,...r.favor];
+  const datos=r.d?Object.entries(r.dd).map(([k,v])=>`<tr><td>${esc((INF_CAMPOS_MAPA.find(x=>x[0]===k)||[k,k])[1])}</td><td>${typeof v==='number'?esc(money(v)):esc(String(v))}</td></tr>`).join(''):'';
+  return `<div class="card" style="margin:10px 0;border:1px solid var(--blut)"><div class="row" style="justify-content:space-between"><b>Detalle del período ${esc(r.txt||'')} ${r.jur?'· '+esc(r.jur):''}</b><button class="g" onclick="infDetalle('${esc(r.k)}')">Cerrar</button></div>
+  ${r.incons.map(x=>`<div class="msg warn" style="margin-top:8px">${esc(x)}</div>`).join('')}
+  ${datos?`<table style="min-width:0;margin:8px 0"><tbody>${datos}</tbody></table>`:''}${infTabla(todos.map(x=>({...x,_e:infEstado(x,hoy)})),hoy)}
+  <div class="s" style="margin-top:6px">Documentos de origen: ${[...new Set(todos.map(x=>x.doc_id))].map(id=>{const d=I.docs.find(x=>x.id===id);return d&&d.storage_path?`<a href="#" onclick="verArchivo('${esc(d.storage_path)}');return false">${esc(d.file_name)}</a>`:esc(infDocN(id))}).join(' · ')||'—'}</div></div>`;
+}
+function infIva(c,hoy){return infSeccionPeriodica(c,hoy,['IVA'],'IVA',{cols:['debito_fiscal','credito_fiscal','saldo_tecnico','saldo_libre','retenciones','pagos_cuenta','saldo_anterior'],heads:['Débito fiscal','Crédito fiscal','Saldo técnico','Libre disponib.','Retenciones/percep.','Pagos a cuenta','Saldo anterior']})+infDetalleHtml(['IVA'],hoy)+'<div class="msg info" style="margin-top:10px">El <b>saldo técnico</b>, el <b>saldo de libre disponibilidad</b> y la <b>deuda exigible</b> son conceptos distintos y se muestran por separado.</div>'}
+function infIibb(c,hoy){
+  const imps=['IIBB_CBA','IIBB_CM','IIBB_OTRA'];
+  return infSeccionPeriodica(c,hoy,imps,'Ingresos Brutos',{cols:['base','alicuota','coeficiente','retenciones','recaudaciones'],heads:['Base imponible','Alícuota','Coeficiente','Retenciones/percep.','Recaudaciones banc.']})+infDetalleHtml(imps,hoy)+'<div class="s" style="margin-top:8px">Las jurisdicciones se muestran separadas (columna Período muestra la jurisdicción cuando el archivo la informa): no se suman importes de provincias distintas.</div>';
+}
+function infGan(c,hoy){return infSeccionPeriodica(c,hoy,['GANANCIAS'],'Ganancias',{cols:['resultado','anticipos','retenciones','pagos_cuenta'],heads:['Resultado impositivo','Anticipos','Retenciones','Pagos a cuenta']})+infDetalleHtml(['GANANCIAS'],hoy)+'<div class="s" style="margin-top:8px">Los anticipos y las obligaciones anuales se distinguen por el concepto/período informado. No se calcula el impuesto definitivo ni se confunde resultado contable con impositivo.</div>'}
+function infOtros(c,hoy){const imps=INF_IMP.map(x=>x[0]).filter(k=>!['IVA','IIBB_CBA','IIBB_CM','IIBB_OTRA','GANANCIAS'].includes(k));return infSeccionPeriodica(c,hoy,imps,'otros impuestos',{cols:[],heads:[]})+infDetalleHtml(imps,hoy)}
+function infDdjjLista(c,hoy){
+  const I=ui.inf,perfil=infPerfil(c),dj=I.items.filter(x=>x.vigente&&x.categoria==='ddjj').map(x=>({...x,_e:infEstado(x,hoy)}));
+  const noAp=INF_IMP.filter(([k])=>!perfil.includes(k)&&!I.items.some(x=>x.vigente&&x.impuesto===k)).length;
+  return `${dj.length?`<div class="tw"><table style="min-width:820px"><thead><tr><th>Impuesto</th><th>Período</th><th>Vencimiento</th><th>Presentación</th><th>Estado</th><th>Determinado</th><th>Archivo</th></tr></thead><tbody>${dj.sort((a,b)=>(b.periodo||'')>(a.periodo||'')?1:-1).map(x=>{const d=I.docs.find(y=>y.id===x.doc_id);return `<tr><td>${esc(infImpN(x))}</td><td>${esc(infPer(x))}</td><td>${infFD(x.vencimiento)}</td><td>${infFD(x.fecha_presentacion)}</td><td>${infTag(x._e)}</td><td>${infM(x.importe_original)}</td><td>${d&&d.storage_path?`<a href="#" onclick="verArchivo('${esc(d.storage_path)}');return false">${esc(d.file_name)}</a>`:esc(infDocN(x.doc_id))}</td></tr>`}).join('')}</tbody></table></div>`:'<div class="msg info">No hay declaraciones juradas cargadas.</div>'}
+  <div class="s" style="margin-top:8px">La ausencia de una DDJJ en los documentos cargados no prueba que no se haya presentado: aparece como “Pendiente de verificar” hasta que haya evidencia. Impuestos del perfil del cliente: ${perfil.length?perfil.map(k=>esc(INF_IMP_N[k])).join(', '):'ninguno cargado'}. Lo que no figura en su perfil no se muestra como incumplido.</div>`;
+}
+/* ---------- historial y comparación ---------- */
+function infHist(c,hoy){
+  const I=ui.inf,cortes=I.reports.filter(r=>r.snapshot&&Array.isArray(r.snapshot)&&r.snapshot.length||r.tipo==='corte');
+  const opt=v=>I.reports.map(r=>`<option value="${r.id}" ${v===r.id?'selected':''}>${fAR(r.fecha_corte||r.generated_at.slice(0,10))} · ${r.tipo.toUpperCase()} · ${new Date(r.generated_at).toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'})}</option>`).join('');
+  let cmp='';
+  const A=I.reports.find(r=>r.id===I.cmp.a),B=I.reports.find(r=>r.id===I.cmp.b);
+  if(A&&B){
+    const [x,y]=(A.fecha_corte||A.generated_at)<=(B.fecha_corte||B.generated_at)?[A,B]:[B,A],d=infDiff(x.snapshot||[],y.snapshot||[]);
+    const li=(arr,f)=>arr.length?`<div class="tw"><table style="min-width:520px"><tbody>${arr.map(f).join('')}</tbody></table></div>`:'<div class="s">Ninguno.</div>';
+    cmp=`<div class="card" style="margin-top:10px"><b>Comparación: ${fAR(x.fecha_corte||x.generated_at.slice(0,10))} → ${fAR(y.fecha_corte||y.generated_at.slice(0,10))}</b>
+    <h4>Nuevos registros (${d.nuevos.length})</h4>${li(d.nuevos,n=>`<tr><td>${esc(INF_IMP_N[n.i]||n.i)}</td><td>${esc(n.p||'—')}</td><td>${esc(INF_CAT[n.c])}</td><td>${infM(n.s!==null&&n.s!==undefined?n.s:(n.o!==null&&n.o!==undefined?n.o:n.g))}</td></tr>`)}
+    <h4>No identificados en el último reporte (${d.noEst.length})</h4>${li(d.noEst,n=>`<tr><td>${esc(INF_IMP_N[n.i]||n.i)}</td><td>${esc(n.p||'—')}</td><td>${infM(n.s)}</td><td><span class="s">Estado pendiente de confirmar</span></td></tr>`)}
+    <div class="s">Que un registro ya no aparezca no prueba que se haya pagado: verificalo en ARCA.</div>
+    <h4>Variaciones de saldo o intereses (${d.cambios.length})</h4>${li(d.cambios,n=>`<tr><td>${esc(INF_IMP_N[n.i]||n.i)}</td><td>${esc(n.p||'—')}</td><td>Saldo ${infM(n.antes.s)} → ${infM(n.ahora.s)}</td><td>Intereses ${infM((n.antes.r||0)+(n.antes.u||0))} → ${infM((n.ahora.r||0)+(n.ahora.u||0))}</td></tr>`)}
+    <h4>Períodos nuevos incorporados (${d.periodosNuevos.length})</h4><div>${d.periodosNuevos.map(p=>`<span class="chip">${esc(INF_IMP_N[p.split('|')[0]]||p.split('|')[0])} ${esc(p.split('|')[1])}</span>`).join(' ')||'<span class="s">Ninguno.</span>'}</div></div>`;
+  }
+  return `<h3>Documentos cargados</h3><div class="tw"><table style="min-width:760px"><thead><tr><th>Fecha de carga</th><th>Archivo</th><th>Tipo</th><th>Fecha del reporte</th><th>Estado</th><th>Filas</th><th>Cargó</th><th></th></tr></thead><tbody>${I.docs.map(d=>`<tr><td>${fAR(d.uploaded_at.slice(0,10))}</td><td>${d.storage_path?`<a href="#" onclick="verArchivo('${esc(d.storage_path)}');return false">${esc(d.file_name)}</a>`:esc(d.file_name)}${d.notes?`<span class="s">${esc(d.notes)}</span>`:''}</td><td>${esc(INF_TIPOS_DOC[d.doc_type]||d.doc_type)}</td><td>${d.doc_date?fAR(d.doc_date):'No informado'}</td><td>${esc({procesado:'Procesado',con_observaciones:'Con observaciones',error:'Error',manual:'Carga manual'}[d.status]||d.status)}</td><td>${d.rows_saved}/${d.rows_total}</td><td>${esc(infUsuario(d.uploaded_by))}</td><td>${canEdit()?`<button class="g" onclick="infQuitarDoc('${d.id}')">Retirar</button>`:''}</td></tr>`).join('')||'<tr><td colspan="8" style="text-align:center;color:var(--mut)">Todavía no se cargó ningún documento.</td></tr>'}</tbody></table></div>
+  <h3>Informes generados</h3><div class="tw"><table style="min-width:560px"><thead><tr><th>Generado</th><th>Tipo</th><th>Fecha de corte</th><th>Deuda identificada</th><th>Por</th></tr></thead><tbody>${I.reports.map(r=>`<tr><td>${new Date(r.generated_at).toLocaleString('es-AR')}</td><td>${esc(r.tipo.toUpperCase())}</td><td>${r.fecha_corte?fAR(r.fecha_corte):'—'}</td><td>${r.resumen&&r.resumen.total!==undefined?esc(money(r.resumen.total)):'—'}</td><td>${esc(infUsuario(r.generated_by))}</td></tr>`).join('')||'<tr><td colspan="5" style="text-align:center;color:var(--mut)">Todavía no se generó ningún informe.</td></tr>'}</tbody></table></div>
+  <h3>Comparar dos cortes</h3>${I.reports.length>=2?`<div class="row" style="gap:8px;flex-wrap:wrap"><select onchange="ui.inf.cmp.a=this.value;draw()"><option value="">Corte anterior…</option>${opt(I.cmp.a)}</select><select onchange="ui.inf.cmp.b=this.value;draw()"><option value="">Corte posterior…</option>${opt(I.cmp.b)}</select></div>${cmp}`:'<div class="msg info">Se necesitan al menos dos cortes. Cada vez que generás un informe (PDF o Excel) queda guardado un corte para comparar.</div>'}
+  ${canEdit()?'<div style="margin-top:10px"><button class="g" onclick="infGuardarCorte()">Guardar un corte ahora (sin generar archivo)</button></div>':''}`;
+}
+const infUsuario=id=>{if(!id)return '—';if(me&&id===me.id)return 'Vos';const p=(ui.profiles||[]).find(x=>x.id===id);return p?(p.full_name||p.email||'Usuario'):'Otro usuario'};
+/* ---------- informe: datos comunes, PDF, Excel ---------- */
+async function infCorte(tipo){
+  const I=ui.inf,hoy=hoyISO(),R=infResumen(I.items,hoy,I.docs);
+  const resumen={total:R.total,capital:R.capital,intereses:R.intereses,pendientes:R.cantPend,vencidas:R.cantVenc,favor:R.favor,registros:R.n,ultima:R.ultima};
+  const r=await sb.from('tax_reports').insert({client_id:I.cid,tipo,fecha_corte:hoy,resumen,snapshot:infSnapshot(I.items),generated_by:me.id}).select('*').single();
+  if(r.error)throw r.error;I.reports.unshift(r.data);return r.data;
+}
+async function infGuardarCorte(){try{await infCorte('corte');flash('Corte guardado para comparar.','ok')}catch(e){flash(errTxt(e),'err')}draw()}
+function infArchivoNombre(c,ext){return `Informe impositivo - ${c.razon_social.replace(/[\\/:*?"<>|]/g,'')} - ${hoyISO()}.${ext}`}
+async function infPdf(){
+  const I=ui.inf,c=ui.clients.find(x=>x.id===ui.ficha.id);if(!c)return;
+  if(!window.jspdf||!window.jspdf.jsPDF){flash('No se pudo cargar el generador de PDF (¿sin internet?).','err');return draw()}
+  if(!I.items.some(x=>x.vigente)&&!confirm('Todavía no hay datos cargados. El informe va a salir vacío con las advertencias. ¿Generarlo igual?'))return;
+  I.busy=true;draw();
+  try{
+    const hoy=hoyISO(),R=infResumen(I.items,hoy,I.docs),vig=I.items.filter(x=>x.vigente);vig.forEach(x=>x._e=infEstado(x,hoy));
+    const doc=new window.jspdf.jsPDF({orientation:'portrait',unit:'mm',format:'a4'}),azul=[23,48,92],gris=[90,98,115],W=210,M=14;
+    const ahora=new Date(),fh=ahora.toLocaleString('es-AR');
+    const M$=v=>v===null||v===undefined?'No informado':money(v);
+    // portada
+    doc.setFillColor(...azul);doc.rect(0,0,W,70,'F');doc.setTextColor(255);doc.setFontSize(26);doc.text('Estudio Theiler',M,32);doc.setFontSize(14);doc.text('Informe impositivo integral',M,44);doc.setFontSize(10);doc.text('Estudio Contable',M,52);
+    doc.setTextColor(30);doc.setFontSize(20);doc.text(doc.splitTextToSize(c.razon_social,W-2*M),M,92);doc.setFontSize(12);doc.setTextColor(...gris);
+    let y=92+10*Math.max(1,doc.splitTextToSize(c.razon_social,W-2*M).length)+4;
+    [['CUIT',cuitF(c.cuit)],['Condición frente al IVA',c.condicion_iva||'No informada'],['Fecha y hora de generación',fh],['Fecha de corte',fAR(hoy)],['Última información incorporada',R.ultima?fAR(R.ultima):'Sin datos'],['Documentos analizados',String(I.docs.length)]].forEach(([k,v])=>{doc.setFontSize(10);doc.setTextColor(...gris);doc.text(k,M,y);doc.setFontSize(12);doc.setTextColor(30);doc.text(String(v),M+62,y);y+=9});
+    doc.setFontSize(9);doc.setTextColor(...gris);doc.text(doc.splitTextToSize('Informe elaborado con base en la documentación cargada en el sistema. Verificar en ARCA antes de efectuar pagos o tomar decisiones fiscales.',W-2*M),M,262);
+    // helpers
+    const secc=(t)=>{if(y>255){doc.addPage();y=20}doc.setFontSize(13);doc.setTextColor(...azul);doc.text(t,M,y);y+=3};
+    const tabla=(head,body,opts)=>{opts=opts||{};if(!body.length){doc.setFontSize(10);doc.setTextColor(...gris);doc.text('Sin registros en la documentación cargada.',M,y+6);y+=12;return}
+      doc.autoTable({startY:y+2,head:[head],body,theme:'grid',styles:{fontSize:8.5,cellPadding:1.8,overflow:'linebreak'},headStyles:{fillColor:azul,textColor:255},columnStyles:opts.cols||{},margin:{left:M,right:M,top:20,bottom:18},rowPageBreak:'avoid',didDrawPage:()=>{}});y=doc.lastAutoTable.finalY+8};
+    const num={halign:'right'};
+    // 1 resumen ejecutivo
+    doc.addPage();y=20;doc.setFontSize(16);doc.setTextColor(...azul);doc.text('1. Resumen ejecutivo integral',M,y);y+=4;
+    doc.setFontSize(9);doc.setTextColor(...gris);doc.text(`Fecha de corte ${fAR(hoy)} · Importes en pesos argentinos · Información identificada en los documentos cargados (total parcial)`,M,y+4);y+=13;
+    secc('Situación fiscal');
+    const deudaPor=g=>infR2(infSum(vig.filter(x=>x.categoria==='obligacion'&&x.saldo>0.005&&(x.moneda||'ARS')==='ARS'&&g(x)),R.totalDe));
+    tabla(['Concepto','Importe / dato'],[['Deuda identificada ante ARCA (impuestos nacionales)',M$(deudaPor(x=>!/^IIBB|MUNICIPAL/.test(x.impuesto)))],['Deudas provinciales (Ingresos Brutos) registradas',M$(deudaPor(x=>/^IIBB/.test(x.impuesto)))],['Deudas municipales registradas',M$(deudaPor(x=>x.impuesto==='MUNICIPAL'))],['Capital identificado',M$(R.capital)],['Intereses identificados',M$(R.intereses)],['Total identificado (capital + intereses)',M$(R.total)],['Saldos a favor identificados',M$(R.favor)],['Obligaciones vencidas',`${R.cantVenc} (${M$(R.vencidaTotal)})`],['Obligaciones no vencidas',`${R.cantNoVenc} (${M$(R.noVencidaTotal)})`],['Pendientes de verificar',String(R.cantVerif)],['Próximos vencimientos (30 días)',R.cantProx?R.prox.slice(0,5).map(x=>`${INF_IMP_N[x.impuesto]} ${x.periodo_txt||''} ${fAR(x.vencimiento)}`).join(' · '):'Ninguno identificado en los documentos']],{cols:{1:{halign:'right'}}});
+    const ult=(imps,n)=>infPeriodos(I.items,imps,hoy).filter(r=>r.periodo).slice(0,n);
+    const resumenPer=(imps,titulo)=>{secc(titulo);const rs=ult(imps,6);tabla(['Período','DDJJ','Determinado','Pagado','Deuda'],rs.map(r=>[`${r.jur?r.jur+' ':''}${r.periodo.slice(5,7)}/${r.periodo.slice(0,4)}`,r.est?r.est.t:'Sin DDJJ cargada',M$(r.det),M$(r.pag===null?r.pagCta:r.pag),M$(r.deuda)]),{cols:{2:num,3:num,4:num}})};
+    resumenPer(['IVA'],'Situación de IVA (últimos períodos disponibles)');
+    resumenPer(['IIBB_CBA','IIBB_CM','IIBB_OTRA'],'Situación de Ingresos Brutos');
+    resumenPer(['GANANCIAS','BIENES_PERS','MONOTRIBUTO','AUTONOMOS','SEG_SOCIAL','RETPER','INTERNOS','MUNICIPAL','INFO','OTRO'],'Situación de Ganancias y otros impuestos');
+    // alertas
+    secc('Alertas y tareas');
+    const alertas=[];
+    if(R.cantVenc)alertas.push(`${R.cantVenc} obligación(es) vencida(s) con saldo pendiente.`);
+    if(R.cantVerif)alertas.push(`${R.cantVerif} obligación(es) con saldo sin vencimiento: pendientes de verificar.`);
+    if(R.sinIntereses)alertas.push(`${R.sinIntereses} obligación(es) con saldo sin intereses informados: el total puede estar subestimado.`);
+    if(R.otras)alertas.push(`${R.otras} registro(s) en moneda distinta de pesos no incluidos en los totales.`);
+    const inc=infPeriodos(I.items,['IVA','IIBB_CBA','IIBB_CM','IIBB_OTRA','GANANCIAS'],hoy).flatMap(r=>r.incons.map(t=>`${r.txt||''}: ${t}`));alertas.push(...inc);
+    const perf=infPerfil(c);perf.filter(k=>!vig.some(x=>x.impuesto===k)).forEach(k=>alertas.push(`Sin documentación cargada de ${INF_IMP_N[k]} (figura en el perfil del cliente).`));
+    I.notes.tareas.filter(t=>!t.hecha).forEach(t=>alertas.push('Tarea: '+t.t));
+    if(!alertas.length)alertas.push('Sin alertas con la información cargada.');
+    doc.setFontSize(9.5);doc.setTextColor(40);alertas.forEach(a=>{const ls=doc.splitTextToSize('• '+a,W-2*M);if(y+ls.length*4.5>280){doc.addPage();y=20}doc.text(ls,M,y+6);y+=ls.length*4.5+1});y+=8;
+    // 2 detalle de deudas
+    doc.addPage();y=20;doc.setFontSize(16);doc.setTextColor(...azul);doc.text('2. Detalle de deudas',M,y);y+=3;
+    const deudas=vig.filter(x=>x.categoria==='obligacion'&&x.saldo>0.005&&(x.moneda||'ARS')==='ARS').sort((a,b)=>(a.vencimiento||'9')<(b.vencimiento||'9')?-1:1);
+    tabla(['Impuesto','Período','Vencim.','Capital','Intereses','Total','Estado'],deudas.map(x=>[INF_IMP_N[x.impuesto]+(x.jurisdiccion?' ('+x.jurisdiccion+')':''),infPer(x),infFD(x.vencimiento),M$(x.saldo),x.int_resarcitorio===null&&x.int_punitorio===null?'No informado':M$((x.int_resarcitorio||0)+(x.int_punitorio||0)),M$(R.totalDe(x)),x._e.t]),{cols:{3:num,4:num,5:num}});
+    secc('3. Resumen por impuesto');
+    tabla(['Impuesto','Capital','Intereses','Total','Vencidas','Pagos','A favor'],infPorImpuesto(I.items,hoy).map(r=>[INF_IMP_N[r.impuesto]+(r.jur?' ('+r.jur+')':''),M$(r.capital),M$(r.intereses),M$(r.total),String(r.venc),M$(r.pagos),M$(r.favor)]),{cols:{1:num,2:num,3:num,5:num,6:num}});
+    secc('4. Obligaciones vencidas y pendientes');
+    const vv=deudas.filter(x=>x._e.k==='vencida'),nv=deudas.filter(x=>x._e.k!=='vencida');
+    doc.setFontSize(10);doc.setTextColor(40);doc.text('Vencidas',M,y+5);y+=5;tabla(['Impuesto','Período','Vencim.','Saldo','Total'],vv.map(x=>[INF_IMP_N[x.impuesto],infPer(x),infFD(x.vencimiento),M$(x.saldo),M$(R.totalDe(x))]),{cols:{3:num,4:num}});
+    doc.setFontSize(10);doc.setTextColor(40);doc.text('No vencidas o a verificar',M,y+2);y+=2;tabla(['Impuesto','Período','Vencim.','Saldo','Estado'],nv.map(x=>[INF_IMP_N[x.impuesto],infPer(x),infFD(x.vencimiento),M$(x.saldo),x._e.t]),{cols:{3:num}});
+    secc('5. Pagos y saldos a favor');
+    tabla(['Impuesto','Período','Clase','Importe','Fecha'],vig.filter(x=>x.categoria==='pago'||x.categoria==='saldo_favor').map(x=>[INF_IMP_N[x.impuesto],infPer(x),INF_CAT[x.categoria],M$(x.categoria==='pago'?x.importe_pagado:(x.saldo!==null&&x.saldo!==undefined?x.saldo:x.importe_original)),x.datos&&x.datos.fecha_pago?fAR(x.datos.fecha_pago):infFD(x.vencimiento)]),{cols:{3:num}});
+    doc.setFontSize(8.5);doc.setTextColor(...gris);doc.text(doc.splitTextToSize('Un saldo a favor no se compensa automáticamente con cualquier deuda: su aplicación debe verificarse en ARCA.',W-2*M),M,y);y+=10;
+    // secciones por impuesto
+    const detPer=(imps,titulo,cols)=>{const rs=infPeriodos(I.items,imps,hoy).filter(r=>r.periodo||r.txt).slice(0,24);if(!rs.length)return;secc(titulo);const N=v=>v===null||v===undefined?'N/I':money(v).replace(/\u00a0/g,' ');
+      const cs=Object.fromEntries([...Array(cols.length+3).keys()].map(i=>[i+4,{halign:'right',cellWidth:'auto'}]));[cols.length+4,cols.length+5,cols.length+6].forEach(i=>cs[i]={halign:'right',cellWidth:23});cs[0]={cellWidth:17};cs[1]={cellWidth:22};cs[2]={cellWidth:18};cs[3]={cellWidth:18};
+      doc.autoTable({startY:y+2,head:[['Período','DDJJ','Present.','Vencim.',...cols.map(c=>c[1]),'Determinado','Pagado','Deuda']],body:rs.map(r=>[`${r.jur?r.jur+' ':''}${r.tipo==='m'&&r.periodo?r.periodo.slice(5,7)+'/'+r.periodo.slice(0,4):(r.txt||'—')}`,r.est?r.est.t:'Sin DDJJ',r.d&&r.d.fecha_presentacion?fAR(r.d.fecha_presentacion):'N/I',r.d&&r.d.vencimiento?fAR(r.d.vencimiento):(r.obl[0]&&r.obl[0].vencimiento?fAR(r.obl[0].vencimiento):'N/I'),...cols.map(c=>r.dd[c[0]]===undefined?'N/I':N(r.dd[c[0]])),N(r.det),N(r.pag===null?r.pagCta:r.pag),N(r.deuda)]),theme:'grid',styles:{fontSize:7,cellPadding:1.3,overflow:'linebreak'},headStyles:{fillColor:azul,textColor:255},columnStyles:cs,margin:{left:M,right:M,top:20,bottom:18},rowPageBreak:'avoid'});y=doc.lastAutoTable.finalY+3;doc.setFontSize(7.5);doc.setTextColor(...gris);doc.text('N/I = No informado en los documentos cargados (no estimado). Sin DDJJ = no hay declaración jurada cargada; no implica que no se haya presentado.',M,y+2);y+=9};
+    detPer(['IVA'],'6. IVA mensual',[['debito_fiscal','Déb. fiscal'],['credito_fiscal','Créd. fiscal'],['saldo_tecnico','S. técnico'],['saldo_libre','Libre disp.']]);
+    detPer(['IIBB_CBA','IIBB_CM','IIBB_OTRA'],'7. Ingresos Brutos',[['base','Base imp.'],['retenciones','Retenc.']]);
+    detPer(['GANANCIAS'],'8. Ganancias',[['resultado','Resultado imp.'],['anticipos','Anticipos']]);
+    const otrosI=INF_IMP.map(x=>x[0]).filter(k=>!['IVA','IIBB_CBA','IIBB_CM','IIBB_OTRA','GANANCIAS'].includes(k));detPer(otrosI,'9. Otros impuestos y regímenes',[]);
+    // ddjj
+    secc('10. Estado de declaraciones juradas');
+    tabla(['Impuesto','Período','Vencim.','Presentación','Estado','Archivo'],vig.filter(x=>x.categoria==='ddjj').map(x=>[INF_IMP_N[x.impuesto],infPer(x),infFD(x.vencimiento),infFD(x.fecha_presentacion),x._e.t,infDocN(x.doc_id)]));
+    doc.setFontSize(8.5);doc.setTextColor(...gris);doc.text(doc.splitTextToSize('La ausencia de una declaración jurada en los documentos cargados no demuestra que no haya sido presentada.',W-2*M),M,y);y+=10;
+    // observaciones
+    secc('11. Observaciones y tareas pendientes');
+    doc.setFontSize(10);doc.setTextColor(40);const ob=doc.splitTextToSize(I.notes.observaciones||'Sin observaciones del contador.',W-2*M);if(y+ob.length*5>275){doc.addPage();y=20}doc.text(ob,M,y+6);y+=ob.length*5+8;
+    tabla(['Tarea','Estado'],I.notes.tareas.map(t=>[t.t,t.hecha?'Hecha':'Pendiente']));
+    secc('12. Documentación analizada');
+    tabla(['Archivo','Tipo','Cargado','Fecha del reporte','Filas'],I.docs.map(d=>[d.file_name,INF_TIPOS_DOC[d.doc_type]||d.doc_type,fAR(d.uploaded_at.slice(0,10)),d.doc_date?fAR(d.doc_date):'No informado',`${d.rows_saved}/${d.rows_total}`]));
+    secc('13. Advertencias');
+    doc.setFontSize(9.5);doc.setTextColor(40);const adv=doc.splitTextToSize(`Este informe se elaboró con base en la documentación cargada en el sistema del Estudio Theiler, con fecha de corte ${fAR(hoy)}. Los importes corresponden a la fecha de consulta de cada documento y son los identificados en ellos: constituyen un total parcial y no reemplazan la consulta directa en ARCA. Los datos marcados como "No informado" no figuran en los archivos y no fueron estimados. El saldo técnico y el saldo de libre disponibilidad de IVA no equivalen a deuda exigible. La información debe verificarse en ARCA antes de efectuar pagos o tomar decisiones fiscales.`,W-2*M);if(y+adv.length*5>280){doc.addPage();y=20}doc.text(adv,M,y+6);
+    // pie y paginación
+    const n=doc.getNumberOfPages();for(let p=2;p<=n;p++){doc.setPage(p);doc.setFontSize(8);doc.setTextColor(...gris);doc.setDrawColor(200);doc.line(M,286,W-M,286);doc.text(`Estudio Theiler · ${c.razon_social} · Corte ${fAR(hoy)}`,M,291);doc.text(`Página ${p} de ${n}`,W-M,291,{align:'right'})}
+    const blob=doc.output('blob');bajar({blob,name:infArchivoNombre(c,'pdf')});
+    await infCorte('pdf');I.busy=false;flash('Informe generado y guardado en el historial.','ok');draw();
+  }catch(e){I.busy=false;flash('No se pudo generar el informe: '+errTxt(e),'err');draw()}
+}
+function infExcelHojas(){
+  const I=ui.inf,hoy=hoyISO(),R=infResumen(I.items,hoy,I.docs),vig=I.items.filter(x=>x.vigente);vig.forEach(x=>x._e=infEstado(x,hoy));
+  const fila=x=>({Impuesto:INF_IMP_N[x.impuesto]||x.impuesto,Código:x.codigo||'',Concepto:x.concepto||'',Jurisdicción:x.jurisdiccion||'','Período':x.periodo_txt||'No informado',Vencimiento:x.vencimiento||'No informado','Importe original':x.importe_original??'No informado',Pagado:x.importe_pagado??'No informado',Saldo:x.saldo??'No informado','Int. resarcitorio':x.int_resarcitorio??'No informado','Int. punitorio':x.int_punitorio??'No informado',Total:x.total??(x.saldo===null||x.saldo===undefined?'No informado':infR2((Number(x.saldo)||0)+(Number(x.int_resarcitorio)||0)+(Number(x.int_punitorio)||0))),Moneda:x.moneda||'ARS',Estado:x._e.t,'Estado informado':x.estado_informado||'',Clase:INF_CAT[x.categoria],'Fecha del reporte':x.fecha_reporte||'No informado',Archivo:infDocN(x.doc_id)});
+  const hojas={Resumen:[['Indicador','Valor'],['Fecha de corte',hoy],['Deuda total identificada (ARS)',R.total],['Capital',R.capital],['Intereses',R.intereses],['Obligaciones pendientes',R.cantPend],['Vencidas',R.cantVenc],['Próximas a vencer (30 días)',R.cantProx],['Saldo a favor',R.favor],['Última actualización',R.ultima||'Sin datos'],['Aclaración','Total parcial: solo lo identificado en los archivos cargados. Verificar en ARCA.']],
+    Obligaciones:vig.filter(x=>x.categoria==='obligacion'||x.categoria==='saldo_favor').map(fila),Pagos:vig.filter(x=>x.categoria==='pago').map(fila),DDJJ:vig.filter(x=>x.categoria==='ddjj').map(fila),
+    'Archivos de origen':I.docs.map(d=>({Archivo:d.file_name,Tipo:INF_TIPOS_DOC[d.doc_type]||d.doc_type,'Fecha de carga':d.uploaded_at.slice(0,10),'Fecha del reporte':d.doc_date||'No informado',Estado:d.status,'Filas guardadas':d.rows_saved,'Filas leídas':d.rows_total,Observaciones:d.notes||''}))};
+  const porImp={};vig.forEach(x=>{(porImp[(INF_IMP_N[x.impuesto]||x.impuesto).slice(0,28)]=porImp[(INF_IMP_N[x.impuesto]||x.impuesto).slice(0,28)]||[]).push(fila(x))});
+  return {hojas,porImp};
+}
+async function infExcel(){
+  const I=ui.inf,c=ui.clients.find(x=>x.id===ui.ficha.id);if(!c||typeof XLSX==='undefined'){flash('No se pudo cargar el generador de Excel.','err');return draw()}
+  I.busy=true;draw();
+  try{
+    const {hojas,porImp}=infExcelHojas(),wb=XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(hojas.Resumen),'Resumen');
+    for(const k of ['Obligaciones','Pagos','DDJJ','Archivos de origen']){XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(hojas[k].length?hojas[k]:[{Aviso:'Sin registros'}]),k)}
+    Object.entries(porImp).forEach(([k,v])=>{try{XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(v),('Imp - '+k).replace(/[\\/?*\[\]:]/g,'').slice(0,31))}catch(e){}});
+    const out=XLSX.write(wb,{type:'array',bookType:'xlsx'});bajar({blob:new Blob([out],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),name:infArchivoNombre(c,'xlsx')});
+    await infCorte('excel');I.busy=false;flash('Excel generado y guardado en el historial.','ok');draw();
+  }catch(e){I.busy=false;flash('No se pudo exportar: '+errTxt(e),'err');draw()}
+}
+/* ---------- pestaña ---------- */
+function vInformes(c,f){
+  const I=ui.inf;if(!I||I.cid!==c.id){setTimeout(()=>infCargar(c.id),0);return '<div class="msg info">Cargando informes tributarios…</div>'}
+  if(I.loading)return '<div class="msg info">Cargando informes tributarios…</div>';
+  if(I.error)return `<div class="msg err">${esc(I.error)}</div><button class="g" onclick="infCargar('${c.id}')">Reintentar</button>`;
+  const hoy=hoyISO();
+  const sec={general:()=>infGeneral(c,hoy),iva:()=>infIva(c,hoy),iibb:()=>infIibb(c,hoy),gan:()=>infGan(c,hoy),otros:()=>infOtros(c,hoy),ddjj:()=>infDdjjLista(c,hoy),hist:()=>infHist(c,hoy)}[I.sec]||(()=>'');
+  return `<div class="row" style="justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px"><h3 style="margin:0">Informes tributarios</h3><div class="row" style="gap:8px"><button class="b" ${I.busy?'disabled':''} onclick="infPdf()">Generar informe impositivo integral</button><button class="g" ${I.busy?'disabled':''} onclick="infExcel()">Exportar a Excel</button></div></div>
+  ${infUploadCard()}${infVistaPrevia()}
+  <div class="tabs" style="margin-bottom:12px;overflow-x:auto">${INF_SECC.map(([k,t])=>`<button class="${I.sec===k?'on':''}" onclick="infSel('${k}')">${t}</button>`).join('')}</div>${sec()}`;
 }
 
 /* ---- Reconocer el tipo de liquidación por su título ---- */
