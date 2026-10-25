@@ -170,7 +170,7 @@ function planImport(parsed,meta,existing,ctx){
 
 
 /* ===== Supabase ===== */
-const APP_VERSION='30/10/2026, informes tributarios e informe impositivo integral';
+const APP_VERSION='31/10/2026, preparación de balances (etapas 1 y 2)';
 const SUPABASE_URL='https://tugdqcoxcpsiynlvnqdu.supabase.co';
 const SUPABASE_KEY='sb_publishable_2-96VeZrsNNftRXkzA1l_A_YG7ThJrL'; // clave pública: los permisos los da la base (RLS)
 const sb=(typeof supabase!=='undefined')?supabase.createClient(SUPABASE_URL,SUPABASE_KEY):null;
@@ -219,7 +219,7 @@ async function loadClients(){const {data,error}=await sb.from('clients').select(
 async function logout(){await sb.auth.signOut()}
 
 /* ===== Navegación y carga de datos ===== */
-const TABS=[['inicio','Inicio'],['avisos','Avisos'],['cumplimiento','Cumplimiento'],['vencimientos','Vencimientos'],['clientes','Clientes'],['importar','Importar compras'],['escanear','Escanear QR'],['comprobantes','Comprobantes de compra'],['ventas','Ventas'],['iva','IVA aproximado'],['reclamos','Reclamos'],['anticipos','Anticipos'],['sueldos','Sueldos']];
+const TABS=[['inicio','Inicio'],['avisos','Avisos'],['cumplimiento','Cumplimiento'],['vencimientos','Vencimientos'],['clientes','Clientes'],['balances','Preparación de balances'],['importar','Importar compras'],['escanear','Escanear QR'],['comprobantes','Comprobantes de compra'],['ventas','Ventas'],['iva','IVA aproximado'],['reclamos','Reclamos'],['anticipos','Anticipos'],['sueldos','Sueldos']];
 async function show(t){
   if(t==='admin'&&!isAdmin()){flash('Esa sección es solo para administradores.','err');t='inicio'}
   stopCam();ui.tab=t;ui.hist=null;ui.scan=null;
@@ -236,6 +236,7 @@ async function show(t){
     if(t==='inicio')await loadDash();
     if(t==='importar'){const {data,error}=await sb.from('import_batches').select('*, clients(razon_social)').order('imported_at',{ascending:false}).limit(50);if(error)throw error;ui.batches=data}
     if(t==='comprobantes')await loadVouchers();
+    if(t==='balances'){ui.bal=ui.bal||balNuevo();await loadBal()}
   }catch(e){flash(errTxt(e),'err')}
   draw();
 }
@@ -249,7 +250,7 @@ function draw(){
   $('nav').innerHTML='<h1>Estudio Theiler</h1>'+TABS.concat(isAdmin()?[['admin','Administración']]:[]).map(([k,t])=>`<button class="${ui.tab===k?'on':''}" onclick="show('${k}')">${t}${navBadge(k)}</button>`).join('')+
    `<div class="me">${esc(prof.username||prof.full_name||me.email)}<br>${esc(prof.role)}<br><button class="g" onclick="logout()">Cerrar sesión</button><br><span style="display:block;margin-top:10px;font-size:11px;opacity:.7">Versión: ${APP_VERSION}</span></div>`;
   const m=ui.msg?`<div class="msg ${ui.msg.k}">${esc(ui.msg.t)}</div>`:'';ui.msg=null;window._fm=m;
-  $('main').innerHTML=(ui.ficha?'':m)+({inicio:vInicio,clientes:vClientes,importar:vImportar,escanear:vEscanear,comprobantes:vComp,vencimientos:vVenc,anticipos:vAnticipos,sueldos:vSueldosPage,ventas:vVentas,iva:vIva,admin:vAdmin,cumplimiento:vCumplimiento,avisos:vAvisos,reclamos:vReclamos})[ui.tab]()+vFicha();
+  $('main').innerHTML=(ui.ficha?'':m)+({inicio:vInicio,clientes:vClientes,importar:vImportar,escanear:vEscanear,comprobantes:vComp,vencimientos:vVenc,anticipos:vAnticipos,sueldos:vSueldosPage,ventas:vVentas,iva:vIva,admin:vAdmin,balances:vBalances,cumplimiento:vCumplimiento,avisos:vAvisos,reclamos:vReclamos})[ui.tab]()+vFicha();
   document.body.style.overflow=ui.ficha?'hidden':'';
 }
 function vInicio(){
@@ -2738,6 +2739,350 @@ function vInformes(c,f){
   return `<div class="row" style="justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px"><h3 style="margin:0">Informes tributarios</h3><div class="row" style="gap:8px"><button class="b" ${I.busy?'disabled':''} onclick="infPdf()">Generar informe impositivo integral</button><button class="g" ${I.busy?'disabled':''} onclick="infExcel()">Exportar a Excel</button></div></div>
   ${infUploadCard()}${infVistaPrevia()}
   <div class="tabs" style="margin-bottom:12px;overflow-x:auto">${INF_SECC.map(([k,t])=>`<button class="${I.sec===k?'on':''}" onclick="infSel('${k}')">${t}</button>`).join('')}</div>${sec()}`;
+}
+
+
+/* ===== Preparación de balances: reglas puras (etapas 1 y 2) ===== */
+const BAL_ENT={sociedad:'Sociedad / empresa',persona_fisica:'Persona humana',monotributista:'Monotributista',autonomo:'Autónomo',otra:'Otra entidad'};
+const BAL_CONT={completa:'Contabilidad completa',simplificada:'Registro simplificado / no contable',no_determinada:'Todavía no determinada'};
+const BAL_ESTADO={pendiente:['Pendiente','gry'],en_procesamiento:['En procesamiento','blu'],en_revision:['En revisión','amb'],observado:['Observado','red'],listo_revision_final:['Listo para revisión final','grn']};
+const BAL_REQ_ESTADO={solicitado:'Solicitado',cargado:'Cargado',procesado:'Procesado',validado:'Validado',observado:'Observado',no_aplica:'No corresponde'};
+const BAL_CAT={activo:'Activo',pasivo:'Pasivo',patrimonio_neto:'Patrimonio neto',ingresos:'Ingresos',costos:'Costos',gastos:'Gastos',orden:'Cuentas de orden',sin_clasificar:'Sin clasificar'};
+/** Lista de documentación según el tipo de entidad. No se exige todo a todos: cada ítem puede marcarse "no corresponde" con justificación. */
+function balChecklist(entidad,contab,imp){
+  imp=imp||[];const R=[],a=(codigo,nombre,grupo)=>R.push({codigo,nombre,grupo});
+  const comp=entidad==='sociedad'||contab==='completa';
+  if(comp){
+    a('sumas_saldos','Balance de sumas y saldos del ejercicio','Contabilidad');a('diario_mayor','Libro diario y mayor contable','Contabilidad');a('balance_anterior','Balance del ejercicio anterior','Contabilidad');a('plan_cuentas','Plan de cuentas','Contabilidad');
+  }
+  a('libro_iva_ventas','Libro IVA Ventas','Impuestos');a('libro_iva_compras','Libro IVA Compras','Impuestos');a('ddjj','Declaraciones juradas de impuestos del ejercicio','Impuestos');a('deudas_pagos','Reportes de deudas y pagos (ARCA / provincia)','Impuestos');
+  a('extractos','Extractos bancarios del ejercicio','Bancos y financiero');a('prestamos','Contratos, préstamos y documentación financiera','Bancos y financiero');
+  if(comp){
+    a('clientes','Detalle de clientes y cuentas por cobrar','Auxiliares');a('proveedores','Detalle de proveedores y cuentas por pagar','Auxiliares');a('inventario','Inventario de bienes de cambio','Auxiliares');a('bienes_uso','Registro de bienes de uso','Auxiliares');
+  }
+  a('facturas','Facturas de compras y ventas (respaldo)','Comprobantes');a('sueldos','Sueldos y cargas sociales','Personal');
+  if(entidad==='sociedad')a('societaria','Información societaria (estatuto, actas, aportes, distribución de resultados)','Societario');
+  else a('patrimonial','Información patrimonial (bienes, deudas, participaciones)','Patrimonio');
+  if(!comp){a('ingresos_gastos','Detalle de ingresos y gastos del ejercicio','Resultados')}
+  a('otros','Otros documentos según la actividad','Otros');
+  return R;
+}
+const BAL_ALIAS={
+  codigo:['codigo','cod','codigo cuenta','cod cuenta','nro cuenta','n cuenta','numero de cuenta','numero cuenta','imputacion','cuenta codigo'],
+  nombre:['nombre','nombre cuenta','nombre de la cuenta','descripcion','descripcion cuenta','denominacion','detalle','cuenta nombre','rubro','cuenta'],
+  inicial:['saldo inicial','saldos iniciales','saldo anterior','saldo al inicio','saldo inicio','inicial'],
+  debitos:['debe','debitos','debito','sumas debe','sumas del debe','movimientos debe','mov debe','total debe','debe periodo','movimiento debe'],
+  creditos:['haber','creditos','credito','sumas haber','sumas del haber','movimientos haber','mov haber','total haber','haber periodo','movimiento haber'],
+  final:['saldo final','saldos finales','saldo','saldo actual','saldo al cierre','saldo cierre'],
+  deudor:['saldo deudor','deudor','saldos deudores','deudores'],
+  acreedor:['saldo acreedor','acreedor','saldos acreedores','acreedores']
+};
+function balCabeceras(row){const m={};(row||[]).forEach((c,j)=>{const k=norm(c);if(!k)return;for(const [f,al] of Object.entries(BAL_ALIAS))if(m[f]===undefined&&al.includes(k)){m[f]=j;break}});return m}
+function balDetectar(rows){
+  let best=null;
+  for(let i=0;i<Math.min(rows.length,40);i++){const m=balCabeceras(rows[i]);
+    const num=['inicial','debitos','creditos','final','deudor','acreedor'].filter(k=>m[k]!==undefined).length;
+    if(m.nombre!==undefined&&num>=2&&(!best||num>best.num))best={h:i,map:m,num}}
+  return best;
+}
+const balSegs=c=>String(c||'').split(/[.\-\s\/]+/).filter(Boolean);
+/** Convierte las filas en cuentas con control de formato; detecta la fila de totales y las cuentas que son rubros (no imputables). */
+function balParse(rows,h,map){
+  const out={lines:[],totalFila:null,omit:[],malos:[],avisos:[]};
+  const signed=map.final!==undefined&&map.deudor===undefined&&map.acreedor===undefined;
+  for(let i=h+1;i<rows.length;i++){
+    const r=rows[i]||[];if(r.every(c=>c===null||String(c).trim()===''))continue;
+    const g=f=>map[f]===undefined?undefined:r[map[f]];
+    let cod=g('codigo')!==undefined&&String(g('codigo')??'').trim()!==''?String(g('codigo')).trim():null,nom=String(g('nombre')??'').trim();
+    if(!cod&&map.codigo===undefined){const m=nom.match(/^(\d+(?:[.\-]\d+)*)\s+(.+)$/);if(m){cod=m[1];nom=m[2]}}
+    const nums={};const bad=[];
+    for(const f of ['inicial','debitos','creditos','final','deudor','acreedor']){const v=g(f);if(v===undefined||v===null||String(v).trim()==='')continue;const n=infNum(v);if(n===null)bad.push(f);else nums[f]=n}
+    const esTotal=/^(total|totales|sumas|suma total|total general|sumas totales)\b/.test(norm(nom||cod||''))||(!nom&&!cod&&Object.keys(nums).length);
+    if(esTotal){out.totalFila={fila:i+1,...nums};out.omit.push(i+1);continue}
+    if(!nom&&!cod){out.omit.push(i+1);continue}
+    if(bad.length)out.malos.push({fila:i+1,campos:bad,cuenta:nom||cod});
+    let fin=nums.final!==undefined?nums.final:(nums.deudor!==undefined||nums.acreedor!==undefined?(nums.deudor||0)-(nums.acreedor||0):null);
+    out.lines.push({fila:i+1,cuenta_codigo:cod,cuenta_nombre:nom||('(sin nombre) '+cod),categoria:'sin_clasificar',saldo_inicial:nums.inicial!==undefined?nums.inicial:null,debitos:nums.debitos!==undefined?nums.debitos:null,creditos:nums.creditos!==undefined?nums.creditos:null,saldo_final:fin,raw:{}});
+  }
+  if(signed)out.avisos.push('El archivo trae una sola columna de saldo: se interpretó con signo (positivo = deudor, negativo = acreedor). Verificá que sea así.');
+  // rubros vs imputables según el código
+  const cods=out.lines.map(l=>l.cuenta_codigo).filter(Boolean);
+  out.lines.forEach(l=>{const s=balSegs(l.cuenta_codigo);const pad=l.cuenta_codigo&&cods.some(o=>o!==l.cuenta_codigo&&o.startsWith(l.cuenta_codigo)&&/^[.\-\s\/]/.test(o.slice(l.cuenta_codigo.length)));
+    l.raw={nivel:s.length||null,imputable:!pad}});
+  out.jerarquia=out.lines.some(l=>!l.raw.imputable);
+  return out;
+}
+const balR=n=>Math.round((n+Number.EPSILON)*100)/100;
+/** Controles aritméticos y de formato. sev: bloqueante | advertencia | info */
+function balControles(P,cierre,periodoTxt,cols){
+  const I=[],add=(sev,cod,msg,filas)=>I.push({sev,cod,msg,filas:filas&&filas.slice(0,12)||[]});
+  const L=P.lines,leaf=L.filter(l=>l.raw.imputable);
+  if(!L.length){add('bloqueante','vacio','El archivo no tiene cuentas utilizables.');return {issues:I,tot:{}}}
+  const S=f=>balR(leaf.reduce((s,l)=>s+(Number(l[f])||0),0));
+  const tot={cuentas:L.length,imputables:leaf.length,debitos:S('debitos'),creditos:S('creditos'),inicial:S('saldo_inicial'),final:S('saldo_final'),deudores:balR(leaf.reduce((s,l)=>s+Math.max(0,Number(l.saldo_final)||0),0)),acreedores:balR(leaf.reduce((s,l)=>s+Math.max(0,-(Number(l.saldo_final)||0)),0))};
+  if(P.malos.length)add('bloqueante','formato',`${P.malos.length} fila(s) con importes que no se pudieron interpretar: ${P.malos.slice(0,5).map(m=>`fila ${m.fila} (${m.cuenta})`).join(', ')}. Los totales no son confiables hasta corregirlas en el archivo.`,P.malos.map(m=>m.fila));
+  const cnt=new Map();L.forEach(l=>{if(l.cuenta_codigo)cnt.set(l.cuenta_codigo,(cnt.get(l.cuenta_codigo)||[]).concat(l.fila))});
+  const dup=[...cnt.entries()].filter(([,v])=>v.length>1);if(dup.length)add('bloqueante','duplicadas',`Códigos de cuenta repetidos: ${dup.slice(0,6).map(([k,v])=>k+' (filas '+v.join(', ')+')').join('; ')}. Pueden duplicar importes.`,dup.flatMap(([,v])=>v));
+  if(cols.debitos&&cols.creditos&&Math.abs(tot.debitos-tot.creditos)>0.01)add('bloqueante','debe_haber',`Los débitos (${tot.debitos.toFixed(2)}) no coinciden con los créditos (${tot.creditos.toFixed(2)}): diferencia ${balR(tot.debitos-tot.creditos).toFixed(2)}.`);
+  if(cols.final&&Math.abs(tot.final)>0.01)add('bloqueante','saldos',`Los saldos finales deudores (${tot.deudores.toFixed(2)}) no coinciden con los acreedores (${tot.acreedores.toFixed(2)}): diferencia ${balR(tot.deudores-tot.acreedores).toFixed(2)}.`);
+  if(cols.inicial&&Math.abs(tot.inicial)>0.01)add('advertencia','inicial',`Los saldos iniciales no suman cero (diferencia ${tot.inicial.toFixed(2)}).`);
+  if(cols.inicial&&cols.debitos&&cols.creditos&&cols.final){const mal=leaf.filter(l=>l.saldo_final!==null&&Math.abs((l.saldo_inicial||0)+(l.debitos||0)-(l.creditos||0)-l.saldo_final)>0.015);if(mal.length)add('advertencia','fila',`${mal.length} cuenta(s) donde saldo inicial + débitos − créditos no da el saldo final.`,mal.map(l=>l.fila))}
+  if(P.totalFila){const tf=P.totalFila,dif=[];[['debitos','debitos'],['creditos','creditos'],['final','final']].forEach(([a,b])=>{if(tf[a]!==undefined&&cols[a]&&Math.abs(tf[a]-tot[b])>0.01)dif.push(`${a}: archivo ${tf[a].toFixed(2)} vs calculado ${tot[b].toFixed(2)}`)});
+    if(tf.deudor!==undefined&&Math.abs(tf.deudor-tot.deudores)>0.01)dif.push(`saldo deudor: archivo ${tf.deudor.toFixed(2)} vs calculado ${tot.deudores.toFixed(2)}`);
+    if(tf.acreedor!==undefined&&Math.abs(tf.acreedor-tot.acreedores)>0.01)dif.push(`saldo acreedor: archivo ${tf.acreedor.toFixed(2)} vs calculado ${tot.acreedores.toFixed(2)}`);
+    if(dif.length)add('advertencia','total_archivo','Los totales del archivo no coinciden con la suma de las cuentas imputables ('+dif.join('; ')+').');else add('info','total_ok','Los totales de control del archivo coinciden con la suma de las cuentas.')}
+  else add('advertencia','sin_total','El archivo no trae fila de totales: no se puede comparar contra un control propio.');
+  const sc=L.filter(l=>l.categoria==='sin_clasificar').length;if(sc)add('advertencia','sin_clasificar',`${sc} cuenta(s) sin clasificar. Hay que asignarles rubro (Activo, Pasivo, etc.) antes de armar estados.`);
+  if(P.jerarquia)add('info','jerarquia',`Se detectaron rubros con subcuentas: los totales se calculan solo con las ${leaf.length} cuentas imputables (de ${L.length}) para no duplicar.`);
+  const vacias=leaf.filter(l=>!(l.saldo_inicial||l.debitos||l.creditos||l.saldo_final));if(vacias.length)add('info','vacias',`${vacias.length} cuenta(s) sin saldo ni movimientos.`,vacias.map(l=>l.fila));
+  if(periodoTxt&&periodoTxt.hasta&&cierre&&periodoTxt.hasta!==cierre)add('advertencia','periodo',`El período del archivo termina el ${fAR(periodoTxt.hasta)} y el cierre es el ${fAR(cierre)}.`);
+  if(periodoTxt&&periodoTxt.hasta&&periodoTxt.hasta===cierre)add('info','periodo_ok','El período del archivo coincide con la fecha de cierre.');
+  return {issues:I,tot};
+}
+/** Busca "del dd/mm/aaaa al dd/mm/aaaa" en las filas previas al encabezado. */
+function balPeriodoArchivo(rows,h){
+  const ds=[];for(let i=0;i<=Math.min(h,12);i++)(rows[i]||[]).forEach(c=>{if(c===null)return;const s=typeof c==='number'?'':String(c);for(const m of s.matchAll(/(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})/g)){const d=vDate(+m[3],+m[2],+m[1]);if(d)ds.push(d)}});
+  return ds.length>=2?{desde:ds[0],hasta:ds[ds.length-1]}:ds.length===1?{desde:null,hasta:ds[0]}:null;
+}
+/** Propuesta de rubro por el primer dígito del código (plan argentino habitual). Es solo una sugerencia que el usuario debe confirmar. */
+function balSugerir(cod){const d=String(cod||'').trim()[0];return {1:'activo',2:'pasivo',3:'patrimonio_neto',4:'ingresos',5:'costos',6:'gastos',7:'gastos',9:'orden'}[d]||null}
+
+/* ===== Preparación de balances: pantalla, cierres, checklist e importación ===== */
+const balTag=(txt,col)=>`<span class="tag" style="background:var(--${col});color:var(--${col}t)">${esc(txt)}</span>`;
+const balCli=id=>ui.clients.find(c=>c.id===id)||{razon_social:'(cliente)',cuit:''};
+const balUs=id=>id&&me&&id===me.id?'Vos':'Usuario del estudio';
+function balNuevo(){return {sel:null,list:[],cl:'',form:false,d:null,up:null,busy:false,sec:'check',loading:true}}
+async function loadBal(){
+  const B=ui.bal=ui.bal||balNuevo();B.loading=true;
+  try{B.list=await fetchAll((a,b)=>sb.from('bal_closings').select('*').order('fecha_cierre',{ascending:false}).range(a,b));B.error=null;
+    if(B.sel)await balAbrir(B.sel,true)}catch(e){B.error='No se pudo cargar: '+errTxt(e)}
+  B.loading=false;
+}
+async function balAbrir(id,silent){
+  const B=ui.bal;B.sel=id;B.up=null;B.sec=B.sec||'check';if(!silent){B.loading=true;draw()}
+  try{
+    const cl=B.list.find(x=>x.id===id);if(!cl)throw new Error('El cierre no existe o no tenés acceso.');
+    const [rq,im,au]=await Promise.all([fetchAll((a,b)=>sb.from('bal_requirements').select('*').eq('closing_id',id).order('grupo').order('nombre').range(a,b)),fetchAll((a,b)=>sb.from('bal_imports').select('*').eq('closing_id',id).order('created_at',{ascending:false}).range(a,b)),fetchAll((a,b)=>sb.from('bal_audit').select('*').eq('closing_id',id).order('created_at',{ascending:false}).range(a,b))]);
+    const act=im.find(x=>x.estado==='procesado'||x.estado==='con_observaciones');
+    const lines=act?await fetchAll((a,b)=>sb.from('bal_trial_lines').select('*').eq('import_id',act.id).order('fila').range(a,b)):[];
+    B.d={cl,reqs:rq,imps:im,act,lines,audit:au};
+  }catch(e){B.error=errTxt(e);B.sel=null}
+  B.loading=false;draw();
+}
+async function balAudit(cid,client_id,accion,detalle){try{await sb.from('bal_audit').insert({closing_id:cid,client_id,accion,detalle:detalle||{},user_id:me.id})}catch(e){}}
+async function balCrear(ev){
+  ev.preventDefault();if(!canEdit()){flash('No tenés permiso.','err');return draw()}
+  const f=new FormData(ev.target),B=ui.bal,cid=f.get('cid'),cierre=vDate(...String(f.get('cierre')).split('-').map(Number)),ini=f.get('inicio')?vDate(...String(f.get('inicio')).split('-').map(Number)):null;
+  if(!cid||!cierre){flash('Elegí el cliente y una fecha de cierre válida.','err');return draw()}
+  if(ini&&ini>=cierre){flash('El inicio del ejercicio tiene que ser anterior al cierre.','err');return draw()}
+  const ent=f.get('entidad'),con=f.get('contab');
+  try{
+    const {data,error}=await sb.from('bal_closings').insert({client_id:cid,entidad:ent,contabilidad:con,ejercicio:String(f.get('ejercicio')||cierre.slice(0,4)).trim(),fecha_inicio:ini,fecha_cierre:cierre,moneda:'ARS',estado:'pendiente',created_by:me.id}).select('*').single();
+    if(error)throw error;
+    const c=ui.clients.find(x=>x.id===cid),chk=balChecklist(ent,con,(c&&c.impuestos)||[]);
+    const r=await sb.from('bal_requirements').insert(chk.map(x=>({closing_id:data.id,client_id:cid,...x,estado:'solicitado',updated_by:me.id})));
+    if(r.error){await sb.from('bal_closings').delete().eq('id',data.id);throw r.error}
+    await balAudit(data.id,cid,'cierre_creado',{ejercicio:data.ejercicio,cierre});
+    B.form=false;B.list.unshift(data);await balAbrir(data.id);flash('Cierre creado con su lista de documentación.','ok');draw();
+  }catch(e){flash(/duplicate|unique/i.test(e.message||'')?'Ya existe un cierre de ese cliente con esa fecha.':errTxt(e),'err');draw()}
+}
+async function balEstado(v){
+  const B=ui.bal,cl=B.d.cl;const r=await sb.from('bal_closings').update({estado:v,updated_by:me.id,updated_at:new Date().toISOString()}).eq('id',cl.id);
+  if(r.error){flash(errTxt(r.error),'err');return draw()}
+  await balAudit(cl.id,cl.client_id,'estado_cierre',{de:cl.estado,a:v});cl.estado=v;cl.updated_at=new Date().toISOString();draw();
+}
+async function balReq(id,estado){
+  const B=ui.bal,q=B.d.reqs.find(x=>x.id===id);if(!q||!canEdit())return;let just=q.justificacion;
+  if(estado==='no_aplica'){just=(prompt('¿Por qué no corresponde "'+q.nombre+'"? (queda registrado)')||'').trim();if(!just){flash('Para marcar "no corresponde" hace falta una justificación.','warn');return draw()}}
+  else just=null;
+  const r=await sb.from('bal_requirements').update({estado,justificacion:just,updated_by:me.id,updated_at:new Date().toISOString()}).eq('id',id);
+  if(r.error){flash(errTxt(r.error),'err');return draw()}
+  await balAudit(B.d.cl.id,B.d.cl.client_id,'documento_estado',{codigo:q.codigo,de:q.estado,a:estado,justificacion:just});Object.assign(q,{estado,justificacion:just});draw();
+}
+async function balSubirDoc(id,input){
+  const B=ui.bal,q=B.d.reqs.find(x=>x.id===id),f=input.files&&input.files[0];input.value='';if(!q||!f||!canEdit())return;
+  const ext=(f.name.split('.').pop()||'').toLowerCase();if(!['pdf','xlsx','xls','csv','jpg','jpeg','png','txt','docx'].includes(ext)){flash('Tipo de archivo no admitido.','err');return draw()}
+  if(f.size>25*1024*1024||f.size===0){flash('El archivo está vacío o pesa más de 25 MB.','err');return draw()}
+  const path=`${B.d.cl.client_id}/balances/${B.d.cl.id}/${crypto.randomUUID()}-${f.name.replace(/[^\w.\-]+/g,'_')}`;
+  try{
+    const up=await sb.storage.from('clientes').upload(path,f,{contentType:f.type||'application/octet-stream',upsert:false});if(up.error)throw up.error;
+    const old=q.doc_path,nuevo=q.estado==='solicitado'?'cargado':q.estado;
+    const r=await sb.from('bal_requirements').update({doc_path:path,doc_name:f.name,estado:nuevo,justificacion:null,updated_by:me.id,updated_at:new Date().toISOString()}).eq('id',id);if(r.error){await sb.storage.from('clientes').remove([path]);throw r.error}
+    if(old)await sb.storage.from('clientes').remove([old]);
+    await balAudit(B.d.cl.id,B.d.cl.client_id,'documento_cargado',{codigo:q.codigo,archivo:f.name});Object.assign(q,{doc_path:path,doc_name:f.name,estado:nuevo,justificacion:null});flash('Documento cargado.','ok');draw();
+  }catch(e){flash(errTxt(e),'err');draw()}
+}
+/* ---- importación del balance de sumas y saldos ---- */
+async function balElegir(files){
+  const B=ui.bal,f=files&&files[0];if(!f)return;if(!canEdit()){flash('No tenés permiso para importar.','err');return draw()}
+  const ext=(f.name.split('.').pop()||'').toLowerCase();
+  if(!['xlsx','xls','csv'].includes(ext)){flash('Por ahora el balance se importa desde Excel (xlsx/xls) o CSV. La lectura de PDF llega en una etapa posterior.','warn');return draw()}
+  if(f.size===0){flash('El archivo está vacío.','err');return draw()}if(f.size>25*1024*1024){flash('El archivo pesa más de 25 MB.','err');return draw()}
+  B.busy=true;draw();
+  const up={file:f,nombre:f.name,ext,error:null,avisos:[],P:null,h:null,map:null,rows:null,periodo:null,cols:{}};
+  try{
+    const buf=await f.arrayBuffer();up.hash=await infSha(buf);const mg=new Uint8Array(buf.slice(0,4));
+    const dup=B.d.imps.find(i=>i.file_sha256===up.hash&&i.estado!=='error');if(dup)up.avisos.push(`Este mismo archivo ya se importó el ${fAR(dup.created_at.slice(0,10))}. Si lo guardás, reemplaza esa importación (la anterior queda en el historial).`);
+    let rows;try{
+      if(ext==='xlsx'&&!(mg[0]===0x50&&mg[1]===0x4B))throw new Error('formato');
+      if(ext==='xls'&&!((mg[0]===0xD0&&mg[1]===0xCF)||(mg[0]===0x50&&mg[1]===0x4B)||mg[0]===0x3C))throw new Error('formato');
+      if(ext==='csv'){const txt=new TextDecoder(/�/.test(new TextDecoder('utf-8').decode(buf).slice(0,4000))?'windows-1252':'utf-8').decode(buf).replace(/^﻿/,'');const l0=txt.split('\n')[0];const sep=(l0.match(/;/g)||[]).length>=(l0.match(/,/g)||[]).length?';':',';rows=XLSX.utils.sheet_to_json(XLSX.read(txt,{type:'string',FS:sep,raw:true}).Sheets.Sheet1,{header:1,raw:true,defval:null})}
+      else{const wb=XLSX.read(buf,{type:'array'});let best=null;for(const n of wb.SheetNames){const r=XLSX.utils.sheet_to_json(wb.Sheets[n],{header:1,raw:true,defval:null});const d=balDetectar(r);if(d&&(!best||d.num>best.d.num))best={r,d,n}}
+        rows=best?best.r:XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,raw:true,defval:null});if(best&&wb.SheetNames.length>1)up.avisos.push(`Se leyó la hoja "${best.n}".`)}
+    }catch(e){up.error='No se pudo abrir el archivo: puede estar dañado o protegido con contraseña.'}
+    if(!up.error){up.rows=rows;if(!rows||!rows.length||rows.every(r=>(r||[]).every(c=>c===null||String(c).trim()===''))){up.error='El archivo no tiene datos.'}
+      else{const d=balDetectar(rows);if(d){up.h=d.h;up.map=d.map}else{up.h=0;up.map={};up.mapear=true;up.avisos.push('No reconocí las columnas de este balance. Indicá abajo cuál es cada una.')}balRearmar(up)}}
+  }catch(e){up.error='No se pudo leer el archivo: '+errTxt(e)}
+  B.up=up;B.busy=false;draw();
+}
+function balRearmar(up){
+  if(!up.map||up.map.nombre===undefined){up.P=null;up.C=null;return}
+  const P=balParse(up.rows,up.h,up.map);
+  // conservar clasificaciones ya elegidas por el usuario
+  if(up.P)P.lines.forEach(l=>{const o=up.P.lines.find(x=>x.fila===l.fila);if(o&&o.categoria!=='sin_clasificar')l.categoria=o.categoria});
+  up.P=P;up.periodo=balPeriodoArchivo(up.rows,up.h);balRecontrolar(up);
+}
+function balRecontrolar(up){up.cols={debitos:up.map.debitos!==undefined,creditos:up.map.creditos!==undefined,inicial:up.map.inicial!==undefined,final:up.map.final!==undefined||up.map.deudor!==undefined||up.map.acreedor!==undefined};up.C=balControles(up.P,ui.bal.d.cl.fecha_cierre,up.periodo,up.cols);up.P.avisos.forEach(a=>{if(!up.C.issues.some(i=>i.msg===a))up.C.issues.push({sev:'info',cod:'aviso',msg:a,filas:[]})})}
+const BAL_MAPA=[['codigo','Código de cuenta'],['nombre','Nombre de cuenta'],['inicial','Saldo inicial'],['debitos','Débitos / Debe'],['creditos','Créditos / Haber'],['final','Saldo final (con signo)'],['deudor','Saldo deudor'],['acreedor','Saldo acreedor']];
+function balMapa(f,v){const up=ui.bal.up;if(v==='')delete up.map[f];else up.map[f]=Number(v);balRearmar(up);draw()}
+function balFilaTit(v){const up=ui.bal.up;up.h=Number(v)-1;up.map=balCabeceras(up.rows[up.h]);balRearmar(up);draw()}
+function balCat(i,v,on){const up=ui.bal.up;const l=on==='guardado'?ui.bal.d.lines[i]:up.P.lines[i];if(!l)return;
+  if(on==='guardado')return balCatGuardada(l,v);l.categoria=v;l.sugerida=false;balRecontrolar(up);draw()}
+function balSugerirTodo(on){
+  const lines=on==='guardado'?ui.bal.d.lines:ui.bal.up.P.lines;let n=0;
+  lines.forEach(l=>{if(l.categoria==='sin_clasificar'){const s=balSugerir(l.cuenta_codigo);if(s){l.categoria=s;l.sugerida=true;n++}}});
+  if(on==='guardado'){return balGuardarCats(lines.filter(l=>l.sugerida),n)}
+  balRecontrolar(ui.bal.up);flash(n?`Se propuso el rubro de ${n} cuenta(s) según el primer dígito del código. Son sugerencias: revisalas.`:'No hay cuentas para sugerir.',n?'info':'warn');draw();
+}
+async function balCatGuardada(l,v){
+  const B=ui.bal,d=B.d;if(!canEdit())return;const old=l.categoria;
+  const r=await sb.from('bal_trial_lines').update({categoria:v}).eq('id',l.id);if(r.error){flash(errTxt(r.error),'err');return draw()}
+  l.categoria=v;await balAudit(d.cl.id,d.cl.client_id,'cuenta_reclasificada',{cuenta:l.cuenta_codigo||l.cuenta_nombre,de:old,a:v});draw();
+}
+async function balGuardarCats(ls,n){
+  const d=ui.bal.d;try{for(const l of ls){const r=await sb.from('bal_trial_lines').update({categoria:l.categoria}).eq('id',l.id);if(r.error)throw r.error}
+    await balAudit(d.cl.id,d.cl.client_id,'clasificacion_sugerida_aplicada',{cuentas:ls.length});flash(`Se aplicaron ${n} sugerencias. Revisalas.`,'info')}catch(e){flash(errTxt(e),'err')}draw();
+}
+function balCancelar(){ui.bal.up=null;draw()}
+async function balGuardar(){
+  const B=ui.bal,up=B.up,d=B.d;if(!up||!up.P||B.busy||!canEdit())return;
+  if(!up.P.lines.length){flash('No hay cuentas para guardar.','err');return draw()}
+  const bloq=up.C.issues.filter(i=>i.sev==='bloqueante');
+  if(bloq.length&&!confirm(`El balance tiene ${bloq.length} error(es) bloqueante(s) (por ejemplo: ${bloq[0].msg}).\n\nSe puede guardar para trabajarlo, pero queda como OBSERVADO y no puede usarse para estados contables hasta resolverlo. ¿Guardar igual?`))return;
+  const previa=d.act;if(previa&&!confirm(`Ya hay una importación activa ("${previa.file_name}"). Si continuás, esta la reemplaza; la anterior queda en el historial como "reemplazada" (no se borra). ¿Continuar?`))return;
+  B.busy=true;draw();let path=null,impId=null;
+  try{
+    path=`${d.cl.client_id}/balances/${d.cl.id}/${crypto.randomUUID()}-${up.nombre.replace(/[^\w.\-]+/g,'_')}`;const u=await sb.storage.from('clientes').upload(path,up.file,{contentType:up.file.type||'application/octet-stream',upsert:false});if(u.error)throw u.error;
+    const I=up.C.issues,estado=bloq.length||I.some(i=>i.sev==='advertencia')?'con_observaciones':'procesado';
+    const {data:im,error:e1}=await sb.from('bal_imports').insert({closing_id:d.cl.id,client_id:d.cl.client_id,tipo:'sumas_saldos',file_name:up.nombre,storage_path:path,file_sha256:up.hash,estado,advertencias:I.filter(i=>i.sev!=='bloqueante'),errores:I.filter(i=>i.sev==='bloqueante'),totales:up.C.tot,rows_total:up.P.lines.length,created_by:me.id}).select('id').single();if(e1)throw e1;impId=im.id;
+    const filas=up.P.lines.map(l=>({import_id:impId,closing_id:d.cl.id,client_id:d.cl.client_id,fila:l.fila,cuenta_codigo:l.cuenta_codigo,cuenta_nombre:l.cuenta_nombre,categoria:l.categoria,saldo_inicial:l.saldo_inicial,debitos:l.debitos,creditos:l.creditos,saldo_final:l.saldo_final,raw:l.raw}));
+    for(let k=0;k<filas.length;k+=300){const r=await sb.from('bal_trial_lines').insert(filas.slice(k,k+300));if(r.error)throw r.error}
+    if(previa){const r=await sb.from('bal_imports').update({estado:'reemplazado'}).eq('id',previa.id);if(r.error)throw r.error}
+    const rq=d.reqs.find(x=>x.codigo==='sumas_saldos');if(rq){const ne=bloq.length?'observado':'procesado';await sb.from('bal_requirements').update({estado:ne,doc_path:path,doc_name:up.nombre,updated_by:me.id,updated_at:new Date().toISOString()}).eq('id',rq.id)}
+    const nuevoEst=bloq.length?'observado':(d.cl.estado==='pendiente'?'en_procesamiento':d.cl.estado);
+    await sb.from('bal_closings').update({estado:nuevoEst,updated_by:me.id,updated_at:new Date().toISOString()}).eq('id',d.cl.id);
+    await balAudit(d.cl.id,d.cl.client_id,'balance_importado',{archivo:up.nombre,cuentas:filas.length,bloqueantes:bloq.length,reemplaza:previa?previa.id:null});
+    B.up=null;B.busy=false;const idx=B.list.findIndex(x=>x.id===d.cl.id);if(idx>=0)B.list[idx].estado=nuevoEst;
+    await balAbrir(d.cl.id,true);flash(`Balance importado: ${filas.length} cuentas.${bloq.length?' Quedó OBSERVADO por errores bloqueantes.':''}`,bloq.length?'warn':'ok');draw();
+  }catch(e){
+    if(impId)await sb.from('bal_imports').delete().eq('id',impId);if(path)await sb.storage.from('clientes').remove([path]);
+    B.busy=false;flash('No se pudo guardar: '+errTxt(e)+'. No quedó nada a medias.','err');draw();
+  }
+}
+async function balVerDoc(path){return verArchivo(path)}
+function balExcel(){
+  const B=ui.bal,d=B.d;if(typeof XLSX==='undefined'){flash('No se pudo cargar el generador de Excel.','err');return draw()}
+  const wb=XLSX.utils.book_new(),c=balCli(d.cl.client_id);
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([['BORRADOR - sin validez contable'],['Cliente',c.razon_social],['CUIT',c.cuit],['Ejercicio',d.cl.ejercicio],['Cierre',d.cl.fecha_cierre],['Entidad',BAL_ENT[d.cl.entidad]],['Estado del trabajo',BAL_ESTADO[d.cl.estado][0]],['Generado',new Date().toLocaleString('es-AR')]]),'Cierre');
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(d.lines.length?d.lines.map(l=>({Fila:l.fila,Código:l.cuenta_codigo||'',Cuenta:l.cuenta_nombre,Rubro:BAL_CAT[l.categoria],Imputable:l.raw&&l.raw.imputable===false?'No (rubro)':'Sí','Saldo inicial':l.saldo_inicial??'No informado',Débitos:l.debitos??'No informado',Créditos:l.creditos??'No informado','Saldo final':l.saldo_final??'No informado'})):[{Aviso:'Sin balance importado'}]),'Sumas y saldos');
+  const iss=d.act?[...(d.act.errores||[]),...(d.act.advertencias||[])]:[];
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(iss.length?iss.map(i=>({Gravedad:i.sev,Detalle:i.msg,Filas:(i.filas||[]).join(', ')})):[{Aviso:'Sin incidencias registradas'}]),'Incidencias');
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(d.reqs.map(q=>({Grupo:q.grupo,Documento:q.nombre,Estado:BAL_REQ_ESTADO[q.estado],Justificación:q.justificacion||'',Archivo:q.doc_name||''}))),'Documentación');
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(d.imps.map(i=>({Archivo:i.file_name,Fecha:i.created_at,Estado:i.estado,Cuentas:i.rows_total}))),'Importaciones');
+  const out=XLSX.write(wb,{type:'array',bookType:'xlsx'});bajar({blob:new Blob([out],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),name:`Balance - borrador - ${c.razon_social.replace(/[\\/:*?"<>|]/g,'')} - ${d.cl.ejercicio}.xlsx`});
+  balAudit(d.cl.id,d.cl.client_id,'excel_exportado',{});
+}
+/* ---- vistas ---- */
+function balEstTag(e){const x=BAL_ESTADO[e]||[e,'gry'];return balTag(x[0],x[1])}
+function vBalances(){
+  const B=ui.bal;if(!B){setTimeout(async()=>{ui.bal=balNuevo();await loadBal();draw()},0);return '<div class="msg info">Cargando…</div>'}
+  if(B.loading)return '<div class="msg info">Cargando preparación de balances…</div>';
+  if(B.error)return `<div class="msg err">${esc(B.error)}</div><button class="g" onclick="ui.bal=null;draw()">Reintentar</button>`;
+  const head=`<h2>Preparación de balances</h2><div class="msg warn">Todo lo que se genera acá es <b>preliminar y requiere revisión del contador</b>. Que un balance cuadre aritméticamente no significa que esté validado contablemente.</div>`;
+  if(B.sel&&B.d)return head+vBalDetalle();
+  return head+vBalLista();
+}
+function vBalLista(){
+  const B=ui.bal,ed=canEdit(),act=ui.clients.filter(c=>c.active!==false);
+  const list=B.list.filter(x=>!B.cl||x.client_id===B.cl);
+  const form=B.form?`<form class="card" style="margin:12px 0" onsubmit="return balCrear(event)"><h3 style="margin-top:0">Nuevo cierre contable</h3><div class="fgrid">
+  <label>Cliente<select name="cid" required><option value="">Elegir…</option>${act.map(c=>`<option value="${c.id}" ${B.cl===c.id?'selected':''}>${esc(c.razon_social)}</option>`).join('')}</select></label>
+  <label>Tipo de entidad<select name="entidad">${Object.entries(BAL_ENT).map(([k,t])=>`<option value="${k}">${t}</option>`).join('')}</select></label>
+  <label>Llevanza contable<select name="contab">${Object.entries(BAL_CONT).map(([k,t])=>`<option value="${k}">${t}</option>`).join('')}</select></label>
+  <label>Ejercicio (nombre)<input name="ejercicio" placeholder="Ej.: 2025"></label>
+  <label>Inicio del ejercicio<input type="date" name="inicio"></label><label>Fecha de cierre<input type="date" name="cierre" required></label></div>
+  <div class="s" style="margin:6px 0">Si no está determinada la llevanza contable, no se asume contabilidad completa: la lista de documentos se arma con lo mínimo y podés ajustarla.</div>
+  <div class="row" style="gap:8px"><button class="b">Crear cierre</button><button type="button" class="g" onclick="ui.bal.form=false;draw()">Cancelar</button></div></form>`:'';
+  return `<div class="row" style="gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0"><select onchange="ui.bal.cl=this.value;draw()"><option value="">Todos los clientes</option>${act.map(c=>`<option value="${c.id}" ${B.cl===c.id?'selected':''}>${esc(c.razon_social)}</option>`).join('')}</select>${ed?'<button class="b" onclick="ui.bal.form=true;draw()">Nuevo cierre</button>':''}</div>${form}
+  <div class="tw"><table style="min-width:760px"><thead><tr><th>Cliente</th><th>Ejercicio</th><th>Cierre</th><th>Entidad</th><th>Estado</th><th>Actualizado</th><th></th></tr></thead><tbody>${list.map(x=>`<tr><td>${esc(balCli(x.client_id).razon_social)}<span class="s">CUIT ${balCli(x.client_id).cuit?cuitF(balCli(x.client_id).cuit):'-'}</span></td><td>${esc(x.ejercicio)}</td><td>${fAR(x.fecha_cierre)}</td><td>${esc(BAL_ENT[x.entidad])}</td><td>${balEstTag(x.estado)}</td><td>${fAR(x.updated_at.slice(0,10))}</td><td><button class="g" onclick="balAbrir('${x.id}')">Abrir</button></td></tr>`).join('')||'<tr><td colspan="7" style="text-align:center;color:var(--mut)">Todavía no hay cierres. Creá el primero con “Nuevo cierre”.</td></tr>'}</tbody></table></div>`;
+}
+function vBalDetalle(){
+  const B=ui.bal,d=B.d,cl=d.cl,c=balCli(cl.client_id),ed=canEdit();
+  const req=d.reqs.filter(q=>q.estado!=='no_aplica'),falt=req.filter(q=>q.estado==='solicitado').length,rec=req.length-falt;
+  const bloq=d.act?(d.act.errores||[]).length:0,adv=d.act?(d.act.advertencias||[]).filter(i=>i.sev==='advertencia').length:0;
+  const k=(t,v,s)=>`<div class="card kpi"><b style="font-size:24px">${v}</b><span>${t}</span>${s?`<span class="s">${s}</span>`:''}</div>`;
+  const sec={check:balCheck,bs:balSumas,inc:balInc,hist:balHist}[B.sec]||balCheck;
+  return `<div class="row" style="gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0"><button class="g" onclick="ui.bal.sel=null;ui.bal.d=null;ui.bal.up=null;draw()">← Cierres</button><h3 style="margin:0">${esc(c.razon_social)} · ${esc(cl.ejercicio)}</h3>${balEstTag(cl.estado)}
+  ${ed?`<select onchange="balEstado(this.value)" title="Cambiar estado del trabajo">${Object.entries(BAL_ESTADO).map(([k2,t])=>`<option value="${k2}" ${cl.estado===k2?'selected':''}>${t[0]}</option>`).join('')}</select>`:''}<button class="g" onclick="balExcel()">Exportar a Excel (borrador)</button></div>
+  <div class="s" style="margin-bottom:8px">CUIT ${c.cuit?cuitF(c.cuit):'No registrado'} · ${esc(BAL_ENT[cl.entidad])} · ${esc(BAL_CONT[cl.contabilidad])} · ${cl.fecha_inicio?fAR(cl.fecha_inicio)+' al ':'cierre '}${fAR(cl.fecha_cierre)} · Moneda ${cl.moneda}</div>
+  <div class="grid">${k('Documentación recibida',`${rec}/${req.length}`,falt?falt+' pendientes':'Completa')}${k('Conciliaciones realizadas','0','Etapa 4 (pendiente)')}${k('Diferencias pendientes',bloq+adv,bloq?bloq+' bloqueantes':'')}${k('Ajustes propuestos / aprobados','0 / 0','Etapa 5 (pendiente)')}${k('Última actualización',fAR(cl.updated_at.slice(0,10)))}</div>
+  <div class="tabs" style="margin:12px 0">${[['check','Documentación'],['bs','Sumas y saldos'],['inc','Incidencias'],['hist','Historial']].map(([k2,t])=>`<button class="${B.sec===k2?'on':''}" onclick="ui.bal.sec='${k2}';draw()">${t}</button>`).join('')}</div>${sec()}
+  <div class="card" style="margin-top:14px"><b>Próximas etapas</b><div class="s">Todavía no implementadas: motor de asientos y estados contables preliminares (etapa 3), conciliaciones (4), ajustes y aprobaciones (5), lectura de PDF/OCR (6). Este cierre ya guarda lo necesario para usarlas.</div></div>`;
+}
+function balCheck(){
+  const B=ui.bal,d=B.d,ed=canEdit(),grupos=[...new Set(d.reqs.map(q=>q.grupo))];
+  return grupos.map(g=>`<h4>${esc(g)}</h4><div class="tw"><table style="min-width:640px"><thead><tr><th>Documento</th><th>Estado</th><th>Archivo</th></tr></thead><tbody>${d.reqs.filter(q=>q.grupo===g).map(q=>`<tr><td>${esc(q.nombre)}${q.justificacion?`<span class="s">No corresponde: ${esc(q.justificacion)}</span>`:''}</td><td>${ed?`<select onchange="balReq('${q.id}',this.value)">${Object.entries(BAL_REQ_ESTADO).map(([k,t])=>`<option value="${k}" ${q.estado===k?'selected':''}>${t}</option>`).join('')}</select>`:esc(BAL_REQ_ESTADO[q.estado])}</td><td>${q.doc_path?`<a href="#" onclick="balVerDoc('${esc(q.doc_path)}');return false">${esc(q.doc_name||'ver')}</a> `:''}${ed&&q.codigo!=='sumas_saldos'?`<label class="g" style="cursor:pointer;padding:3px 8px;border-radius:8px">${q.doc_path?'Reemplazar':'Adjuntar'}<input type="file" style="display:none" onchange="balSubirDoc('${q.id}',this)"></label>`:''}${q.codigo==='sumas_saldos'?'<span class="s">Se carga desde “Sumas y saldos”</span>':''}</td></tr>`).join('')}</tbody></table></div>`).join('');
+}
+function balSumas(){
+  const B=ui.bal,d=B.d,ed=canEdit();
+  const upl=ed?`<div class="card" style="margin-bottom:12px" ondragover="event.preventDefault()" ondrop="event.preventDefault();balElegir(event.dataTransfer.files)"><div class="row" style="gap:10px;align-items:center;flex-wrap:wrap"><div style="flex:1;min-width:220px"><b>Importar balance de sumas y saldos</b><span class="s">Excel (xlsx/xls) o CSV. Se muestra una vista previa con controles antes de guardar; nada se sobrescribe sin confirmar.</span></div><label class="b" style="cursor:pointer">Elegir archivo<input type="file" accept=".xlsx,.xls,.csv" style="display:none" onchange="balElegir(this.files);this.value=''"></label></div>${B.busy?'<div class="msg info" style="margin-top:8px">Leyendo…</div>':''}</div>`:'';
+  return upl+(B.up?balPrevia():'')+balGuardado();
+}
+function balIssues(I){return I.map(i=>`<div class="msg ${i.sev==='bloqueante'?'err':i.sev==='advertencia'?'warn':'info'}" style="margin-bottom:6px"><b>${i.sev==='bloqueante'?'Bloqueante':i.sev==='advertencia'?'Advertencia':'Informativo'}:</b> ${esc(i.msg)}${i.filas&&i.filas.length?` <span class="s">Filas: ${i.filas.join(', ')}</span>`:''}</div>`).join('')}
+function balTablaCuentas(lines,on){
+  const ct=Object.entries(BAL_CAT),f=v=>v===null||v===undefined?'<span class="s">N/I</span>':esc(money(v));
+  return `<div class="tw" style="max-height:480px;overflow:auto"><table style="min-width:900px"><thead><tr><th>Fila</th><th>Código</th><th>Cuenta</th><th>Rubro</th><th>Saldo inicial</th><th>Débitos</th><th>Créditos</th><th>Saldo final</th></tr></thead><tbody>${lines.map((l,i)=>`<tr ${l.raw&&l.raw.imputable===false?'style="font-weight:600;background:var(--hd)"':''}><td>${l.fila??''}</td><td>${esc(l.cuenta_codigo||'')}</td><td>${esc(l.cuenta_nombre)}${l.raw&&l.raw.imputable===false?'<span class="s">Rubro (no suma)</span>':''}</td><td><select onchange="balCat(${i},this.value,'${on}')" ${canEdit()?'':'disabled'}>${ct.map(([k,t])=>`<option value="${k}" ${l.categoria===k?'selected':''}>${t}</option>`).join('')}</select>${l.sugerida?'<span class="s">Sugerida</span>':''}</td><td>${f(l.saldo_inicial)}</td><td>${f(l.debitos)}</td><td>${f(l.creditos)}</td><td>${f(l.saldo_final)}</td></tr>`).join('')}</tbody></table></div>`;
+}
+function balPrevia(){
+  const B=ui.bal,up=B.up,P=up.P;
+  const mapa=up.rows?`<details ${up.mapear||!P?'open':''} style="margin:8px 0"><summary>Columnas detectadas · corregir</summary><div class="fgrid" style="margin-top:8px"><label>Fila de títulos<input type="number" min="1" max="${Math.min(up.rows.length,60)}" value="${up.h+1}" onchange="balFilaTit(this.value)"></label>${BAL_MAPA.map(([k,t])=>`<label>${t}<select onchange="balMapa('${k}',this.value)"><option value="">— no está —</option>${(up.rows[up.h]||[]).map((x,j)=>`<option value="${j}" ${up.map[k]===j?'selected':''}>${esc(String(x??'').trim()||'(columna '+(j+1)+')')}</option>`).join('')}</select></label>`).join('')}</div></details>`:'';
+  const nb=P&&up.C?up.C.issues.filter(i=>i.sev==='bloqueante').length:0;
+  return `<div class="card" style="margin-bottom:14px;border:1px solid var(--blut)"><h3 style="margin-top:0">Vista previa · ${esc(up.nombre)}</h3>${up.error?`<div class="msg err">${esc(up.error)}</div>`:''}${up.avisos.map(a=>`<div class="msg warn">${esc(a)}</div>`).join('')}${mapa}
+  ${P&&up.C?`<div class="grid" style="margin:8px 0">${[['Cuentas',P.lines.length],['Imputables',up.C.tot.imputables],['Débitos',money(up.C.tot.debitos||0)],['Créditos',money(up.C.tot.creditos||0)],['Σ saldos finales',money(up.C.tot.final||0)]].map(([t,v])=>`<div class="card kpi"><b style="font-size:20px">${esc(String(v))}</b><span>${t}</span></div>`).join('')}</div>
+  <h4>Controles</h4>${balIssues(up.C.issues)}
+  <div class="row" style="gap:8px;margin:8px 0"><button class="g" onclick="balSugerirTodo('previa')">Sugerir rubros por código</button></div>${balTablaCuentas(P.lines,'previa')}
+  <div class="s">Débitos, créditos y saldos se calculan solo con cuentas imputables. Lo que el archivo no trae figura como N/I y no se completa.</div>`:''}
+  <div class="row" style="gap:8px;margin-top:10px"><button class="b" ${B.busy||!P||!P.lines.length?'disabled':''} onclick="balGuardar()">${nb?'Guardar como observado':'Guardar balance'}</button><button class="g" onclick="balCancelar()">Cancelar</button></div></div>`;
+}
+function balGuardado(){
+  const d=ui.bal.d;if(!d.act)return '<div class="msg info">Todavía no se importó ningún balance de sumas y saldos. Si solo hay comprobantes y extractos, la base contable se construye de a poco en etapas posteriores y el sistema va a informar qué falta: no se afirma que la contabilidad esté reconstruida.</div>';
+  const a=d.act,t=a.totales||{};
+  return `<h3>Balance importado · ${esc(a.file_name)}</h3><div class="s">${fAR(a.created_at.slice(0,10))} · ${a.rows_total} cuentas · estado ${a.estado==='procesado'?'procesado':'con observaciones'}</div>
+  <div class="row" style="gap:8px;margin:8px 0"><button class="g" onclick="balSugerirTodo('guardado')" ${canEdit()?'':'disabled'}>Sugerir rubros por código</button></div>${balTablaCuentas(d.lines,'guardado')}
+  <div class="grid" style="margin-top:10px">${[['Σ débitos',t.debitos],['Σ créditos',t.creditos],['Σ saldos finales',t.final]].map(([k,v])=>`<div class="card kpi"><b style="font-size:20px">${v===undefined?'N/I':esc(money(v))}</b><span>${k}</span></div>`).join('')}</div>`;
+}
+function balInc(){
+  const d=ui.bal.d;if(!d.act)return '<div class="msg info">Sin incidencias: todavía no hay balance importado.</div>';
+  const sc=d.lines.filter(l=>l.categoria==='sin_clasificar').length,extra=sc?[{sev:'advertencia',msg:`${sc} cuenta(s) siguen sin clasificar.`}]:[];
+  const falt=d.reqs.filter(q=>q.estado==='solicitado').map(q=>({sev:'info',msg:'Documento pendiente: '+q.nombre}));
+  const I=[...(d.act.errores||[]),...(d.act.advertencias||[]).filter(i=>i.cod!=='sin_clasificar'),...extra,...falt].sort((a,b)=>({bloqueante:0,advertencia:1,info:2}[a.sev]-{bloqueante:0,advertencia:1,info:2}[b.sev]));
+  return `<div class="s" style="margin-bottom:8px">Ordenadas por prioridad: primero errores bloqueantes, luego advertencias e información.</div>${balIssues(I)}`;
+}
+function balHist(){
+  const d=ui.bal.d;
+  const acc={cierre_creado:'Cierre creado',estado_cierre:'Cambio de estado',documento_estado:'Estado de documento',documento_cargado:'Documento cargado',balance_importado:'Balance importado',cuenta_reclasificada:'Cuenta reclasificada',clasificacion_sugerida_aplicada:'Sugerencias de rubro aplicadas',excel_exportado:'Excel exportado'};
+  return `<h4>Importaciones</h4><div class="tw"><table style="min-width:560px"><thead><tr><th>Fecha</th><th>Archivo</th><th>Cuentas</th><th>Estado</th><th>Usuario</th></tr></thead><tbody>${d.imps.map(i=>`<tr><td>${new Date(i.created_at).toLocaleString('es-AR')}</td><td>${i.storage_path?`<a href="#" onclick="balVerDoc('${esc(i.storage_path)}');return false">${esc(i.file_name)}</a>`:esc(i.file_name)}</td><td>${i.rows_total}</td><td>${esc({procesado:'Procesado',con_observaciones:'Con observaciones',error:'Error',reemplazado:'Reemplazada'}[i.estado])}</td><td>${balUs(i.created_by)}</td></tr>`).join('')||'<tr><td colspan="5" style="text-align:center;color:var(--mut)">Sin importaciones.</td></tr>'}</tbody></table></div>
+  <h4>Registro de actividad</h4><div class="tw"><table style="min-width:560px"><thead><tr><th>Fecha</th><th>Acción</th><th>Detalle</th><th>Usuario</th></tr></thead><tbody>${d.audit.map(a=>`<tr><td>${new Date(a.created_at).toLocaleString('es-AR')}</td><td>${esc(acc[a.accion]||a.accion)}</td><td><span class="s">${esc(JSON.stringify(a.detalle||{}).slice(0,160))}</span></td><td>${balUs(a.user_id)}</td></tr>`).join('')||'<tr><td colspan="4" style="text-align:center;color:var(--mut)">Sin actividad.</td></tr>'}</tbody></table></div>`;
 }
 
 /* ---- Reconocer el tipo de liquidación por su título ---- */
