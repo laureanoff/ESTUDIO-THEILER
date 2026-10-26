@@ -170,7 +170,7 @@ function planImport(parsed,meta,existing,ctx){
 
 
 /* ===== Supabase ===== */
-const APP_VERSION='31/10/2026, preparación de balances completa (etapas 1 a 6)';
+const APP_VERSION='26/10/2026, sueldos: fichas por tipo de personal y vencimientos por CUIT';
 const SUPABASE_URL='https://tugdqcoxcpsiynlvnqdu.supabase.co';
 const SUPABASE_KEY='sb_publishable_2-96VeZrsNNftRXkzA1l_A_YG7ThJrL'; // clave pública: los permisos los da la base (RLS)
 const sb=(typeof supabase!=='undefined')?supabase.createClient(SUPABASE_URL,SUPABASE_KEY):null;
@@ -258,7 +258,7 @@ function vInicio(){
   const sum=k=>R.reduce((a,r)=>a+r[k],0),venc7=R.filter(r=>r.nxt&&diasHasta(r.nxt.fecha)<=7).length;
   const K=[['Clientes activos',R.length],['Sin importar el Excel',R.filter(r=>r.state==='sin_importar').length],['Comprobantes sin pasar',sum('pend')],['Facturas faltantes',sum('fal')],['Vencen en 7 días',venc7],['Declaraciones sin presentar',R.reduce((a,r)=>a+r.fil.filter(x=>!x.ok).length,0)]];
   const ST={sin_importar:['Sin importar','amb'],pendiente:['Sin pasar','blu'],faltan:['Faltan facturas','org'],al_dia:['Al día','grn'],exento:['IVA exento (en 0)','blu']};
-  const SH={IVA:'IVA',CM:'IIBB CM',F931:'F.931',GANANCIAS_PH:'Ganancias',GAN_ANT:'Anticipos Gcias.',GAN_DDJJ:'Ganancias',BP:'B. Personales',MONOTRIBUTO:'Monotributo',OTRO:'Otro'};
+  const SH={IVA:'IVA',CM:'IIBB CM',F931:'F.931',GANANCIAS_PH:'Ganancias',GAN_ANT:'Anticipos Gcias.',GAN_DDJJ:'Ganancias',BP:'B. Personales',MONOTRIBUTO:'Monotributo',SERV_DOM:'Serv. doméstico',OTRO:'Otro'};
   const urg=n=>n<=2?'var(--redt)':n<=7?'var(--ambt)':'var(--mut)';
   const prox=R.filter(r=>r.nxt&&diasHasta(r.nxt.fecha)<=14).sort((a,b)=>a.nxt.fecha<b.nxt.fecha?-1:1);
   return `<h2>Inicio</h2>${bkRecordatorio()}${avisosResumen()}
@@ -713,7 +713,7 @@ async function diagCam(){
 }
 
 /* ===== Vencimientos ===== */
-const IMPS=[['IVA','IVA'],['IIBB','IIBB provincial (fuera de CM)'],['CM','IIBB Convenio Multilateral'],['F931','Cargas sociales F.931'],['GAN_ANT','Ganancias: anticipos'],['GAN_DDJJ','Ganancias: declaración jurada anual'],['BP','Bienes Personales'],['MONOTRIBUTO','Monotributo']];
+const IMPS=[['IVA','IVA'],['IIBB','IIBB provincial (fuera de CM)'],['CM','IIBB Convenio Multilateral'],['F931','Cargas sociales F.931'],['GAN_ANT','Ganancias: anticipos'],['GAN_DDJJ','Ganancias: declaración jurada anual'],['BP','Bienes Personales'],['MONOTRIBUTO','Monotributo'],['SERV_DOM','Servicio doméstico (Casas Particulares)']];
 const canEdit=()=>isAdmin()||(prof&&prof.all_clients);
 const isoLocal=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
 const diasHasta=iso=>{const [y,m,d]=iso.split('-').map(Number),h=isoLocal(new Date()).split('-').map(Number);return Math.round((Date.UTC(y,m-1,d)-Date.UTC(h[0],h[1]-1,h[2]))/864e5)};
@@ -1181,23 +1181,70 @@ function empDeArchivo(nombre,act){
   const n=' '+normN(base)+' ',m=act.filter(e=>normN(e.nombre).split(' ').every(w=>n.includes(' '+w+' ')));
   return m.length===1?m[0]:null;
 }
+const SUE_TIPOS={dependencia:'Relación de dependencia',domestico:'Servicio doméstico'};
+const SUE_IMP={dependencia:'F931',domestico:'SERV_DOM'};
+const SUE_BOLETAS=['UATRE','OSECAC','FAECYS','IERIC','AMMA','ACTF','OSPRERA','UOCRA','SEC'];
+const SUE_PAGO=['Transferencia bancaria','Efectivo','Cheque','Débito automático','Otro'];
+const sueTag=t=>`<span class="tag" style="background:var(--${t==='domestico'?'amb':'blu'});color:var(--${t==='domestico'?'ambt':'blut'})">${SUE_TIPOS[t]}</span>`;
+const sueProf=(f,t)=>(f.prof||[]).find(p=>p.tipo===t)||null;
+/** Próximos vencimientos del calendario para la terminación del CUIT del cliente. */
+function sueProx(c,tipo,n){
+  const term=Number(c.cuit.slice(-1));
+  return ui.dl.filter(d=>d.impuesto===SUE_IMP[tipo]&&diasHasta(d.fecha)>=0&&(d.terminaciones||[]).includes(term)).sort((a,b)=>a.fecha<b.fecha?-1:1).slice(0,n||2);
+}
+function sueVencHtml(c,tipo){
+  const L=sueProx(c,tipo,2),term=c.cuit.slice(-1),nom=tipo==='domestico'?'del servicio doméstico':'del F.931 (cargas sociales)';
+  return `<div class="row" style="gap:12px;align-items:center;margin:8px 0;flex-wrap:wrap"><div class="term">${term}<small>CUIT termina en</small></div><div style="flex:1;min-width:220px">${L.length?L.map(d=>`<div>Vence <b>${fAR(d.fecha)}</b> (${diaSem(d.fecha)}, ${cuando(diasHasta(d.fecha))})${d.periodo?` · período ${esc(d.periodo)}`:''} ${confTag(d)}</div>`).join(''):`<span class="s">No hay vencimientos ${nom} cargados para la terminación ${term}. Cargalos en la sección Vencimientos (impuesto: ${tipo==='domestico'?'Servicio doméstico':'Cargas sociales F.931'}) y van a aparecer acá solos.</span>`}</div></div>`;
+}
+function sueFicha(c,f,tipo){
+  const p=sueProf(f,tipo)||{},s=sueState(f),emp=f.emp.filter(e=>e.tipo===tipo&&e.activo).length;
+  const abierto=(s.ab&&s.ab[tipo]!==undefined)?s.ab[tipo]:(emp>0||!!sueProf(f,tipo));
+  const bol=p.boletas||[];
+  return `<details class="card" style="margin-bottom:12px" ${abierto?'open':''} ontoggle="ui.sd.sue.ab=ui.sd.sue.ab||{};ui.sd.sue.ab['${tipo}']=this.open"><summary style="cursor:pointer;font-weight:700">${SUE_TIPOS[tipo]} · ficha de liquidación ${emp?`<span class="s" style="display:inline">(${emp} activo${emp>1?'s':''})</span>`:''}${sueProf(f,tipo)?'':' <span class="s" style="display:inline">sin completar</span>'}</summary>
+  ${sueVencHtml(c,tipo)}
+  <form onsubmit="return saveProf(event,'${tipo}')"><div class="fgrid" style="margin-top:6px">
+   <label class="full row" style="gap:8px;align-items:center"><input type="checkbox" name="no_envia" ${p.recibos_no_envia?'checked':''}> No se envían los recibos de sueldo (el cliente los retira o no los pide)</label>
+   <label>A quién se envían los recibos<input name="recibos_destino" placeholder="Nombre, mail o WhatsApp" value="${esc(p.recibos_destino)}"></label>
+   <label>A quién se envía el VEP<input name="vep_destino" placeholder="Nombre, mail o WhatsApp" value="${esc(p.vep_destino)}"></label>
+   <label>Medio de pago<select name="medio_pago"><option value="">Sin definir</option>${SUE_PAGO.map(m=>`<option ${p.medio_pago===m?'selected':''}>${m}</option>`).join('')}</select></label>
+   <label>Banco<input name="banco" placeholder="Ej.: Banco Nación, Galicia" value="${esc(p.banco)}"></label>
+   ${tipo==='dependencia'?`<label>Convenio colectivo (CCT)<input name="cct" placeholder="Ej.: CCT 130/75 Comercio" value="${esc(p.cct)}"></label>
+   <div class="full"><div class="s" style="margin-bottom:6px">Otras boletas que se emiten además del F.931</div><div class="row" style="gap:14px;flex-wrap:wrap">${SUE_BOLETAS.map(b=>`<label class="row" style="gap:5px;align-items:center"><input type="checkbox" name="boletas" value="${b}" ${bol.includes(b)?'checked':''}> ${b}</label>`).join('')}</div></div>
+   <label class="full">Otras boletas (no están en la lista)<input name="boletas_otras" placeholder="Separadas por coma" value="${esc(p.boletas_otras)}"></label>`:''}
+   <label class="full">Observaciones<textarea name="observaciones" rows="3" placeholder="Cualquier dato que haya que recordar">${esc(p.observaciones)}</textarea></label>
+   <div class="full row"><button class="b">Guardar ficha</button>${p.updated_at?`<span class="s">Última actualización ${new Date(p.updated_at).toLocaleDateString('es-AR')}</span>`:''}</div></div></form></details>`;
+}
+async function saveProf(e,tipo){
+  e.preventDefault();const fd=new FormData(e.target),f=ui.sd,t=k=>String(fd.get(k)||'').trim()||null;
+  const row={client_id:f.id,tipo,recibos_no_envia:fd.get('no_envia')==='on',recibos_destino:t('recibos_destino'),vep_destino:t('vep_destino'),medio_pago:t('medio_pago'),banco:t('banco'),observaciones:t('observaciones'),updated_by:me.id,updated_at:new Date().toISOString()};
+  if(tipo==='dependencia'){row.cct=t('cct');row.boletas=fd.getAll('boletas');row.boletas_otras=t('boletas_otras')}
+  const {error}=await sb.from('payroll_profiles').upsert(row,{onConflict:'client_id,tipo'});
+  if(error)flash(errTxt(error),'err');else{try{await recargarSueldos();flash('Ficha guardada.')}catch(x){flash(errTxt(x),'err')}}
+  draw();return false;
+}
 function vSueldos(c,f){
   const s=sueState(f),edit=f.emp.find(e=>e.id===s.editEmp),act=f.emp.filter(e=>e.activo),pays=f.pay.filter(p=>p.periodo.slice(0,7)===s.periodo&&p.tipo===s.tipo),puedeCompartir=typeof navigator.canShare==='function';
   const waTxt=e=>{if(!e.whatsapp)return '<span class="s">Sin WhatsApp</span>';const w=waNum(e.whatsapp);return esc(e.whatsapp)+(w&&!w.ok?'<span class="s" style="color:var(--redt)">Revisá el número</span>':'')};
+  const envio=e=>{const p=sueProf(f,e.tipo);if(!p)return '';return p.recibos_no_envia?'<span class="s">Ficha: no se envía recibo</span>':p.recibos_destino?`<span class="s">Ficha: enviar a ${esc(p.recibos_destino)}</span>`:''};
+  const tipoSel=edit?edit.tipo:(s.tipoNuevo||'dependencia');
   const form=`<form class="card" style="margin-bottom:12px" onsubmit="return saveEmp(event)"><b>${edit?'Editar empleado':'Agregar empleado'}</b><div class="fgrid" style="margin-top:8px">
+  <label>Tipo de personal<select name="tipo" onchange="ui.sd.sue.tipoNuevo=this.value">${Object.entries(SUE_TIPOS).map(([k,t])=>`<option value="${k}" ${tipoSel===k?'selected':''}>${t}</option>`).join('')}</select></label>
   <label>Nombre y apellido<input name="nombre" required value="${esc(edit&&edit.nombre)}"></label>
   <label>CUIL (opcional)<input name="cuil" inputmode="numeric" placeholder="20-12345678-9" value="${edit&&edit.cuil?cuitF(edit.cuil):''}"></label>
   <label>Celular de WhatsApp<input name="whatsapp" inputmode="tel" placeholder="3537 412345" value="${esc(edit&&edit.whatsapp)}"></label>
-  <label>Cargo (opcional)<input name="cargo" value="${esc(edit&&edit.cargo)}"></label>
+  <label>Cargo o categoría (opcional)<input name="cargo" value="${esc(edit&&edit.cargo)}"></label>
+  <label>Horas semanales (servicio doméstico)<input name="horas" inputmode="decimal" placeholder="Ej.: 16" value="${edit&&edit.horas_semanales!==null&&edit.horas_semanales!==undefined?esc(String(edit.horas_semanales).replace('.',',')):''}"></label>
+  <label class="full">Observaciones del empleado<textarea name="observaciones" rows="2">${esc(edit&&edit.observaciones)}</textarea></label>
   <div class="full row"><button class="b">${edit?'Guardar cambios':'Agregar empleado'}</button>${edit?'<button type="button" class="g" onclick="ui.sd.sue.editEmp=null;draw()">Cancelar</button>':''}</div></div></form>`;
-  const empT=`<div class="tw" style="margin-bottom:22px"><table><thead><tr><th>Empleado</th><th>CUIL</th><th>WhatsApp</th><th>Estado</th><th></th></tr></thead><tbody>${f.emp.length?f.emp.map(e=>`<tr style="${e.activo?'':'opacity:.55'}"><td>${esc(e.nombre)}<span class="s">${esc(e.cargo)}</span></td><td>${e.cuil?cuitF(e.cuil):''}</td><td>${waTxt(e)}</td><td>${e.activo?'Activo':'De baja'}</td><td style="white-space:nowrap"><button class="g sm" onclick="ui.sd.sue.editEmp='${e.id}';draw()">Editar</button> <button class="g sm" onclick="bajaEmp('${e.id}')">${e.activo?'Dar de baja':'Reactivar'}</button> <button class="dng sm" onclick="quitarEmp('${e.id}')">Quitar</button></td></tr>`).join(''):'<tr><td colspan="5" style="color:var(--mut)">Todavía no hay empleados. Agregá el primero con su nombre y WhatsApp.</td></tr>'}</tbody></table></div>`;
+  const empT=`<div class="tw" style="margin-bottom:22px"><table><thead><tr><th>Empleado</th><th>Tipo</th><th>Horas</th><th>CUIL</th><th>WhatsApp</th><th>Estado</th><th></th></tr></thead><tbody>${f.emp.length?f.emp.map(e=>`<tr style="${e.activo?'':'opacity:.55'}"><td>${esc(e.nombre)}<span class="s">${esc(e.cargo)}</span>${e.observaciones?`<span class="s">${esc(e.observaciones)}</span>`:''}</td><td>${sueTag(e.tipo)}</td><td>${e.tipo==='domestico'?(e.horas_semanales!==null&&e.horas_semanales!==undefined?esc(String(e.horas_semanales).replace('.',','))+' h/sem':'<span class="s">Sin cargar</span>'):'<span class="s">-</span>'}</td><td>${e.cuil?cuitF(e.cuil):''}</td><td>${waTxt(e)}</td><td>${e.activo?'Activo':'De baja'}</td><td style="white-space:nowrap"><button class="g sm" onclick="ui.sd.sue.editEmp='${e.id}';draw()">Editar</button> <button class="g sm" onclick="bajaEmp('${e.id}')">${e.activo?'Dar de baja':'Reactivar'}</button> <button class="dng sm" onclick="quitarEmp('${e.id}')">Quitar</button></td></tr>`).join(''):'<tr><td colspan="7" style="color:var(--mut)">Todavía no hay empleados. Agregá el primero con su nombre y WhatsApp.</td></tr>'}</tbody></table></div>`;
   const filas=act.map(e=>{
     const p=pays.find(x=>x.employee_id===e.id),w=waNum(e.whatsapp),ok=w&&w.ok;
     const sub=lbl=>`<label class="g sm">${lbl}<input type="file" accept="application/pdf,.pdf" hidden onchange="subirRecibo('${e.id}',this)"></label>`;
-    return `<tr><td>${esc(e.nombre)}<span class="s">${e.cuil?cuitF(e.cuil):''}</span></td>
+    return `<tr><td>${esc(e.nombre)}<span class="s">${e.cuil?cuitF(e.cuil):''}</span>${sueTag(e.tipo)}${envio(e)}</td>
     <td>${p?`<span class="tag" style="background:var(--grn);color:var(--grnt)">Cargado</span><span class="s">${esc(p.nombre_archivo)}</span><div class="row" style="gap:4px;margin-top:4px"><button class="g sm" onclick="verArchivo('${p.path}')">Ver</button>${sub('Reemplazar')}<button class="g sm" onclick="quitarRecibo('${p.id}')">Quitar</button></div>`:`<span class="tag" style="background:var(--amb);color:var(--ambt)">Falta</span> ${sub('Subir PDF')}`}</td>
     <td>${p?(ok?`<div class="row" style="gap:4px"><button class="b sm" onclick="enviarReciboWa('${p.id}')">WhatsApp con enlace</button>${puedeCompartir?`<button class="g sm" onclick="compartirRecibo('${p.id}')">Compartir archivo</button>`:''}<button class="g sm" onclick="descargarRecibo('${p.id}')">Descargar</button></div>${p.wa_preparado_at?`<span class="s">WhatsApp preparado el ${new Date(p.wa_preparado_at).toLocaleDateString('es-AR')}</span>`:''}`:`<span class="s">${e.whatsapp?'Revisá el WhatsApp del empleado':'Cargá el WhatsApp del empleado'}</span><button class="g sm" onclick="descargarRecibo('${p.id}')">Descargar</button>`):'<span class="s">Subí primero el recibo</span>'}</td></tr>`}).join('');
-  return `<h3 style="margin-top:0">Empleados</h3>${form}${empT}
+  return `<h3 style="margin-top:0">Fichas de liquidación</h3><p class="s" style="margin-bottom:8px">Datos de cómo se liquida y se envía cada tipo de personal de este cliente: a quién van los recibos y el VEP, medio de pago, boletas y vencimientos según la terminación del CUIT.</p>${sueFicha(c,f,'dependencia')}${sueFicha(c,f,'domestico')}
+  <h3>Empleados</h3>${form}${empT}
   <h3>Recibos de ${mesAnio(s.periodo+'-01')}</h3>
   <div class="card row" style="margin-bottom:12px">
    <label>Período<br>${mesPick(s.periodo,`ui.sd.sue.periodo=this.value;draw()`)}</label>
@@ -1214,7 +1261,9 @@ async function saveEmp(e){
   e.preventDefault();const fd=new FormData(e.target),f=ui.sd,s=sueState(f),t=k=>String(fd.get(k)||'').trim()||null,cuil=String(fd.get('cuil')||'').replace(/\D/g,''),bad=m=>{flash(m,'err');draw();return false};
   if(cuil&&cuil.length!==11)return bad('El CUIL debe tener 11 dígitos (o dejalo vacío).');
   if(t('whatsapp')){const w=waNum(t('whatsapp'));if(!w||!w.ok)return bad('Revisá el WhatsApp: código de área + número, sin 0 ni 15 (por ejemplo 3537 412345).')}
-  const row={client_id:f.id,nombre:String(fd.get('nombre')).trim(),cuil:cuil||null,whatsapp:t('whatsapp'),cargo:t('cargo')};
+  const tipo=String(fd.get('tipo')||'dependencia');if(!SUE_TIPOS[tipo])return bad('Elegí el tipo de personal.');
+  const hs=t('horas');let horas=null;if(hs){horas=Number(hs.replace(',','.'));if(!isFinite(horas)||horas<=0||horas>168)return bad('Las horas semanales tienen que ser un número entre 1 y 168 (o dejalo vacío).')}
+  const row={client_id:f.id,nombre:String(fd.get('nombre')).trim(),cuil:cuil||null,whatsapp:t('whatsapp'),cargo:t('cargo'),tipo,horas_semanales:horas,observaciones:t('observaciones')};
   const {data,error}=await (s.editEmp?sb.from('employees').update(row).eq('id',s.editEmp).select('id'):sb.from('employees').insert(row).select('id'));
   if(error)flash(/cuil_uniq|duplicate/i.test(error.message)?'Ya hay un empleado con ese CUIL en este cliente.':errTxt(error),'err');
   else if(s.editEmp&&!data.length)flash('No se pudo guardar el empleado.','err');
@@ -1297,14 +1346,20 @@ async function compartirRecibo(id){
 }
 
 /* ===== Secciones del menú: Sueldos (todos los clientes) y Anticipos ===== */
-ui.sdAll={emp:[],pay:[]};
+ui.sdAll={emp:[],pay:[],prof:[]};
 async function loadSueldosAll(){
-  const [em,ps]=await Promise.all([sb.from('employees').select('*').order('nombre'),sb.from('payslips').select('*')]);
-  if(em.error)throw em.error;if(ps.error)throw ps.error;ui.sdAll={emp:em.data,pay:ps.data};if(ui.sd)setSd(ui.sd.id);
+  const [em,ps,pp]=await Promise.all([sb.from('employees').select('*').order('nombre'),sb.from('payslips').select('*'),sb.from('payroll_profiles').select('*')]);
+  if(em.error)throw em.error;if(ps.error)throw ps.error;if(pp.error)throw pp.error;ui.sdAll={emp:em.data,pay:ps.data,prof:pp.data};if(ui.sd)setSd(ui.sd.id);
+}
+function sueResTipos(k){const ts=[...new Set(ui.sdAll.emp.filter(e=>e.client_id===k.id&&e.activo).map(e=>e.tipo))];return ts.length?'<span class="s">'+ts.map(t=>SUE_TIPOS[t]).join(' · ')+'</span>':''}
+function sueResVenc(k){
+  const ts=[...new Set(ui.sdAll.emp.filter(e=>e.client_id===k.id&&e.activo).map(e=>e.tipo))];if(!ts.length&&aplica(k).includes('F931'))ts.push('dependencia');
+  const o=ts.map(t=>{const d=sueProx(k,t,1)[0];return d?`${ts.length>1?SUE_TIPOS[t]+': ':''}${fAR(d.fecha)}<span class="s">${cuando(diasHasta(d.fecha))}${d.verificado?'':', a confirmar'}</span>`:`<span class="s">${ts.length>1?SUE_TIPOS[t]+': ':''}sin fecha cargada</span>`});
+  return o.length?o.join('<br>'):'<span class="s">-</span>';
 }
 function setSd(id){
   ui.sueCfg=ui.sueCfg||{periodo:workPeriod(),tipo:'Mensual',horas:24,msg:MSG_REC,editEmp:null};
-  ui.sd=id?{id,emp:ui.sdAll.emp.filter(e=>e.client_id===id),pay:ui.sdAll.pay.filter(p=>p.client_id===id),sue:ui.sueCfg}:null;
+  ui.sd=id?{id,emp:ui.sdAll.emp.filter(e=>e.client_id===id),pay:ui.sdAll.pay.filter(p=>p.client_id===id),prof:ui.sdAll.prof.filter(p=>p.client_id===id),sue:ui.sueCfg}:null;
 }
 function cambiarClienteSd(id){ui.cid=id;if(ui.sueCfg)ui.sueCfg.editEmp=null;setSd(id);draw()}
 function vSueldosPage(){
@@ -1315,7 +1370,7 @@ function vSueldosPage(){
   const R=act.map(k=>{const em=ui.sdAll.emp.filter(e=>e.client_id===k.id&&e.activo),ok=em.filter(e=>ui.sdAll.pay.some(p=>p.employee_id===e.id&&p.periodo.slice(0,7)===s.periodo&&p.tipo===s.tipo)).length;return {k,n:em.length,ok,f:aplica(k).includes('F931')?(filDe(k.id,'F931',s.periodo)?'ok':'pend'):null}}).filter(r=>r.n>0||r.f);
   return `<h2>Sueldos</h2>
   <p class="s" style="margin-bottom:12px">Recibos de sueldo de ${mesAnio(s.periodo+'-01')} (${esc(s.tipo)}). Cambiá el período y el tipo más abajo.</p>
-  ${R.length?`<div class="tw" style="margin-bottom:18px"><table><thead><tr><th>Cliente</th><th>Empleados</th><th>Recibos cargados</th><th>Faltan</th><th>F.931</th><th></th></tr></thead><tbody>${R.map(r=>`<tr><td>${esc(r.k.razon_social)}</td><td>${r.n}</td><td>${r.ok}</td><td ${r.n-r.ok?'style="color:var(--redt);font-weight:600"':''}>${r.n-r.ok}</td><td>${r.f==='ok'?'<span class="tag" style="background:var(--grn);color:var(--grnt)">Presentado</span>':r.f==='pend'?'<span class="tag" style="background:var(--amb);color:var(--ambt)">Pendiente</span>':'<span class="s">-</span>'}</td><td><button class="g sm" onclick="cambiarClienteSd('${r.k.id}')">Abrir</button></td></tr>`).join('')}</tbody></table></div>`:'<div class="card" style="margin-bottom:18px;color:var(--mut)">Todavía ningún cliente tiene empleados cargados. Elegí un cliente y agregá el primero.</div>'}
+  ${R.length?`<div class="tw" style="margin-bottom:18px"><table><thead><tr><th>Cliente</th><th>CUIT termina en</th><th>Empleados</th><th>Recibos cargados</th><th>Faltan</th><th>Próximo vencimiento</th><th>F.931</th><th></th></tr></thead><tbody>${R.map(r=>`<tr><td>${esc(r.k.razon_social)}${sueResTipos(r.k)}</td><td>${r.k.cuit.slice(-1)}</td><td>${r.n}</td><td>${r.ok}</td><td ${r.n-r.ok?'style="color:var(--redt);font-weight:600"':''}>${r.n-r.ok}</td><td>${sueResVenc(r.k)}</td><td>${r.f==='ok'?'<span class="tag" style="background:var(--grn);color:var(--grnt)">Presentado</span>':r.f==='pend'?'<span class="tag" style="background:var(--amb);color:var(--ambt)">Pendiente</span>':'<span class="s">-</span>'}</td><td><button class="g sm" onclick="cambiarClienteSd('${r.k.id}')">Abrir</button></td></tr>`).join('')}</tbody></table></div>`:'<div class="card" style="margin-bottom:18px;color:var(--mut)">Todavía ningún cliente tiene empleados cargados. Elegí un cliente y agregá el primero.</div>'}
   <div class="card row" style="margin-bottom:16px"><label>Cliente<br><select onchange="cambiarClienteSd(this.value)">${act.map(k=>`<option value="${k.id}" ${k.id===ui.sd.id?'selected':''}>${esc(k.razon_social)}</option>`).join('')}</select></label></div>
   <div class="card" style="padding:20px"><h3 style="margin-top:0;font-size:20px">${esc(c.razon_social)}</h3>
   ${aplica(c).includes('F931')?`<div class="card" style="margin-bottom:18px"><b>Cargas sociales (F.931) de ${mesAnio(s.periodo+'-01')}</b><div class="s" style="margin:4px 0 10px">Declaración jurada mensual de la empresa en ARCA, con el pago del VEP. Se arma con la liquidación de sueldos y es distinta de los recibos de cada empleado.</div>${cel(c,'F931',s.periodo)}</div>`:`<p class="s" style="margin-bottom:14px">Para controlar acá la presentación del F.931 de este cliente, marcá "Cargas sociales F.931" en la pestaña Datos de su ficha.</p>`}
@@ -4215,7 +4270,7 @@ async function verifTodos(ids){
 
 /* ===== Clientes: búsqueda y filtros ===== */
 ui.cf={q:'',estado:'activos',imp:'',term:'',falt:false,orden:'az'};
-const CL_SH={IVA:'IVA',CM:'IIBB CM',IIBB:'IIBB',F931:'F.931',GANANCIAS_PH:'Ganancias',GAN_ANT:'Anticipos Gcias.',GAN_DDJJ:'Ganancias',BP:'B. Personales',MONOTRIBUTO:'Monotributo'};
+const CL_SH={IVA:'IVA',CM:'IIBB CM',IIBB:'IIBB',F931:'F.931',GANANCIAS_PH:'Ganancias',GAN_ANT:'Anticipos Gcias.',GAN_DDJJ:'Ganancias',BP:'B. Personales',MONOTRIBUTO:'Monotributo',SERV_DOM:'Serv. doméstico'};
 function clLista(){
   const f=ui.cf,q=norm(f.q),qd=f.q.replace(/\D/g,'');
   let L=ui.clients.filter(c=>f.estado==='todos'||(f.estado==='inactivos'?c.active===false:c.active!==false));
