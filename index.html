@@ -391,18 +391,18 @@ function vComp(){
 function redrawTable(){$('tabla').innerHTML=tabla(filtered())}
 function tabla(vs){
   const n=ui.sel.size;
-  return `<div class="card row" style="margin-bottom:10px"><b style="align-self:center">${n} seleccionado(s)</b>
+  return `<div class="card row" style="margin-bottom:10px"><b style="align-self:center">${n} seleccionado(s)</b><span class="s" style="align-self:center">Excel de importación: ${(ui.vs||[]).filter(r=>!ui.cmpOut.has(r.id)).length} de ${(ui.vs||[]).length} marcados</span>
   <label>Documentación<br><select id="bd"><option value="">(sin cambio)</option>${optsOf(DOC)}</select></label>
   <label>Procesamiento<br><select id="bp"><option value="">(sin cambio)</option>${optsOf(PROC)}</select></label>
   <label>Motivo (si excluye)<br><input id="bm"></label><button class="b" ${n?'':'disabled'} onclick="masivo()">Aplicar a los seleccionados</button><button class="dng" ${n?'':'disabled'} onclick="compQuitar([...ui.sel])">Quitar seleccionados</button></div>${compEditForm()}
-  <div class="tw"><table><thead><tr><th><input type="checkbox" onchange="selAll(this.checked)" ${n&&n===vs.length?'checked':''}></th><th>Fecha</th><th>Proveedor</th><th>Comprobante</th><th>Importe</th><th>IVA</th><th>Documentación</th><th>Procesamiento</th><th>Cambiar</th></tr></thead><tbody>
-  ${vs.length?vs.map(v=>`<tr><td><input type="checkbox" ${ui.sel.has(v.id)?'checked':''} onchange="toggleSel('${v.id}',this.checked)"></td><td>${fAR(v.fecha)}</td>
+  <div class="tw"><table><thead><tr><th title="Incluir en el Excel de importación">Excel<br><input type="checkbox" onchange="cmpTodos(this.checked)" ${vs.length&&vs.every(r=>!ui.cmpOut.has(r.id))?'checked':''}></th><th><input type="checkbox" onchange="selAll(this.checked)" ${n&&n===vs.length?'checked':''}></th><th>Fecha</th><th>Proveedor</th><th>Comprobante</th><th>Importe</th><th>IVA</th><th>Documentación</th><th>Procesamiento</th><th>Cambiar</th></tr></thead><tbody>
+  ${vs.length?vs.map(v=>`<tr><td><input type="checkbox" title="Incluir en el Excel de importación" ${ui.cmpOut.has(v.id)?'':'checked'} onchange="cmpMarcar('${v.id}',this.checked)"></td><td><input type="checkbox" ${ui.sel.has(v.id)?'checked':''} onchange="toggleSel('${v.id}',this.checked)"></td><td>${fAR(v.fecha)}</td>
   <td>${esc(v.emisor_nombre)}${v.origen==='libro_iva'?(v.raw&&v.raw.fuente==='ticket_foto'?' <span class="tag" style="background:var(--blu);color:var(--blut)">Ticket (foto)</span>':' <span class="tag" style="background:var(--blu);color:var(--blut)">Libro IVA</span>'):''}<span class="s">${cuitF(v.emisor_cuit)}</span></td>
   <td>${esc(tipoTxt(v))}<span class="s">${String(v.punto_venta).padStart(5,'0')}-${String(v.numero).padStart(8,'0')}</span></td><td>${money(Number(v.importe_total))}</td><td>${v.iva===null||v.iva===undefined?'<span class="s">sin dato</span>':money(Number(v.iva))}</td>
   <td>${tag(DOC,v.doc_status)}</td><td>${tag(PROC,v.proc_status)}${v.proc_exclusion_reason?`<span class="s">${esc(v.proc_exclusion_reason)}</span>`:''}</td>
   <td><div class="row" style="gap:4px"><select id="d${v.id}">${optsOf(DOC,v.doc_status)}</select><select id="p${v.id}">${optsOf(PROC,v.proc_status)}</select><input id="m${v.id}" placeholder="Motivo" style="width:90px">
   <button class="g" onclick="guardar('${v.id}')">Guardar</button><button class="g" onclick="verHist('${v.id}')">Historial</button><button class="g" onclick="compEditar('${v.id}')">Editar</button>${v.raw&&v.raw.archivo_path?`<button class="g" onclick="verArchivo('${v.raw.archivo_path}')">Foto</button>`:''}<button class="dng" onclick="compQuitar(['${v.id}'])">Quitar</button></div></td></tr>
-  ${ui.hist&&ui.hist.id===v.id?`<tr class="hist"><td></td><td colspan="8">${ui.hist.html}</td></tr>`:''}`).join(''):'<tr><td colspan="9" style="color:var(--mut)">Sin comprobantes para este cliente, período y filtro.</td></tr>'}</tbody></table></div>`;
+  ${ui.hist&&ui.hist.id===v.id?`<tr class="hist"><td></td><td></td><td colspan="8">${ui.hist.html}</td></tr>`:''}`).join(''):'<tr><td colspan="10" style="color:var(--mut)">Sin comprobantes para este cliente, período y filtro.</td></tr>'}</tbody></table></div>`;
 }
 async function verHist(id){
   if(ui.hist&&ui.hist.id===id){ui.hist=null;return redrawTable()}
@@ -1447,12 +1447,12 @@ function vVentas(){
   <label>Período<br>${mesPick(v.periodo,`ui.vta.periodo=this.value;show('ventas')`)}</label>
   <label style="flex:1;min-width:230px">Excel de "Mis Comprobantes Emitidos" (.xls / .xlsx)<br><input type="file" id="vfile" accept=".xls,.xlsx" style="width:100%"></label>
   <button class="b" onclick="ventasPrevisualizar()">Ver vista previa</button><button class="g" onclick="ui.vta.form=!ui.vta.form;draw()">Agregar factura a mano</button><button class="g" onclick="liqAbrir()">Cargar liquidación (PDF)</button></div>
-  <div class="card row" style="margin-bottom:12px;align-items:center"><b>Exportar</b><button class="b" onclick="ventasExportarIva()">Libro IVA Digital Ventas (2 TXT para ARCA)</button><span class="s">Incluye facturas y liquidaciones del período elegido.</span></div>
+  <div class="card row" style="margin-bottom:12px;align-items:center"><b>Exportar</b><button class="b" onclick="ventasExportarIva()">Libro IVA Digital Ventas (2 TXT para ARCA)</button><span class="s"><b>${R.filter(r=>!ui.vtaOut.has(r.id)).length} de ${R.length}</b> comprobantes marcados (tildá o destildá en la primera columna de la tabla).</span></div>
   ${(v.ivdAvisos||[]).length?`<div class="card" style="margin-bottom:12px"><b>Avisos de la última exportación</b>${v.ivdAvisos.map(a=>`<div class="msg warn">${esc(a)}</div>`).join('')}</div>`:''}
   ${v.form?ventaForm():''}${v.edit?ventaEditForm():''}${v.erp?erpForm():''}${liqForm()}
   <div class="grid" style="margin-bottom:12px"><div class="card kpi"><b>${R.length}</b><span>Facturas del período</span></div><div class="card kpi"><b>${money(neto)}</b><span>Neto gravado</span></div><div class="card kpi"><b>${money(deb)}</b><span>IVA débito fiscal (las notas de crédito restan)</span></div><div class="card kpi"><b>${money(tot)}</b><span>Total facturado</span></div></div>
-  <div class="tw"><table><thead><tr><th>Fecha</th><th>Comprobante</th><th>Cliente de la venta</th><th>Neto gravado</th><th>IVA</th><th>Total</th><th>Origen</th><th></th></tr></thead><tbody>
-  ${R.length?R.map(x=>{const nc=esNC(x.tipo_cmp),m=n=>n===null||n===undefined?'-':money(sgnVal(x.tipo_cmp,n));return `<tr><td>${fAR(x.fecha)}</td><td>${esc(tipoNombre(x.tipo_cmp))}${nc?' <span class="tag" style="background:var(--org);color:var(--orgt)">resta</span>':''}<span class="s">${nroF(x.punto_venta,x.numero)}</span></td><td>${esc(x.receptor_nombre||'')}<span class="s">${esc(x.receptor_cuit||'')}</span></td><td>${m(x.neto_gravado)}</td><td>${m(x.iva)}</td><td>${m(x.importe_total)}</td><td>${x.origen==='manual'?'A mano':'Excel'}</td><td style="white-space:nowrap">${x.archivo_path?`<button class="g sm" onclick="verArchivo('${x.archivo_path}')">Ver PDF</button> `:''}${CLASE_DE_TIPO[Number(x.tipo_cmp)]?`<button class="g sm" onclick="erpAbrir('${x.id}')">Datos ERP</button> `:''}<button class="g sm" onclick="ventasEditar('${x.id}')">Editar</button> <button class="dng sm" onclick="ventasQuitar('${x.id}')">Quitar</button></td></tr>`}).join(''):'<tr><td colspan="8" style="color:var(--mut)">Todavía no hay facturas emitidas en este período. Subí el Excel de emitidos o agregalas a mano.</td></tr>'}</tbody></table></div>`;
+  <div class="tw"><table><thead><tr><th><input type="checkbox" title="Incluir en el TXT" onchange="ventasTodos(this.checked)" ${R.length&&R.every(r=>!ui.vtaOut.has(r.id))?'checked':''}></th><th>Fecha</th><th>Comprobante</th><th>Cliente de la venta</th><th>Neto gravado</th><th>IVA</th><th>Total</th><th>Origen</th><th></th></tr></thead><tbody>
+  ${R.length?R.map(x=>{const nc=esNC(x.tipo_cmp),m=n=>n===null||n===undefined?'-':money(sgnVal(x.tipo_cmp,n));return `<tr><td><input type="checkbox" title="Incluir en el TXT" ${ui.vtaOut.has(x.id)?'':'checked'} onchange="ventasMarcar('${x.id}',this.checked)"></td><td>${fAR(x.fecha)}</td><td>${esc(tipoNombre(x.tipo_cmp))}${nc?' <span class="tag" style="background:var(--org);color:var(--orgt)">resta</span>':''}<span class="s">${nroF(x.punto_venta,x.numero)}</span></td><td>${esc(x.receptor_nombre||'')}<span class="s">${esc(x.receptor_cuit||'')}</span></td><td>${m(x.neto_gravado)}</td><td>${m(x.iva)}</td><td>${m(x.importe_total)}</td><td>${x.origen==='manual'?'A mano':'Excel'}</td><td style="white-space:nowrap">${x.archivo_path?`<button class="g sm" onclick="verArchivo('${x.archivo_path}')">Ver PDF</button> `:''}${CLASE_DE_TIPO[Number(x.tipo_cmp)]?`<button class="g sm" onclick="erpAbrir('${x.id}')">Datos ERP</button> `:''}<button class="g sm" onclick="ventasEditar('${x.id}')">Editar</button> <button class="dng sm" onclick="ventasQuitar('${x.id}')">Quitar</button></td></tr>`}).join(''):'<tr><td colspan="9" style="color:var(--mut)">Todavía no hay facturas emitidas en este período. Subí el Excel de emitidos o agregalas a mano.</td></tr>'}</tbody></table></div>`;
 }
 /* ===== Libro IVA Digital Ventas (ARCA, RG 4597) y hojas de carga de liquidaciones para el ERP ===== */
 const IVD_ALIC={'0':3,'10.5':4,'21':5,'27':6,'5':8,'2.5':9};
@@ -1498,7 +1498,8 @@ function ivdPeriodo(per){const [y,m]=per.split('-').map(Number),u=new Date(y,m,0
 function ventasExportarIva(){
   const v=ui.vta,c=ui.clients.find(x=>x.id===v.cid);if(!c)return;
   if(!v.rows.length){flash('No hay comprobantes cargados en este período.','err');return draw()}
-  const [i,f]=ivdPeriodo(v.periodo),r=ivdArmar(v.rows,i,f);
+  const sel=v.rows.filter(x=>!ui.vtaOut.has(x.id));if(!sel.length){flash('No hay ningún comprobante marcado para el TXT.','err');return draw()}
+  const [i,f]=ivdPeriodo(v.periodo),r=ivdArmar(sel,i,f);
   if(!r.cbte){flash('No quedó ningún comprobante para exportar.','err');return draw()}
   v.ivdAvisos=r.avisos;
   const mk=t=>new Blob([t],{type:'text/plain;charset=iso-8859-1'});
@@ -1606,7 +1607,8 @@ function comprasExportarExcel(){
   const v=ui.vs||[],c=ui.clients.find(x=>x.id===ui.cid);
   if(!v.length){flash('No hay comprobantes de compra en este período para exportar.','err');return draw()}
   if(typeof XLSX==='undefined'){flash('No se pudo cargar el generador de Excel (¿sin conexión?).','err');return draw()}
-  const r=cmpArmar(v),ws=XLSX.utils.aoa_to_sheet([CMP_COLS,...r.filas]);
+  const marc=v.filter(x=>!ui.cmpOut.has(x.id));if(!marc.length){flash('No hay ningún comprobante marcado para el Excel.','err');return draw()}
+  const r=cmpArmar(marc),ws=XLSX.utils.aoa_to_sheet([CMP_COLS,...r.filas]);
   ws['!cols']=CMP_COLS.map((h,i)=>({wch:i===1||i===8?30:i<8?16:14}));
   r.filas.forEach((_,i)=>{for(let col=11;col<30;col++){if(col===12)continue;const a=XLSX.utils.encode_cell({r:i+1,c:col});if(ws[a]&&typeof ws[a].v==='number')ws[a].z='#,##0.00'}});
   const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Compras');
@@ -1616,6 +1618,11 @@ function comprasExportarExcel(){
   flash(`Se exportaron ${r.filas.length} comprobantes de compra.`+(r.avisos.length?` Hay ${r.avisos.length} aviso(s) para revisar.`:''));draw();
 }
 
+ui.vtaOut=new Set();ui.cmpOut=new Set();
+function ventasMarcar(id,on){if(on)ui.vtaOut.delete(id);else ui.vtaOut.add(id);draw()}
+function ventasTodos(on){ui.vta.rows.forEach(r=>{if(on)ui.vtaOut.delete(r.id);else ui.vtaOut.add(r.id)});draw()}
+function cmpMarcar(id,on){if(on)ui.cmpOut.delete(id);else ui.cmpOut.add(id);redrawTable()}
+function cmpTodos(on){filtered().forEach(r=>{if(on)ui.cmpOut.delete(r.id);else ui.cmpOut.add(r.id)});redrawTable()}
 function ventaForm(){
   return `<form class="card" style="margin-bottom:14px" onsubmit="return ventasAgregar(event)"><b>Agregar factura emitida</b><div class="fgrid" style="margin-top:8px">
   <label>Fecha<input type="date" name="fecha" required value="${hoyISO()}"></label>
