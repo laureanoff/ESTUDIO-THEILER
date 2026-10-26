@@ -170,7 +170,7 @@ function planImport(parsed,meta,existing,ctx){
 
 
 /* ===== Supabase ===== */
-const APP_VERSION='26/10/2026, sueldos: fichas por tipo de personal y vencimientos por CUIT';
+const APP_VERSION='26/10/2026, ventas: Libro IVA Digital (ARCA) y liquidaciones para el ERP';
 const SUPABASE_URL='https://tugdqcoxcpsiynlvnqdu.supabase.co';
 const SUPABASE_KEY='sb_publishable_2-96VeZrsNNftRXkzA1l_A_YG7ThJrL'; // clave pública: los permisos los da la base (RLS)
 const sb=(typeof supabase!=='undefined')?supabase.createClient(SUPABASE_URL,SUPABASE_KEY):null;
@@ -1426,11 +1426,130 @@ function vVentas(){
   <label>Período<br>${mesPick(v.periodo,`ui.vta.periodo=this.value;show('ventas')`)}</label>
   <label style="flex:1;min-width:230px">Excel de "Mis Comprobantes Emitidos" (.xls / .xlsx)<br><input type="file" id="vfile" accept=".xls,.xlsx" style="width:100%"></label>
   <button class="b" onclick="ventasPrevisualizar()">Ver vista previa</button><button class="g" onclick="ui.vta.form=!ui.vta.form;draw()">Agregar factura a mano</button><button class="g" onclick="liqAbrir()">Cargar liquidación (PDF)</button></div>
-  ${v.form?ventaForm():''}${v.edit?ventaEditForm():''}${liqForm()}
+  <div class="card row" style="margin-bottom:12px;align-items:center"><b>Exportar</b><button class="b" onclick="ventasExportarIva()">Libro IVA Digital Ventas (2 TXT para ARCA)</button><button class="g" onclick="erpExportar()">Liquidaciones para el ERP (Excel)</button><span class="s">Se exporta lo cargado en el período elegido.</span></div>
+  ${(v.ivdAvisos||[]).length?`<div class="card" style="margin-bottom:12px"><b>Avisos de la última exportación</b>${v.ivdAvisos.map(a=>`<div class="msg warn">${esc(a)}</div>`).join('')}</div>`:''}
+  ${v.form?ventaForm():''}${v.edit?ventaEditForm():''}${v.erp?erpForm():''}${liqForm()}
   <div class="grid" style="margin-bottom:12px"><div class="card kpi"><b>${R.length}</b><span>Facturas del período</span></div><div class="card kpi"><b>${money(neto)}</b><span>Neto gravado</span></div><div class="card kpi"><b>${money(deb)}</b><span>IVA débito fiscal (las notas de crédito restan)</span></div><div class="card kpi"><b>${money(tot)}</b><span>Total facturado</span></div></div>
   <div class="tw"><table><thead><tr><th>Fecha</th><th>Comprobante</th><th>Cliente de la venta</th><th>Neto gravado</th><th>IVA</th><th>Total</th><th>Origen</th><th></th></tr></thead><tbody>
-  ${R.length?R.map(x=>{const nc=esNC(x.tipo_cmp),m=n=>n===null||n===undefined?'-':money(sgnVal(x.tipo_cmp,n));return `<tr><td>${fAR(x.fecha)}</td><td>${esc(tipoNombre(x.tipo_cmp))}${nc?' <span class="tag" style="background:var(--org);color:var(--orgt)">resta</span>':''}<span class="s">${nroF(x.punto_venta,x.numero)}</span></td><td>${esc(x.receptor_nombre||'')}<span class="s">${esc(x.receptor_cuit||'')}</span></td><td>${m(x.neto_gravado)}</td><td>${m(x.iva)}</td><td>${m(x.importe_total)}</td><td>${x.origen==='manual'?'A mano':'Excel'}</td><td style="white-space:nowrap">${x.archivo_path?`<button class="g sm" onclick="verArchivo('${x.archivo_path}')">Ver PDF</button> `:''}<button class="g sm" onclick="ventasEditar('${x.id}')">Editar</button> <button class="dng sm" onclick="ventasQuitar('${x.id}')">Quitar</button></td></tr>`}).join(''):'<tr><td colspan="8" style="color:var(--mut)">Todavía no hay facturas emitidas en este período. Subí el Excel de emitidos o agregalas a mano.</td></tr>'}</tbody></table></div>`;
+  ${R.length?R.map(x=>{const nc=esNC(x.tipo_cmp),m=n=>n===null||n===undefined?'-':money(sgnVal(x.tipo_cmp,n));return `<tr><td>${fAR(x.fecha)}</td><td>${esc(tipoNombre(x.tipo_cmp))}${nc?' <span class="tag" style="background:var(--org);color:var(--orgt)">resta</span>':''}<span class="s">${nroF(x.punto_venta,x.numero)}</span></td><td>${esc(x.receptor_nombre||'')}<span class="s">${esc(x.receptor_cuit||'')}</span></td><td>${m(x.neto_gravado)}</td><td>${m(x.iva)}</td><td>${m(x.importe_total)}</td><td>${x.origen==='manual'?'A mano':'Excel'}</td><td style="white-space:nowrap">${x.archivo_path?`<button class="g sm" onclick="verArchivo('${x.archivo_path}')">Ver PDF</button> `:''}${CLASE_DE_TIPO[Number(x.tipo_cmp)]?`<button class="g sm" onclick="erpAbrir('${x.id}')">Datos ERP</button> `:''}<button class="g sm" onclick="ventasEditar('${x.id}')">Editar</button> <button class="dng sm" onclick="ventasQuitar('${x.id}')">Quitar</button></td></tr>`}).join(''):'<tr><td colspan="8" style="color:var(--mut)">Todavía no hay facturas emitidas en este período. Subí el Excel de emitidos o agregalas a mano.</td></tr>'}</tbody></table></div>`;
 }
+/* ===== Libro IVA Digital Ventas (ARCA, RG 4597) y hojas de carga de liquidaciones para el ERP ===== */
+const IVD_ALIC={'0':3,'10.5':4,'21':5,'27':6,'5':8,'2.5':9};
+/* Códigos de comprobante de ARCA para las liquidaciones. Confirmalos contra cómo las cargás hoy en tu ERP. */
+const IVD_LIQ_COD={9001:33,9002:60,9003:27};
+const ivdAscii=s=>String(s??'').normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^\x20-\x7e]/g,'').toUpperCase();
+const ivdNum=(n,len)=>String(Math.round(Math.abs(Number(n)||0)*100+1e-7)).padStart(len,'0').slice(-len);
+const ivdInt=(n,len)=>String(Math.abs(Math.trunc(Number(n)||0))).padStart(len,'0').slice(-len);
+const ivdTxt=(s,len)=>ivdAscii(s).slice(0,len).padEnd(len,' ');
+/** Arma las dos salidas a partir de las filas de sales_invoices de UN período. Devuelve texto y avisos. */
+function ivdArmar(rows,ini,fin){
+  const avisos=[],cb=[],al=[],tot={cbtes:0,total:0,neto:0,iva:0};
+  const lista=rows.filter(x=>x&&x.proc_status!=='excluido').slice().sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha))||(Number(a.tipo_cmp)-Number(b.tipo_cmp))||(Number(a.punto_venta)-Number(b.punto_venta))||(Number(a.numero)-Number(b.numero)));
+  let cf=0;
+  for(const x of lista){
+    const tc=Number(x.tipo_cmp),cod=IVD_LIQ_COD[tc]||tc,nro=nroF(x.punto_venta,x.numero),f=String(x.fecha||'');
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(f)){avisos.push(`${nro}: fecha inválida, se omitió.`);continue}
+    if(IVD_LIQ_COD[tc])avisos.push(`${nro}: es una liquidación; se exporta con el código de comprobante ${cod}. Confirmalo contra tu ERP.`);
+    if(cod>999||cod<=0){avisos.push(`${nro}: el tipo de comprobante ${tc} no tiene código de ARCA, se omitió.`);continue}
+    const cu=String(x.receptor_cuit||'').replace(/\D/g,'');let td,nd,nom=x.receptor_nombre||'';
+    if(cu.length===11){td=80;nd=cu}else if(cu.length>=6&&cu.length<=8){td=96;nd=cu}else{td=96;nd='11111111';if(!nom)nom='CONSUMIDOR FINAL';cf++;if([1,2,3,51,52,53,201,203].includes(tc))avisos.push(`${nro}: comprobante tipo A/M sin CUIT del cliente.`)}
+    const a=alicDeRaw(x.raw),ks=Object.keys(a).filter(k=>a[k].neto||a[k].iva);
+    let reg=ks.map(k=>({k:String(Number(k)),neto:a[k].neto,iva:a[k].iva}));
+    const nog=Number(x.no_gravado)||0,exe=Number(x.exento)||0,otr=Number(x.otros_tributos)||0,neto=Number(x.neto_gravado)||0,iva=Number(x.iva)||0,total=Number(x.importe_total)||0;
+    if(!reg.length&&neto>0){const t=liqTasa(neto,iva);if(t===null||t===undefined)avisos.push(`${nro}: no se pudo determinar la alícuota de IVA.`);else reg=[{k:String(t),neto,iva}]}
+    reg=reg.filter(r=>IVD_ALIC[r.k]!==undefined||(avisos.push(`${nro}: alícuota ${r.k}% no reconocida por ARCA, se omitió.`),false));
+    const sn=reg.reduce((s,r)=>s+r.neto,0),si=reg.reduce((s,r)=>s+r.iva,0);
+    if(reg.length&&(Math.abs(sn-neto)>1||Math.abs(si-iva)>1))avisos.push(`${nro}: el desglose por alícuota no coincide con el neto/IVA del comprobante.`);
+    if(Math.abs(sn+si+nog+exe+otr-total)>1)avisos.push(`${nro}: el total (${money(total)}) no es igual a la suma de neto, IVA, no gravado, exento y otros tributos (${money(sn+si+nog+exe+otr)}).`);
+    let op=' ';if(!reg.length){reg=[{k:'0',neto:0,iva:0}];op=exe>0?'E':nog>0?'N':' '}
+    const sg=1; // ARCA pide importes sin signo: el tipo de comprobante (nota de crédito) ya indica el sentido
+    cb.push(f.replace(/-/g,'')+ivdInt(cod,3)+ivdInt(x.punto_venta,5)+ivdInt(x.numero,20)+ivdInt(x.numero,20)+ivdInt(td,2)+ivdInt(nd,20)+ivdTxt(nom,30)
+      +ivdNum(total,15)+ivdNum(nog,15)+ivdNum(0,15)+ivdNum(exe,15)+ivdNum(0,15)+ivdNum(0,15)+ivdNum(0,15)+ivdNum(0,15)+'PES'+'0001000000'+String(Math.min(reg.length,9))+op+ivdNum(otr,15)+'00000000');
+    for(const r of reg)al.push(ivdInt(cod,3)+ivdInt(x.punto_venta,5)+ivdInt(x.numero,20)+ivdNum(r.neto,15)+ivdInt(IVD_ALIC[r.k],4)+ivdNum(r.iva,15));
+    tot.cbtes++;tot.total+=sgnVal(tc,total);tot.neto+=sgnVal(tc,sn);tot.iva+=sgnVal(tc,si);
+  }
+  if(cf)avisos.push(`${cf} comprobante(s) sin CUIT/DNI del cliente se exportaron como CONSUMIDOR FINAL (documento 96, número 11111111), igual que en tu archivo de ejemplo.`);
+  const p=s=>s.replace(/-/g,'');
+  return {cbte:cb.map(l=>l+'\r\n').join(''),alic:al.map(l=>l+'\r\n').join(''),avisos,tot,
+    nCbte:`LIBRO_IVA_DIGITAL_VENTAS_CBTE_${p(ini)}_${p(fin)}.txt`,nAlic:`LIBRO_IVA_DIGITAL_VENTAS_ALICUOTAS_${p(ini)}-${p(fin)}.txt`};
+}
+function ivdPeriodo(per){const [y,m]=per.split('-').map(Number),u=new Date(y,m,0).getDate(),p2=n=>String(n).padStart(2,'0');return [`${y}-${p2(m)}-01`,`${y}-${p2(m)}-${p2(u)}`]}
+function ventasExportarIva(){
+  const v=ui.vta,c=ui.clients.find(x=>x.id===v.cid);if(!c)return;
+  if(!v.rows.length){flash('No hay comprobantes cargados en este período.','err');return draw()}
+  const [i,f]=ivdPeriodo(v.periodo),r=ivdArmar(v.rows,i,f);
+  if(!r.cbte){flash('No quedó ningún comprobante para exportar.','err');return draw()}
+  v.ivdAvisos=r.avisos;
+  const mk=t=>new Blob([t],{type:'text/plain;charset=iso-8859-1'});
+  bajar({blob:mk(r.cbte),name:r.nCbte});setTimeout(()=>bajar({blob:mk(r.alic),name:r.nAlic}),400);
+  flash(`Se generaron los 2 archivos del Libro IVA Digital Ventas con ${r.tot.cbtes} comprobante(s).`+(r.avisos.length?` Hay ${r.avisos.length} aviso(s) para revisar.`:''));draw();
+}
+/* ----- Liquidaciones: hoja de carga para el ERP ----- */
+const ERP_GRANOS=[['Cabecera','tipo_liq','Tipo de Liquidación'],['Cabecera','comprador','Comprador'],['Cabecera','numero','Número de Liquidación'],['Cabecera','corredor','Actuó Corredor'],['Cabecera','f_comp','Fecha del Comprobante'],['Cabecera','f_carga','Fecha de Carga'],['Cabecera','f_venc','Fecha de Vencimiento'],['Cabecera','concepto','Concepto'],
+ ['Detalle de la venta','contrato','Nº Contrato'],['Detalle de la venta','cereal','Cereal'],['Detalle de la venta','campana','Campaña'],['Detalle de la venta','cuenta','Cuenta'],['Detalle de la venta','kg','Peso en Kg'],['Detalle de la venta','precio_ref','Precio de Ref. en TN'],['Detalle de la venta','grado','Grado'],['Detalle de la venta','factor','Factor %'],['Detalle de la venta','comision','Comisión'],['Detalle de la venta','flete','Flete'],['Detalle de la venta','precio_op','Precio Operación'],
+ ['Totales','subtotal','SUB TOTAL'],['Totales','iva','IVA'],['Totales','total','TOTAL'],
+ ['Descuentos y deducciones gravadas','d_comision','Comisión'],['Descuentos y deducciones gravadas','d_gtos_cupos','Gtos. Cupos y Logística'],['Descuentos y deducciones gravadas','d_flete','Flete Gravado'],['Descuentos y deducciones gravadas','d_iva','IVA'],
+ ['Retenciones y deducciones no gravadas','consorcio','Consorcio Caminero'],['Retenciones y deducciones no gravadas','gastos_gestion','Gastos Gestión'],['Retenciones y deducciones no gravadas','gastos_form','Gastos Formulario'],['Retenciones y deducciones no gravadas','sellados','Sellados'],['Retenciones y deducciones no gravadas','otros_ng','Otros Gastos No Grav.'],['Retenciones y deducciones no gravadas','ret_iibb','Ret. IIBB'],['Retenciones y deducciones no gravadas','ret_gcias','Ret. 2% Gcias'],['Retenciones y deducciones no gravadas','ret_iva','Ret. IVA'],
+ ['Otros descuentos','od_concepto','Concepto'],['Otros descuentos','od_alicuota','Alícuota'],['Otros descuentos','od_monto','Monto'],
+ ['Cierre','total_desc','TOTAL DESCUENTOS'],['Cierre','neto_pagar','IMPORTE NETO'],['Cierre','iva_2003','IVA Res. Gral. AFIP Nº 2003/07'],['Cierre','pago','PAGO SEGÚN CONDICIONES']];
+const ERP_VENTA=[['Cabecera','tipo_cbte','Tipo de Comprobante'],['Cabecera','numero','Número'],['Cabecera','comprador_cod','Comprador (código)'],['Cabecera','comprador','Comprador'],['Cabecera','f_comp','Fecha del Comprobante'],['Cabecera','f_pase','Fecha de Pase'],['Cabecera','f_venc','Fecha de Vencimiento'],
+ ['Detalle','romaneo','Romaneo'],['Detalle','articulo','Artículo'],['Detalle','cuenta','Cuenta'],['Detalle','unidades','Unidades'],['Detalle','cantidad','Cantidad'],['Detalle','precio','Precio'],['Detalle','pct_comision','% Comisión'],['Detalle','imp_comision','Importe Comisión'],
+ ['Renglón','it_codigo','CODIGO'],['Renglón','it_desc','DESCRIPCION'],['Renglón','it_unidad','UNIDAD'],['Renglón','it_cantidad','CANTIDAD'],['Renglón','it_precio','PRECIO'],['Renglón','it_comision','COMISION'],['Renglón','it_total','TOTAL'],
+ ['Totales','subtotal','SUB TOTAL'],['Totales','iva','IVA'],['Totales','total','TOTAL'],
+ ['Descuentos','d_no_grav','No Gravados'],['Descuentos','d_grav','Gravados'],['Descuentos','d_iva_cf','IVA Crédito Fiscal'],['Descuentos','ret_gcias','Retención Gcias.'],['Descuentos','ret_iva','Retención IVA'],
+ ['Cierre','total_desc','TOTAL DESCUENTOS'],['Cierre','neto_pagar','IMPORTE NETO']];
+const erpEsGranos=x=>Number(x.tipo_cmp)===9001,erpCampos=x=>erpEsGranos(x)?ERP_GRANOS:ERP_VENTA;
+const erpDmy=f=>{const m=String(f||'').match(/^(\d{4})-(\d{2})-(\d{2})/);return m?`${m[3]}/${m[2]}/${m[1]}`:''};
+/** Valores de la liquidación: lo que la app ya sabe + lo que se completó a mano (datos_extraidos.erp). */
+function erpValores(x){
+  const e=(x.datos_extraidos&&x.datos_extraidos.erp)||{},ret=(x.datos_extraidos&&x.datos_extraidos.retenciones)||[],sum=imp=>ret.filter(r=>r.impuesto===imp).reduce((s,r)=>s+(Number(r.importe)||0),0);
+  const b={numero:x.punto_venta?nroF(x.punto_venta,x.numero):String(x.numero),comprador:x.receptor_nombre||'',f_comp:erpDmy(x.fecha),subtotal:Number(x.neto_gravado)||0,iva:Number(x.iva)||0,total:Number(x.importe_total)||0,
+    tipo_liq:'Liquidación primaria de granos',tipo_cbte:Number(x.tipo_cmp)===9003?'LIQUIDACIÓN ÚNICA DE LECHE':'LIQUIDACIÓN DE VENTA (HACIENDA)'};
+  const rI=sum('IVA'),rG=sum('GANANCIAS');if(rI)b.ret_iva=rI;if(rG)b.ret_gcias=rG;
+  const o={...b};for(const [k,v] of Object.entries(e))if(v!==''&&v!==null&&v!==undefined)o[k]=v;
+  const n=k=>{const t=pNum(String(o[k]??''));return t===null?0:t};
+  const dc=erpEsGranos(x)?['d_comision','d_gtos_cupos','d_flete','d_iva','consorcio','gastos_gestion','gastos_form','sellados','otros_ng','ret_iibb','ret_gcias','ret_iva','od_monto']:['d_no_grav','d_grav','d_iva_cf','ret_gcias','ret_iva'];
+  if(o.total_desc===undefined||e.total_desc===undefined||e.total_desc==='')o.total_desc=Math.round(dc.reduce((s,k)=>s+n(k),0)*100)/100;
+  if(e.neto_pagar===undefined||e.neto_pagar==='')o.neto_pagar=Math.round((n('total')-n('total_desc'))*100)/100;
+  return o;
+}
+function erpExportar(solo){
+  const v=ui.vta,L=v.rows.filter(x=>CLASE_DE_TIPO[Number(x.tipo_cmp)]&&(!solo||x.id===solo));
+  if(!L.length){flash('No hay liquidaciones cargadas en este período.','err');return draw()}
+  if(typeof XLSX==='undefined'){flash('No se pudo cargar el generador de Excel (¿sin conexión?).','err');return draw()}
+  const wb=XLSX.utils.book_new(),cv=x=>{if(x===''||x===null||x===undefined)return '';const t=typeof x==='number'?x:(/^-?[\d.,]+$/.test(String(x).trim())&&String(x).trim()!==''&&!/^0\d/.test(String(x).trim())?pNum(String(x)):null);return t===null||t===undefined?x:t};
+  const grupos=[['Granos',L.filter(erpEsGranos),ERP_GRANOS],['Hacienda y leche',L.filter(x=>!erpEsGranos(x)),ERP_VENTA]];
+  for(const [nom,ls,cs] of grupos){if(!ls.length)continue;
+    const rows=[cs.map(c=>c[2]+' ('+c[0]+')'),...ls.map(x=>{const o=erpValores(x);return cs.map(c=>cv(o[c[1]]))})];
+    const ws=XLSX.utils.aoa_to_sheet(rows);ws['!cols']=cs.map(()=>({wch:22}));XLSX.utils.book_append_sheet(wb,ws,nom);}
+  const hoja=[];for(const x of L){const o=erpValores(x),cs=erpCampos(x);hoja.push([tipoNombre(x.tipo_cmp)+' '+nroF(x.punto_venta,x.numero)]);let sec='';for(const c of cs){if(c[0]!==sec){sec=c[0];hoja.push([sec.toUpperCase()])}hoja.push(['',c[2],cv(o[c[1]])])}hoja.push([])}
+  const wh=XLSX.utils.aoa_to_sheet(hoja);wh['!cols']=[{wch:44},{wch:34},{wch:26}];XLSX.utils.book_append_sheet(wb,wh,'Hoja de carga');
+  const [i]=ivdPeriodo(v.periodo);
+  bajar({blob:new Blob([XLSX.write(wb,{type:'array',bookType:'xlsx'})],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),name:`Liquidaciones_ERP_${i.slice(0,7)}.xlsx`});
+  flash(`Se exportaron ${L.length} liquidación(es).`);draw();
+}
+function erpAbrir(id){const v=ui.vta;v.erp=v.erp===id?null:id;v.edit=null;v.form=false;draw();if(v.erp){const f=document.getElementById('erpform');if(f)f.scrollIntoView({behavior:'smooth',block:'center'})}}
+function erpForm(){
+  const v=ui.vta,x=v.rows.find(r=>r.id===v.erp);if(!x)return '';
+  const o=erpValores(x),cs=erpCampos(x);let sec='',h='';
+  for(const c of cs){if(c[0]!==sec){sec=c[0];h+=`<div class="full"><b class="s">${esc(sec)}</b></div>`}
+    h+=`<label>${esc(c[2])}<input name="${c[1]}" value="${esc(o[c[1]]===undefined?'':String(o[c[1]]))}"></label>`}
+  return `<form class="card" id="erpform" style="margin-bottom:14px;border:2px solid var(--blut)" onsubmit="return erpGuardar(event)"><b>Datos para el ERP: ${esc(tipoNombre(x.tipo_cmp))} ${esc(nroF(x.punto_venta,x.numero))}</b>
+  <p class="s" style="margin:4px 0 8px">Completá lo que el PDF trae y la app no lee (cereal, kilos, precio, deducciones...). Los totales, IVA y retenciones ya cargados se completan solos; "Total descuentos" e "Importe neto" se calculan si los dejás vacíos. Esto no cambia el IVA ni el Libro IVA Digital.</p>
+  <div class="fgrid">${h}<div class="full row"><button class="b">Guardar datos</button><button type="button" class="g" onclick="erpExportar('${x.id}')">Exportar solo esta</button><button type="button" class="g" onclick="erpAbrir('${x.id}')">Cerrar</button></div></div></form>`;
+}
+async function erpGuardar(e){
+  e.preventDefault();const v=ui.vta,x=v.rows.find(r=>r.id===v.erp);if(!x)return false;
+  const fd=new FormData(e.target),base={},cs=erpCampos(x),b0=erpValores({...x,datos_extraidos:{...(x.datos_extraidos||{}),erp:{}}});
+  for(const c of cs){const val=String(fd.get(c[1])??'').trim();if(val!==String(b0[c[1]]===undefined?'':b0[c[1]]))base[c[1]]=val}
+  try{
+    const {data,error}=await sb.from('sales_invoices').update({datos_extraidos:{...(x.datos_extraidos||{}),erp:base}}).eq('id',x.id).select('id');
+    if(error)throw error;if(!data||!data.length)throw new Error('No se pudo guardar (sin permisos o ya no existe).');
+    await loadVentas();flash('Datos para el ERP guardados.');
+  }catch(err){flash(errTxt(err),'err')}
+  draw();return false;
+}
+
 function ventaForm(){
   return `<form class="card" style="margin-bottom:14px" onsubmit="return ventasAgregar(event)"><b>Agregar factura emitida</b><div class="fgrid" style="margin-top:8px">
   <label>Fecha<input type="date" name="fecha" required value="${hoyISO()}"></label>
