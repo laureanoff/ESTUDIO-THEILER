@@ -170,7 +170,7 @@ function planImport(parsed,meta,existing,ctx){
 
 
 /* ===== Supabase ===== */
-const APP_VERSION='26/10/2026, ventas: Libro IVA Digital (ARCA) y liquidaciones para el ERP';
+const APP_VERSION='26/10/2026, ventas: liquidaciones leídas por completo en el Libro IVA Digital; sueldos: tipo de personal por empleador';
 const SUPABASE_URL='https://tugdqcoxcpsiynlvnqdu.supabase.co';
 const SUPABASE_KEY='sb_publishable_2-96VeZrsNNftRXkzA1l_A_YG7ThJrL'; // clave pública: los permisos los da la base (RLS)
 const sb=(typeof supabase!=='undefined')?supabase.createClient(SUPABASE_URL,SUPABASE_KEY):null;
@@ -1185,6 +1185,17 @@ const SUE_TIPOS={dependencia:'Relación de dependencia',domestico:'Servicio dom�
 const SUE_IMP={dependencia:'F931',domestico:'SERV_DOM'};
 const SUE_BOLETAS=['UATRE','OSECAC','FAECYS','IERIC','AMMA','ACTF','OSPRERA','UOCRA','SEC'];
 const SUE_PAGO=['Transferencia bancaria','Efectivo','Cheque','Débito automático','Otro'];
+/** Tipos de personal que tiene este empleador: los tildados en su ficha (F.931 / Servicio doméstico) o los que ya tienen empleados activos. */
+const sueTiposDe=(c,emp)=>Object.keys(SUE_TIPOS).filter(t=>(c.impuestos||[]).includes(SUE_IMP[t])||(emp||[]).some(e=>e.client_id===c.id&&e.tipo===t&&e.activo));
+async function setPersonal(tipo,on){
+  const c=ui.clients.find(x=>x.id===ui.sd.id);if(!c)return;
+  if(!on&&ui.sd.emp.some(e=>e.tipo===tipo&&e.activo)){flash(`Hay empleados activos de ${SUE_TIPOS[tipo].toLowerCase()}: dalos de baja antes de destildarlo.`,'err');return draw()}
+  const k=SUE_IMP[tipo],cur=(c.impuestos||[]).filter(x=>x!==k),arr=on?[...cur,k]:cur;
+  try{const {data,error}=await sb.from('clients').update({impuestos:arr}).eq('id',c.id).select('id');
+    if(error)throw error;if(!data||!data.length)throw new Error('No tenés permiso para editar clientes.');
+    await loadClients();flash(on?`Se agregó "${SUE_TIPOS[tipo]}" a este empleador.`:`Se quitó "${SUE_TIPOS[tipo]}" de este empleador.`)}catch(x){flash(errTxt(x),'err')}
+  draw();
+}
 const sueTag=t=>`<span class="tag" style="background:var(--${t==='domestico'?'amb':'blu'});color:var(--${t==='domestico'?'ambt':'blut'})">${SUE_TIPOS[t]}</span>`;
 const sueProf=(f,t)=>(f.prof||[]).find(p=>p.tipo===t)||null;
 /** Próximos vencimientos del calendario para la terminación del CUIT del cliente. */
@@ -1222,29 +1233,33 @@ async function saveProf(e,tipo){
   if(error)flash(errTxt(error),'err');else{try{await recargarSueldos();flash('Ficha guardada.')}catch(x){flash(errTxt(x),'err')}}
   draw();return false;
 }
+function sueSelector(c,f,tipos){
+  return `<div class="card" style="margin-bottom:12px"><b>Tipo de personal de este empleador</b><p class="s" style="margin:4px 0 8px">Tildá lo que corresponda: no todos los empleadores tienen ambos. Se usa para mostrar las fichas, los empleados y los vencimientos que corresponden (F.931 para relación de dependencia, Servicio doméstico para casas particulares).</p>
+  <div class="row" style="gap:18px">${Object.entries(SUE_TIPOS).map(([k,t])=>`<label style="display:flex;gap:8px;align-items:center"><input type="checkbox" style="margin:0" ${tipos.includes(k)?'checked':''} onchange="setPersonal('${k}',this.checked)"> ${t}</label>`).join('')}</div></div>`;
+}
 function vSueldos(c,f){
-  const s=sueState(f),edit=f.emp.find(e=>e.id===s.editEmp),act=f.emp.filter(e=>e.activo),pays=f.pay.filter(p=>p.periodo.slice(0,7)===s.periodo&&p.tipo===s.tipo),puedeCompartir=typeof navigator.canShare==='function';
+  const s=sueState(f),tipos=sueTiposDe(c,f.emp),edit=f.emp.find(e=>e.id===s.editEmp),dr=s.draft||null,act=f.emp.filter(e=>e.activo),pays=f.pay.filter(p=>p.periodo.slice(0,7)===s.periodo&&p.tipo===s.tipo),puedeCompartir=typeof navigator.canShare==='function';
   const waTxt=e=>{if(!e.whatsapp)return '<span class="s">Sin WhatsApp</span>';const w=waNum(e.whatsapp);return esc(e.whatsapp)+(w&&!w.ok?'<span class="s" style="color:var(--redt)">Revisá el número</span>':'')};
   const envio=e=>{const p=sueProf(f,e.tipo);if(!p)return '';return p.recibos_no_envia?'<span class="s">Ficha: no se envía recibo</span>':p.recibos_destino?`<span class="s">Ficha: enviar a ${esc(p.recibos_destino)}</span>`:''};
-  const tipoSel=edit?edit.tipo:(s.tipoNuevo||'dependencia');
-  const form=`<form class="card" style="margin-bottom:12px" onsubmit="return saveEmp(event)"><b>${edit?'Editar empleado':'Agregar empleado'}</b><div class="fgrid" style="margin-top:8px">
-  <label>Tipo de personal<select name="tipo" onchange="ui.sd.sue.tipoNuevo=this.value">${Object.entries(SUE_TIPOS).map(([k,t])=>`<option value="${k}" ${tipoSel===k?'selected':''}>${t}</option>`).join('')}</select></label>
-  <label>Nombre y apellido<input name="nombre" required value="${esc(edit&&edit.nombre)}"></label>
-  <label>CUIL (opcional)<input name="cuil" inputmode="numeric" placeholder="20-12345678-9" value="${edit&&edit.cuil?cuitF(edit.cuil):''}"></label>
-  <label>Celular de WhatsApp<input name="whatsapp" inputmode="tel" placeholder="3537 412345" value="${esc(edit&&edit.whatsapp)}"></label>
-  <label>Cargo o categoría (opcional)<input name="cargo" value="${esc(edit&&edit.cargo)}"></label>
-  <label>Horas semanales (servicio doméstico)<input name="horas" inputmode="decimal" placeholder="Ej.: 16" value="${edit&&edit.horas_semanales!==null&&edit.horas_semanales!==undefined?esc(String(edit.horas_semanales).replace('.',',')):''}"></label>
-  <label class="full">Observaciones del empleado<textarea name="observaciones" rows="2">${esc(edit&&edit.observaciones)}</textarea></label>
-  <div class="full row"><button class="b">${edit?'Guardar cambios':'Agregar empleado'}</button>${edit?'<button type="button" class="g" onclick="ui.sd.sue.editEmp=null;draw()">Cancelar</button>':''}</div></div></form>`;
-  const empT=`<div class="tw" style="margin-bottom:22px"><table><thead><tr><th>Empleado</th><th>Tipo</th><th>Horas</th><th>CUIL</th><th>WhatsApp</th><th>Estado</th><th></th></tr></thead><tbody>${f.emp.length?f.emp.map(e=>`<tr style="${e.activo?'':'opacity:.55'}"><td>${esc(e.nombre)}<span class="s">${esc(e.cargo)}</span>${e.observaciones?`<span class="s">${esc(e.observaciones)}</span>`:''}</td><td>${sueTag(e.tipo)}</td><td>${e.tipo==='domestico'?(e.horas_semanales!==null&&e.horas_semanales!==undefined?esc(String(e.horas_semanales).replace('.',','))+' h/sem':'<span class="s">Sin cargar</span>'):'<span class="s">-</span>'}</td><td>${e.cuil?cuitF(e.cuil):''}</td><td>${waTxt(e)}</td><td>${e.activo?'Activo':'De baja'}</td><td style="white-space:nowrap"><button class="g sm" onclick="ui.sd.sue.editEmp='${e.id}';draw()">Editar</button> <button class="g sm" onclick="bajaEmp('${e.id}')">${e.activo?'Dar de baja':'Reactivar'}</button> <button class="dng sm" onclick="quitarEmp('${e.id}')">Quitar</button></td></tr>`).join(''):'<tr><td colspan="7" style="color:var(--mut)">Todavía no hay empleados. Agregá el primero con su nombre y WhatsApp.</td></tr>'}</tbody></table></div>`;
+  const tipoSel=dr?dr.tipo:edit?edit.tipo:(tipos.includes(s.tipoNuevo)?s.tipoNuevo:tipos[0]);const val=(k,alt)=>dr&&dr[k]!==undefined?dr[k]:alt;
+  const form=`<form class="card" id="empform" style="margin-bottom:12px" onsubmit="return saveEmp(event)"><b>${edit?'Editar empleado':'Agregar empleado'}</b>${s.formErr?`<div class="msg err" style="margin-top:8px">${esc(s.formErr)}</div>`:''}<div class="fgrid" style="margin-top:8px">
+  <label>Tipo de personal<select name="tipo" onchange="ui.sd.sue.tipoNuevo=this.value">${Object.entries(SUE_TIPOS).filter(([k])=>tipos.includes(k)||(edit&&edit.tipo===k)).map(([k,t])=>`<option value="${k}" ${tipoSel===k?'selected':''}>${t}</option>`).join('')}</select></label>
+  <label>Nombre y apellido<input name="nombre" required value="${esc(val('nombre',edit&&edit.nombre))}"></label>
+  <label>CUIL (opcional)<input name="cuil" inputmode="numeric" placeholder="20-12345678-9" value="${esc(val('cuil',edit&&edit.cuil?cuitF(edit.cuil):''))}"></label>
+  <label>Celular de WhatsApp<input name="whatsapp" inputmode="tel" placeholder="3537 412345" value="${esc(val('whatsapp',edit&&edit.whatsapp))}"></label>
+  <label>Cargo o categoría (opcional)<input name="cargo" value="${esc(val('cargo',edit&&edit.cargo))}"></label>
+  <label>Horas semanales (servicio doméstico)<input name="horas" inputmode="decimal" placeholder="Ej.: 16" value="${esc(val('horas',edit&&edit.horas_semanales!==null&&edit.horas_semanales!==undefined?String(edit.horas_semanales).replace('.',','):''))}"></label>
+  <label class="full">Observaciones del empleado<textarea name="observaciones" rows="2">${esc(val('observaciones',edit&&edit.observaciones))}</textarea></label>
+  <div class="full row"><button class="b">${edit?'Guardar cambios':'Agregar empleado'}</button>${edit?'<button type="button" class="g" onclick="ui.sd.sue.editEmp=null;ui.sd.sue.draft=null;ui.sd.sue.formErr=null;draw()">Cancelar</button>':''}</div></div></form>`;
+  const empT=`<div class="tw" style="margin-bottom:22px"><table><thead><tr><th>Empleado</th><th>Tipo</th><th>Horas</th><th>CUIL</th><th>WhatsApp</th><th>Estado</th><th></th></tr></thead><tbody>${f.emp.length?f.emp.map(e=>`<tr style="${e.activo?'':'opacity:.55'}"><td>${esc(e.nombre)}<span class="s">${esc(e.cargo)}</span>${e.observaciones?`<span class="s">${esc(e.observaciones)}</span>`:''}</td><td>${sueTag(e.tipo)}</td><td>${e.tipo==='domestico'?(e.horas_semanales!==null&&e.horas_semanales!==undefined?esc(String(e.horas_semanales).replace('.',','))+' h/sem':'<span class="s">Sin cargar</span>'):'<span class="s">-</span>'}</td><td>${e.cuil?cuitF(e.cuil):''}</td><td>${waTxt(e)}</td><td>${e.activo?'Activo':'De baja'}</td><td style="white-space:nowrap"><button class="g sm" onclick="ui.sd.sue.editEmp='${e.id}';ui.sd.sue.draft=null;ui.sd.sue.formErr=null;draw()">Editar</button> <button class="g sm" onclick="bajaEmp('${e.id}')">${e.activo?'Dar de baja':'Reactivar'}</button> <button class="dng sm" onclick="quitarEmp('${e.id}')">Quitar</button></td></tr>`).join(''):'<tr><td colspan="7" style="color:var(--mut)">Todavía no hay empleados. Agregá el primero con su nombre y WhatsApp.</td></tr>'}</tbody></table></div>`;
   const filas=act.map(e=>{
     const p=pays.find(x=>x.employee_id===e.id),w=waNum(e.whatsapp),ok=w&&w.ok;
     const sub=lbl=>`<label class="g sm">${lbl}<input type="file" accept="application/pdf,.pdf" hidden onchange="subirRecibo('${e.id}',this)"></label>`;
     return `<tr><td>${esc(e.nombre)}<span class="s">${e.cuil?cuitF(e.cuil):''}</span>${sueTag(e.tipo)}${envio(e)}</td>
     <td>${p?`<span class="tag" style="background:var(--grn);color:var(--grnt)">Cargado</span><span class="s">${esc(p.nombre_archivo)}</span><div class="row" style="gap:4px;margin-top:4px"><button class="g sm" onclick="verArchivo('${p.path}')">Ver</button>${sub('Reemplazar')}<button class="g sm" onclick="quitarRecibo('${p.id}')">Quitar</button></div>`:`<span class="tag" style="background:var(--amb);color:var(--ambt)">Falta</span> ${sub('Subir PDF')}`}</td>
     <td>${p?(ok?`<div class="row" style="gap:4px"><button class="b sm" onclick="enviarReciboWa('${p.id}')">WhatsApp con enlace</button>${puedeCompartir?`<button class="g sm" onclick="compartirRecibo('${p.id}')">Compartir archivo</button>`:''}<button class="g sm" onclick="descargarRecibo('${p.id}')">Descargar</button></div>${p.wa_preparado_at?`<span class="s">WhatsApp preparado el ${new Date(p.wa_preparado_at).toLocaleDateString('es-AR')}</span>`:''}`:`<span class="s">${e.whatsapp?'Revisá el WhatsApp del empleado':'Cargá el WhatsApp del empleado'}</span><button class="g sm" onclick="descargarRecibo('${p.id}')">Descargar</button>`):'<span class="s">Subí primero el recibo</span>'}</td></tr>`}).join('');
-  return `<h3 style="margin-top:0">Fichas de liquidación</h3><p class="s" style="margin-bottom:8px">Datos de cómo se liquida y se envía cada tipo de personal de este cliente: a quién van los recibos y el VEP, medio de pago, boletas y vencimientos según la terminación del CUIT.</p>${sueFicha(c,f,'dependencia')}${sueFicha(c,f,'domestico')}
-  <h3>Empleados</h3>${form}${empT}
+  return `<h3 style="margin-top:0">Fichas de liquidación</h3><p class="s" style="margin-bottom:8px">Datos de cómo se liquida y se envía cada tipo de personal de este cliente: a quién van los recibos y el VEP, medio de pago, boletas y vencimientos según la terminación del CUIT.</p>${sueSelector(c,f,tipos)}${tipos.map(t=>sueFicha(c,f,t)).join('')}
+  <h3>Empleados</h3>${tipos.length||edit?form:'<div class="msg warn">Tildá arriba qué tipo de personal tiene este empleador para poder agregar empleados.</div>'}${empT}
   <h3>Recibos de ${mesAnio(s.periodo+'-01')}</h3>
   <div class="card row" style="margin-bottom:12px">
    <label>Período<br>${mesPick(s.periodo,`ui.sd.sue.periodo=this.value;draw()`)}</label>
@@ -1258,16 +1273,22 @@ function vSueldos(c,f){
 }
 async function recargarSueldos(){await loadSueldosAll()}
 async function saveEmp(e){
-  e.preventDefault();const fd=new FormData(e.target),f=ui.sd,s=sueState(f),t=k=>String(fd.get(k)||'').trim()||null,cuil=String(fd.get('cuil')||'').replace(/\D/g,''),bad=m=>{flash(m,'err');draw();return false};
-  if(cuil&&cuil.length!==11)return bad('El CUIL debe tener 11 dígitos (o dejalo vacío).');
-  if(t('whatsapp')){const w=waNum(t('whatsapp'));if(!w||!w.ok)return bad('Revisá el WhatsApp: código de área + número, sin 0 ni 15 (por ejemplo 3537 412345).')}
-  const tipo=String(fd.get('tipo')||'dependencia');if(!SUE_TIPOS[tipo])return bad('Elegí el tipo de personal.');
-  const hs=t('horas');let horas=null;if(hs){horas=Number(hs.replace(',','.'));if(!isFinite(horas)||horas<=0||horas>168)return bad('Las horas semanales tienen que ser un número entre 1 y 168 (o dejalo vacío).')}
-  const row={client_id:f.id,nombre:String(fd.get('nombre')).trim(),cuil:cuil||null,whatsapp:t('whatsapp'),cargo:t('cargo'),tipo,horas_semanales:horas,observaciones:t('observaciones')};
-  const {data,error}=await (s.editEmp?sb.from('employees').update(row).eq('id',s.editEmp).select('id'):sb.from('employees').insert(row).select('id'));
-  if(error)flash(/cuil_uniq|duplicate/i.test(error.message)?'Ya hay un empleado con ese CUIL en este cliente.':errTxt(error),'err');
-  else if(s.editEmp&&!data.length)flash('No se pudo guardar el empleado.','err');
-  else{s.editEmp=null;try{await recargarSueldos();flash('Empleado guardado.')}catch(x){flash(errTxt(x),'err')}}
+  e.preventDefault();const fd=new FormData(e.target),f=ui.sd,s=sueState(f);
+  const fail=m=>{s.formErr=m;s.draft=Object.fromEntries([...fd.entries()].map(([k,v])=>[k,String(v)]));draw();const el=document.getElementById('empform');if(el)el.scrollIntoView({behavior:'smooth',block:'center'});return false};
+  try{
+    const t=k=>String(fd.get(k)||'').trim()||null,cuil=String(fd.get('cuil')||'').replace(/\D/g,'');
+    if(!String(fd.get('nombre')||'').trim())return fail('Escribí el nombre y apellido del empleado.');
+    if(cuil&&cuil.length!==11)return fail('El CUIL debe tener 11 dígitos (o dejalo vacío).');
+    if(t('whatsapp')){const w=waNum(t('whatsapp'));if(!w||!w.ok)return fail('Revisá el WhatsApp: código de área + número, sin 0 ni 15 (por ejemplo 3537 412345).')}
+    const tipo=String(fd.get('tipo')||'');if(!SUE_TIPOS[tipo])return fail('Elegí el tipo de personal (si no aparece, tildalo arriba en "Tipo de personal de este empleador").');
+    const hs=t('horas');let horas=null;if(hs){horas=Number(hs.replace(',','.'));if(!isFinite(horas)||horas<=0||horas>168)return fail('Las horas semanales tienen que ser un número entre 1 y 168 (por ejemplo 16 o 16,5), sin letras.')}
+    const row={client_id:f.id,nombre:String(fd.get('nombre')).trim(),cuil:cuil||null,whatsapp:t('whatsapp'),cargo:t('cargo'),tipo,horas_semanales:horas,observaciones:t('observaciones')};
+    const {data,error}=await (s.editEmp?sb.from('employees').update(row).eq('id',s.editEmp).select('id'):sb.from('employees').insert(row).select('id'));
+    if(error)return fail(/cuil_uniq|duplicate/i.test(error.message)?'Ya hay un empleado con ese CUIL en este cliente.':errTxt(error));
+    if(s.editEmp&&!data.length)return fail('No se pudo guardar el empleado (sin permisos o ya no existe).');
+    s.editEmp=null;s.draft=null;s.formErr=null;
+    await recargarSueldos();flash('Empleado guardado.');
+  }catch(x){return fail('No se pudo guardar el empleado: '+((x&&x.message)||x))}
   draw();return false;
 }
 async function bajaEmp(id){
@@ -1351,9 +1372,9 @@ async function loadSueldosAll(){
   const [em,ps,pp]=await Promise.all([sb.from('employees').select('*').order('nombre'),sb.from('payslips').select('*'),sb.from('payroll_profiles').select('*')]);
   if(em.error)throw em.error;if(ps.error)throw ps.error;if(pp.error)throw pp.error;ui.sdAll={emp:em.data,pay:ps.data,prof:pp.data};if(ui.sd)setSd(ui.sd.id);
 }
-function sueResTipos(k){const ts=[...new Set(ui.sdAll.emp.filter(e=>e.client_id===k.id&&e.activo).map(e=>e.tipo))];return ts.length?'<span class="s">'+ts.map(t=>SUE_TIPOS[t]).join(' · ')+'</span>':''}
+function sueResTipos(k){const ts=sueTiposDe(k,ui.sdAll.emp);return ts.length?'<span class="s">'+ts.map(t=>SUE_TIPOS[t]).join(' · ')+'</span>':''}
 function sueResVenc(k){
-  const ts=[...new Set(ui.sdAll.emp.filter(e=>e.client_id===k.id&&e.activo).map(e=>e.tipo))];if(!ts.length&&aplica(k).includes('F931'))ts.push('dependencia');
+  const ts=sueTiposDe(k,ui.sdAll.emp);if(!ts.length&&aplica(k).includes('F931'))ts.push('dependencia');
   const o=ts.map(t=>{const d=sueProx(k,t,1)[0];return d?`${ts.length>1?SUE_TIPOS[t]+': ':''}${fAR(d.fecha)}<span class="s">${cuando(diasHasta(d.fecha))}${d.verificado?'':', a confirmar'}</span>`:`<span class="s">${ts.length>1?SUE_TIPOS[t]+': ':''}sin fecha cargada</span>`});
   return o.length?o.join('<br>'):'<span class="s">-</span>';
 }
@@ -1361,13 +1382,13 @@ function setSd(id){
   ui.sueCfg=ui.sueCfg||{periodo:workPeriod(),tipo:'Mensual',horas:24,msg:MSG_REC,editEmp:null};
   ui.sd=id?{id,emp:ui.sdAll.emp.filter(e=>e.client_id===id),pay:ui.sdAll.pay.filter(p=>p.client_id===id),prof:ui.sdAll.prof.filter(p=>p.client_id===id),sue:ui.sueCfg}:null;
 }
-function cambiarClienteSd(id){ui.cid=id;if(ui.sueCfg)ui.sueCfg.editEmp=null;setSd(id);draw()}
+function cambiarClienteSd(id){ui.cid=id;if(ui.sueCfg){ui.sueCfg.editEmp=null;ui.sueCfg.draft=null;ui.sueCfg.formErr=null}setSd(id);draw()}
 function vSueldosPage(){
   const act=ui.clients.filter(c=>c.active!==false);
   if(!act.length)return '<h2>Sueldos</h2><div class="card">No hay clientes disponibles.</div>';
   if(!ui.sd)setSd(act[0].id);
   const s=ui.sueCfg,c=ui.clients.find(x=>x.id===ui.sd.id);
-  const R=act.map(k=>{const em=ui.sdAll.emp.filter(e=>e.client_id===k.id&&e.activo),ok=em.filter(e=>ui.sdAll.pay.some(p=>p.employee_id===e.id&&p.periodo.slice(0,7)===s.periodo&&p.tipo===s.tipo)).length;return {k,n:em.length,ok,f:aplica(k).includes('F931')?(filDe(k.id,'F931',s.periodo)?'ok':'pend'):null}}).filter(r=>r.n>0||r.f);
+  const R=act.map(k=>{const em=ui.sdAll.emp.filter(e=>e.client_id===k.id&&e.activo),ok=em.filter(e=>ui.sdAll.pay.some(p=>p.employee_id===e.id&&p.periodo.slice(0,7)===s.periodo&&p.tipo===s.tipo)).length;return {k,n:em.length,ok,f:aplica(k).includes('F931')?(filDe(k.id,'F931',s.periodo)?'ok':'pend'):null}}).filter(r=>r.n>0||r.f||sueTiposDe(r.k,ui.sdAll.emp).length);
   return `<h2>Sueldos</h2>
   <p class="s" style="margin-bottom:12px">Recibos de sueldo de ${mesAnio(s.periodo+'-01')} (${esc(s.tipo)}). Cambiá el período y el tipo más abajo.</p>
   ${R.length?`<div class="tw" style="margin-bottom:18px"><table><thead><tr><th>Cliente</th><th>CUIT termina en</th><th>Empleados</th><th>Recibos cargados</th><th>Faltan</th><th>Próximo vencimiento</th><th>F.931</th><th></th></tr></thead><tbody>${R.map(r=>`<tr><td>${esc(r.k.razon_social)}${sueResTipos(r.k)}</td><td>${r.k.cuit.slice(-1)}</td><td>${r.n}</td><td>${r.ok}</td><td ${r.n-r.ok?'style="color:var(--redt);font-weight:600"':''}>${r.n-r.ok}</td><td>${sueResVenc(r.k)}</td><td>${r.f==='ok'?'<span class="tag" style="background:var(--grn);color:var(--grnt)">Presentado</span>':r.f==='pend'?'<span class="tag" style="background:var(--amb);color:var(--ambt)">Pendiente</span>':'<span class="s">-</span>'}</td><td><button class="g sm" onclick="cambiarClienteSd('${r.k.id}')">Abrir</button></td></tr>`).join('')}</tbody></table></div>`:'<div class="card" style="margin-bottom:18px;color:var(--mut)">Todavía ningún cliente tiene empleados cargados. Elegí un cliente y agregá el primero.</div>'}
@@ -1426,7 +1447,7 @@ function vVentas(){
   <label>Período<br>${mesPick(v.periodo,`ui.vta.periodo=this.value;show('ventas')`)}</label>
   <label style="flex:1;min-width:230px">Excel de "Mis Comprobantes Emitidos" (.xls / .xlsx)<br><input type="file" id="vfile" accept=".xls,.xlsx" style="width:100%"></label>
   <button class="b" onclick="ventasPrevisualizar()">Ver vista previa</button><button class="g" onclick="ui.vta.form=!ui.vta.form;draw()">Agregar factura a mano</button><button class="g" onclick="liqAbrir()">Cargar liquidación (PDF)</button></div>
-  <div class="card row" style="margin-bottom:12px;align-items:center"><b>Exportar</b><button class="b" onclick="ventasExportarIva()">Libro IVA Digital Ventas (2 TXT para ARCA)</button><button class="g" onclick="erpExportar()">Liquidaciones para el ERP (Excel)</button><span class="s">Se exporta lo cargado en el período elegido.</span></div>
+  <div class="card row" style="margin-bottom:12px;align-items:center"><b>Exportar</b><button class="b" onclick="ventasExportarIva()">Libro IVA Digital Ventas (2 TXT para ARCA)</button><span class="s">Incluye facturas y liquidaciones del período elegido.</span></div>
   ${(v.ivdAvisos||[]).length?`<div class="card" style="margin-bottom:12px"><b>Avisos de la última exportación</b>${v.ivdAvisos.map(a=>`<div class="msg warn">${esc(a)}</div>`).join('')}</div>`:''}
   ${v.form?ventaForm():''}${v.edit?ventaEditForm():''}${v.erp?erpForm():''}${liqForm()}
   <div class="grid" style="margin-bottom:12px"><div class="card kpi"><b>${R.length}</b><span>Facturas del período</span></div><div class="card kpi"><b>${money(neto)}</b><span>Neto gravado</span></div><div class="card kpi"><b>${money(deb)}</b><span>IVA débito fiscal (las notas de crédito restan)</span></div><div class="card kpi"><b>${money(tot)}</b><span>Total facturado</span></div></div>
@@ -1435,8 +1456,8 @@ function vVentas(){
 }
 /* ===== Libro IVA Digital Ventas (ARCA, RG 4597) y hojas de carga de liquidaciones para el ERP ===== */
 const IVD_ALIC={'0':3,'10.5':4,'21':5,'27':6,'5':8,'2.5':9};
-/* Códigos de comprobante de ARCA para las liquidaciones. Confirmalos contra cómo las cargás hoy en tu ERP. */
-const IVD_LIQ_COD={9001:33,9002:60,9003:27};
+/* Códigos de comprobante de ARCA para las liquidaciones. Si el PDF trae el código (180, 27...) se usa ese; si no, estos. */
+const IVD_LIQ_COD={9001:33,9002:180,9003:27};
 const ivdAscii=s=>String(s??'').normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^\x20-\x7e]/g,'').toUpperCase();
 const ivdNum=(n,len)=>String(Math.round(Math.abs(Number(n)||0)*100+1e-7)).padStart(len,'0').slice(-len);
 const ivdInt=(n,len)=>String(Math.abs(Math.trunc(Number(n)||0))).padStart(len,'0').slice(-len);
@@ -1447,7 +1468,7 @@ function ivdArmar(rows,ini,fin){
   const lista=rows.filter(x=>x&&x.proc_status!=='excluido').slice().sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha))||(Number(a.tipo_cmp)-Number(b.tipo_cmp))||(Number(a.punto_venta)-Number(b.punto_venta))||(Number(a.numero)-Number(b.numero)));
   let cf=0;
   for(const x of lista){
-    const tc=Number(x.tipo_cmp),cod=IVD_LIQ_COD[tc]||tc,nro=nroF(x.punto_venta,x.numero),f=String(x.fecha||'');
+    const tc=Number(x.tipo_cmp),cod=(IVD_LIQ_COD[tc]&&((x.datos_extraidos&&Number(x.datos_extraidos.cod_arca))||IVD_LIQ_COD[tc]))||tc,nro=nroF(x.punto_venta,x.numero),f=String(x.fecha||'');
     if(!/^\d{4}-\d{2}-\d{2}$/.test(f)){avisos.push(`${nro}: fecha inválida, se omitió.`);continue}
     if(IVD_LIQ_COD[tc])avisos.push(`${nro}: es una liquidación; se exporta con el código de comprobante ${cod}. Confirmalo contra tu ERP.`);
     if(cod>999||cod<=0){avisos.push(`${nro}: el tipo de comprobante ${tc} no tiene código de ARCA, se omitió.`);continue}
@@ -1513,21 +1534,6 @@ function erpValores(x){
   if(e.neto_pagar===undefined||e.neto_pagar==='')o.neto_pagar=Math.round((n('total')-n('total_desc'))*100)/100;
   return o;
 }
-function erpExportar(solo){
-  const v=ui.vta,L=v.rows.filter(x=>CLASE_DE_TIPO[Number(x.tipo_cmp)]&&(!solo||x.id===solo));
-  if(!L.length){flash('No hay liquidaciones cargadas en este período.','err');return draw()}
-  if(typeof XLSX==='undefined'){flash('No se pudo cargar el generador de Excel (¿sin conexión?).','err');return draw()}
-  const wb=XLSX.utils.book_new(),cv=x=>{if(x===''||x===null||x===undefined)return '';const t=typeof x==='number'?x:(/^-?[\d.,]+$/.test(String(x).trim())&&String(x).trim()!==''&&!/^0\d/.test(String(x).trim())?pNum(String(x)):null);return t===null||t===undefined?x:t};
-  const grupos=[['Granos',L.filter(erpEsGranos),ERP_GRANOS],['Hacienda y leche',L.filter(x=>!erpEsGranos(x)),ERP_VENTA]];
-  for(const [nom,ls,cs] of grupos){if(!ls.length)continue;
-    const rows=[cs.map(c=>c[2]+' ('+c[0]+')'),...ls.map(x=>{const o=erpValores(x);return cs.map(c=>cv(o[c[1]]))})];
-    const ws=XLSX.utils.aoa_to_sheet(rows);ws['!cols']=cs.map(()=>({wch:22}));XLSX.utils.book_append_sheet(wb,ws,nom);}
-  const hoja=[];for(const x of L){const o=erpValores(x),cs=erpCampos(x);hoja.push([tipoNombre(x.tipo_cmp)+' '+nroF(x.punto_venta,x.numero)]);let sec='';for(const c of cs){if(c[0]!==sec){sec=c[0];hoja.push([sec.toUpperCase()])}hoja.push(['',c[2],cv(o[c[1]])])}hoja.push([])}
-  const wh=XLSX.utils.aoa_to_sheet(hoja);wh['!cols']=[{wch:44},{wch:34},{wch:26}];XLSX.utils.book_append_sheet(wb,wh,'Hoja de carga');
-  const [i]=ivdPeriodo(v.periodo);
-  bajar({blob:new Blob([XLSX.write(wb,{type:'array',bookType:'xlsx'})],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),name:`Liquidaciones_ERP_${i.slice(0,7)}.xlsx`});
-  flash(`Se exportaron ${L.length} liquidación(es).`);draw();
-}
 function erpAbrir(id){const v=ui.vta;v.erp=v.erp===id?null:id;v.edit=null;v.form=false;draw();if(v.erp){const f=document.getElementById('erpform');if(f)f.scrollIntoView({behavior:'smooth',block:'center'})}}
 function erpForm(){
   const v=ui.vta,x=v.rows.find(r=>r.id===v.erp);if(!x)return '';
@@ -1535,19 +1541,36 @@ function erpForm(){
   for(const c of cs){if(c[0]!==sec){sec=c[0];h+=`<div class="full"><b class="s">${esc(sec)}</b></div>`}
     h+=`<label>${esc(c[2])}<input name="${c[1]}" value="${esc(o[c[1]]===undefined?'':String(o[c[1]]))}"></label>`}
   return `<form class="card" id="erpform" style="margin-bottom:14px;border:2px solid var(--blut)" onsubmit="return erpGuardar(event)"><b>Datos para el ERP: ${esc(tipoNombre(x.tipo_cmp))} ${esc(nroF(x.punto_venta,x.numero))}</b>
-  <p class="s" style="margin:4px 0 8px">Completá lo que el PDF trae y la app no lee (cereal, kilos, precio, deducciones...). Los totales, IVA y retenciones ya cargados se completan solos; "Total descuentos" e "Importe neto" se calculan si los dejás vacíos. Esto no cambia el IVA ni el Libro IVA Digital.</p>
-  <div class="fgrid">${h}<div class="full row"><button class="b">Guardar datos</button><button type="button" class="g" onclick="erpExportar('${x.id}')">Exportar solo esta</button><button type="button" class="g" onclick="erpAbrir('${x.id}')">Cerrar</button></div></div></form>`;
+  <p class="s" style="margin:4px 0 8px">Estos datos se leen solos del PDF al cargar la liquidación. Revisalos contra el documento y corregí lo que haga falta: tienen los mismos nombres y el mismo orden que las pantallas de tu ERP. Esto no cambia el IVA ni el Libro IVA Digital.</p>
+  ${(o.items&&o.items.length)?`<div class="tw" style="margin-bottom:10px"><table><thead><tr><th>Renglón</th><th>Unidad</th><th>Cantidad</th><th>Precio</th><th>Total</th></tr></thead><tbody>${o.items.map(i=>`<tr><td>${esc(i.desc)}</td><td>${esc(i.unidad||'')}</td><td>${i.cantidad}</td><td>${money(i.precio)}</td><td>${money(i.total)}</td></tr>`).join('')}</tbody></table></div>`:''}
+  <div class="fgrid">${h}<div class="full row"><button class="b">Guardar datos</button>${x.archivo_path?`<button type="button" class="g" onclick="erpReleer('${x.id}')">Volver a leer el PDF</button>`:''}<button type="button" class="g" onclick="erpAbrir('${x.id}')">Cerrar</button></div></div></form>`;
 }
 async function erpGuardar(e){
   e.preventDefault();const v=ui.vta,x=v.rows.find(r=>r.id===v.erp);if(!x)return false;
-  const fd=new FormData(e.target),base={},cs=erpCampos(x),b0=erpValores({...x,datos_extraidos:{...(x.datos_extraidos||{}),erp:{}}});
-  for(const c of cs){const val=String(fd.get(c[1])??'').trim();if(val!==String(b0[c[1]]===undefined?'':b0[c[1]]))base[c[1]]=val}
+  const fd=new FormData(e.target),old=(x.datos_extraidos&&x.datos_extraidos.erp)||{},erp={...old},mostrado=erpValores(x);
+  for(const c of erpCampos(x)){const k=c[1],val=String(fd.get(k)??'').trim();
+    if(val===''){delete erp[k];continue}
+    if(k in old||val!==String(mostrado[k]===undefined?'':mostrado[k]))erp[k]=val} // lo que la app calculó y no tocaste no se congela
   try{
-    const {data,error}=await sb.from('sales_invoices').update({datos_extraidos:{...(x.datos_extraidos||{}),erp:base}}).eq('id',x.id).select('id');
+    const {data,error}=await sb.from('sales_invoices').update({datos_extraidos:{...(x.datos_extraidos||{}),erp}}).eq('id',x.id).select('id');
     if(error)throw error;if(!data||!data.length)throw new Error('No se pudo guardar (sin permisos o ya no existe).');
     await loadVentas();flash('Datos para el ERP guardados.');
   }catch(err){flash(errTxt(err),'err')}
   draw();return false;
+}
+/** Vuelve a leer el PDF guardado (sirve para liquidaciones cargadas antes de que la app leyera todos los datos). */
+async function erpReleer(id){
+  const v=ui.vta,x=v.rows.find(r=>r.id===id);if(!x||!x.archivo_path)return;
+  const c=ui.clients.find(k=>k.id===x.client_id)||{};
+  try{
+    const {data:blob,error}=await sb.storage.from('clientes').download(x.archivo_path);if(error)throw error;
+    const f=new File([blob],x.archivo_nombre||'liquidacion.pdf',{type:'application/pdf'}),r=liqExtraer(await pdfTexto(f),c.cuit||'',c.razon_social||'');
+    if(!r.erp)throw new Error('No se reconoció el tipo de liquidación en el PDF.');
+    const di={...(x.datos_extraidos||{}),erp:r.erp};if(r.cod)di.cod_arca=r.cod;
+    const {data,error:e2}=await sb.from('sales_invoices').update({datos_extraidos:di}).eq('id',id).select('id');if(e2)throw e2;if(!data||!data.length)throw new Error('No se pudo guardar.');
+    await loadVentas();flash('Se volvieron a leer los datos del PDF. Revisalos contra el documento.');
+  }catch(err){flash(errTxt(err),'err')}
+  draw();
 }
 
 function ventaForm(){
@@ -4092,6 +4115,110 @@ function liqLeche(L,cuitCli){
   return {datos:d,retenciones:ret,info,cruce:()=>cr};
 }
 
+/* ===== Lectura completa de liquidaciones para los formularios del ERP (granos, hacienda, leche) =====
+   Devuelve { erp, cod } con todos los datos que se pudieron leer. Lo que el PDF no trae queda sin completar. */
+const LIQ_MESES={enero:1,febrero:2,marzo:3,abril:4,mayo:5,junio:6,julio:7,agosto:8,septiembre:9,setiembre:9,octubre:10,noviembre:11,diciembre:12};
+const liqDmy=s=>{const m=String(s||'').match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);return m?`${m[1].padStart(2,'0')}/${m[2].padStart(2,'0')}/${m[3]}`:''};
+const liqM1=(L,re)=>{for(const l of L){const m=l.match(re);if(m)return m}return null};
+const liqN=s=>{const t=String(s).trim(),v=liqMontos(t);if(v.length)return v[0];return /^\d+$/.test(t)?Number(t):null};
+/** Corta las copias (duplicado / triplicado) para no leer lo mismo dos veces. */
+function liqPrimeraCopia(L){const i=L.findIndex((l,k)=>k>3&&/^(duplicado|triplicado)$/i.test(l.trim()));return i>0?L.slice(0,i):L}
+function liqErpGranos(L,r){
+  const e={},items=[];e.tipo_liq='Liquidación primaria de granos';
+  const to=liqM1(L,/Tipo de operaci[oó]n:\s*\d+\s*-\s*(.+)$/i);if(to)e.tipo_liq+=' - '+to[1].trim();
+  if(r.num)e.numero=String(r.num);e.comprador=r.nombre||'';
+  const co=liqM1(L,/Actu[oó] Corredor:\s*(\w+)/i);if(co)e.corredor=/^s/i.test(co[1])?'Sí':'No';
+  const fo=liqM1(L,/CONDICIONES DE LA OPERACI[OÓ]N\s+Fecha:\s*(\S+)/i);e.f_comp=liqDmy(fo?fo[1]:'')||liqDmy(L[0]);e.f_carga=e.f_comp;
+  const dv=L.join(' ').match(/F\.?\s*Vto\.?\s*([\d\-\/]+)/i);if(dv)e.f_venc=liqDmy(dv[1]);
+  const ad=liqM1(L,/Datos Adicionales:\s*(.+?)\s*(?:F\.?\s*Vto|$)/i);if(ad)e.concepto=ad[1].trim();
+  const iP=liqBuscar(L,/precio\/tn.*grado.*grano/);
+  if(iP>=0&&L[iP+1]){const m=L[iP+1].match(/\$\s*([\d.,]+)\s+(\S+)\s+(\d+)\s*-\s*(.+?)\s+\$\s*([\d.,]+)/);if(m){e.precio_ref=liqN(m[1]);e.grado=m[2];e.cereal=m[4].trim();e.flete=liqN(m[5])||0}}
+  const iM=liqBuscar(L,/n.\s*de comprobante.*grado.*factor/);
+  if(iM>=0&&L[iM+1]){const m=L[iM+1].match(/(\d+)\s+(\S+)\s+(\d+(?:[.,]\d+)?)\s+(\d+(?:[.,]\d+)?)\s+(\d+)\s/);if(m){e.grado=e.grado||m[2];e.factor=Number(m[3].replace(',','.'));e.kg=Number(m[5]);e.contrato=''}}
+  e.subtotal=r.neto;e.iva=r.iva;e.total=r.total;
+  if(e.precio_ref!==undefined)e.precio_op=liqPlata((e.precio_ref*(e.factor||100)/100)-(e.flete||0));
+  // deducciones (cada renglón: base, alícuota de IVA, IVA, total)
+  const iD=liqBuscar(L,/concepto detalle.*deducciones/),iR=liqBuscar(L,/^(retenciones$|imposibilidad|importes totales)/,iD>=0?iD:0);
+  const rowRe=/\$\s*([\d.,]+)\s+(\d+(?:[.,]\d+)?)%\s+\$\s*([\d.,]+)\s+\$\s*([\d.,]+)\s*$/;let ivaG=0;const otros=[];
+  if(iD>=0&&iR>iD){const blk=L.slice(iD+1,iR),isRow=l=>rowRe.test(l);
+    blk.forEach((l,k)=>{const m=l.match(rowRe);if(!m)return;
+      const base=liqN(m[1]),alic=Number(m[2].replace(',','.')),iv=liqN(m[3]),tot=liqN(m[4]);
+      const prev=k>0&&!isRow(blk[k-1])?blk[k-1]:'',next=k+1<blk.length&&!isRow(blk[k+1])?blk[k+1]:'';
+      let ctx;
+      const rowTxt=liqNorm(l.replace(rowRe,''));ctx=/comis|consorcio|caminero|sell|cupo|logist|flete|gesti|formul/.test(rowTxt)?rowTxt:liqNorm(prev+' '+next);
+      ivaG+=iv||0;
+      const sum=(k2,v)=>{e[k2]=liqPlata((e[k2]||0)+v)};
+      if(/comis/.test(ctx))sum('d_comision',base),e.comision=liqM1([l],/Comisi[oó]n\s+(\d+(?:[.,]\d+)?)/)?Number(l.match(/Comisi[oó]n\s+(\d+(?:[.,]\d+)?)/)[1].replace(',','.')):e.comision;
+      else if(/cupo|logist/.test(ctx))sum('d_gtos_cupos',base);
+      else if(/flete/.test(ctx))sum('d_flete',base);
+      else if(/consorcio|caminero/.test(ctx))sum('consorcio',tot);
+      else if(/gesti/.test(ctx))sum('gastos_gestion',tot);
+      else if(/formul/.test(ctx))sum('gastos_form',tot);
+      else if(/sell/.test(ctx))sum('sellados',tot);
+      else otros.push({c:(prev||next||l.replace(rowRe,'')).trim().replace(/^Otras Deducciones\s*/i,'')+(/registro/.test(ctx)&&/cordoba/.test(ctx)?' Córdoba':''),a:alic,m:base});
+    });
+    if(ivaG)e.d_iva=liqPlata(ivaG);
+    if(otros.length){const o=otros[0];e.od_concepto=(otros.length>1?otros.map(x=>x.c).join(' + '):o.c).replace(/\s+/g,' ');e.od_alicuota=o.a;e.od_monto=liqPlata(otros.reduce((s,x)=>s+x.m,0))}
+  }
+  for(const x of r.retenciones||[]){if(x.impuesto==='GANANCIAS')e.ret_gcias=x.importe;if(x.impuesto==='IVA')e.ret_iva=x.importe}
+  const tt=liqM1(L,/Total Deducciones:\s*\$\s*([\d.,]+)/i),tr=liqM1(L,/Total Retenciones Afip:\s*\$\s*([\d.,]+)/i),nt=liqM1(L,/Importe Neto a Pagar:\s*\$\s*([\d.,]+)/i),i4=liqM1(L,/IVA RG 4310\/2018:\s*\$\s*([\d.,]+)/i),pg=liqM1(L,/Pago seg[uú]n condiciones:\s*\$\s*([\d.,]+)/i);
+  if(tt)e.total_desc=liqPlata(liqN(tt[1])+(tr?liqN(tr[1]):0));
+  if(nt)e.neto_pagar=liqN(nt[1]);if(i4)e.iva_2003=liqN(i4[1]);if(pg)e.pago=liqN(pg[1]);
+  return {erp:e,cod:null};
+}
+function liqErpHacienda(L0,r){
+  const L=liqPrimeraCopia(L0),e={},cod=liqM1(L,/C[oó]d\.\s*(\d+)/i);
+  e.tipo_cbte='CUENTA DE VENTA Y LÍQUIDO PRODUCTO - HACIENDA';if(r.pv!==undefined)e.numero=nroF(r.pv,r.num);
+  e.comprador_cod='';e.comprador=r.nombre||'';
+  const f=liqM1(L,/^Fecha\s+(\d{1,2}\/\d{1,2}\/\d{4})/i);e.f_comp=f?liqDmy(f[1]):'';
+  const ff=liqM1(L,/Fecha Faena:\s*(\d{1,2}\/\d{1,2}\/\d{4})/i);e.f_pase=ff?liqDmy(ff[1]):e.f_comp;
+  const iV=L.findIndex(l=>/VENCIMIENTO\s+\d{1,2}\s+DE\s+\w+/i.test(l));
+  if(iV>=0){const m=L[iV].match(/VENCIMIENTO\s+(\d{1,2})\s+DE\s+(\w+)/i),y=(L.slice(iV+1,iV+3).find(l=>/^\d{4}$/.test(l.trim()))||e.f_comp.slice(-4)),mes=LIQ_MESES[liqNorm(m[2])];if(mes)e.f_venc=`${m[1].padStart(2,'0')}/${String(mes).padStart(2,'0')}/${y.trim()}`}
+  const dte=liqM1(L,/^DTE\s+(\S+)/i);if(dte)e.romaneo=dte[1];
+  const iH=liqBuscar(L,/^cliente categoria/),iG=liqBuscar(L,/^gastos \$ base/,iH>=0?iH:0);
+  if(iH>=0&&iG>iH){
+    const blk=L.slice(iH+1,iG),rowRe=/(\d{11})\s*-\s*(.+?)\s+(\d+)\s+(Kg\.?(?:\s*Vivo)?|Cab\w*)\s+(\d+(?:\.\d+)?)\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+(\d+\.\d{2})/i;
+    const desc=[];let um='';
+    for(const l of blk){const m=l.match(rowRe);
+      if(m){e.unidades=Number(m[3]);um=m[4].replace(/\s+/g,' ');e.cantidad=Number(m[5]);e.precio=liqN(m[6]);e.it_total=liqN(m[7]);const pre=l.slice(0,l.indexOf(m[1])).trim();if(pre)desc.push(pre)}
+      else desc.push(l.replace(/\s*\d[\d,]*\.$/,'').replace(/\s+\d{1,4}$/,'').trim())}
+    e.articulo=desc.filter(Boolean).join(' ').replace(/\s+/g,' ');e.it_desc=e.articulo;e.it_unidad=um;e.it_cantidad=e.cantidad;e.it_precio=e.precio;
+  }
+  const g=L.find(l=>/^Comisi[oó]n\s+[\d,]+\.\d{2}\s+\d/.test(l));
+  if(g){const v=liqMontos(g),p=g.match(/\s(\d+\.\d{3})\s/);if(v.length>=2){e.pct_comision=p?Number(p[1]):null;e.imp_comision=v[1];e.it_comision=v[1]}}
+  const gv=re=>{const l=L.find(x=>re.test(x));if(!l)return null;const m=l.replace(/^.*?(importe bruto|iva s\/bruto|total gastos|iva s\/gastos|total tributos|importe neto)/i,'$1').match(/\$\s*([\d.,]+)/);return m?liqN(m[1]):null};
+  const bruto=gv(/importe bruto/i),ivaB=gv(/iva s\/bruto/i),gastos=gv(/total gastos/i),ivaG=gv(/iva s\/gastos/i),trib=gv(/total tributos/i),neto=gv(/importe neto/i);
+  e.subtotal=bruto;e.iva=ivaB;if(bruto!==null&&ivaB!==null)e.total=liqPlata(bruto+ivaB);
+  e.d_grav=gastos||0;e.d_iva_cf=ivaG||0;e.d_no_grav=trib||0;
+  e.total_desc=liqPlata((gastos||0)+(ivaG||0)+(trib||0));if(neto!==null)e.neto_pagar=neto;
+  return {erp:e,cod:cod?Number(cod[1]):null};
+}
+function liqErpLeche(L0,r){
+  const L=liqPrimeraCopia(L0),e={},items=[],cod=liqM1(L,/^(\d+)\s*-\s*LIQUIDACI/i);
+  e.tipo_cbte='LIQUIDACIÓN ÚNICA DE LECHE';if(r.pv!==undefined)e.numero=nroF(r.pv,r.num);e.comprador_cod='';
+  const rs=liqM1(L,/^Raz[oó]n Social:\s*(.+?)\s+CUIT:/i);e.comprador=rs?rs[1].trim():(r.nombre||'');
+  e.f_comp=liqDmy((liqM1(L,/Fecha comprobante:\s*(\S+)/i)||[])[1])||liqDmy(r.fecha);
+  const pl=liqM1(L,/Per[ií]odo Liquidaci[oó]n:\s*(\d{4})\/(\d{2})/i);
+  if(pl){const u=new Date(Number(pl[1]),Number(pl[2]),0).getDate();e.f_pase=`${String(u).padStart(2,'0')}/${pl[2]}/${pl[1]}`}else e.f_pase=e.f_comp;
+  const fv=L.findIndex(l=>/^Fecha Vencimiento:/i.test(l));if(fv>=0)e.f_venc=liqDmy(L[fv]);
+  const add=(desc,unidad,cant,precio,total)=>items.push({codigo:'',desc,unidad,cantidad:cant,precio,comision:0,total});
+  for(const l of L){
+    let m=l.match(/^Producci[oó]n de Kg\.?\s+(.+?)\s+(\d+\.\d{2})\s+(\d+\.\d{2})\s+(\d+\.\d{2})$/i);if(m){add('Producción de Kg. '+m[1],'Kg',Number(m[2]),Number(m[3]),Number(m[4]));continue}
+  }
+  const tot=re=>{const l=L.find(x=>re.test(x));if(!l)return null;const v=liqMontos(l);return v.length?liqUlt(v):null};
+  const bc=tot(/^TOTAL BONIFICACIONES POR CALIDAD/i),pc=tot(/^TOTAL PENALIZACIONES POR CALIDAD/i),bco=tot(/^TOTAL BONIFICACIONES COMERCIALES/i),dc=tot(/^TOTAL D[EÉ]BITOS COMERCIALES/i);
+  if(bc)add('Bonificaciones por calidad','',1,bc,bc);if(pc)add('Penalizaciones por calidad','',1,-pc,-pc);if(bco)add('Bonificaciones comerciales','',1,bco,bco);if(dc)add('Débitos comerciales','',1,-dc,-dc);
+  e.items=items;const a=items[0];
+  if(a){e.articulo=a.desc;e.it_codigo='';e.it_desc=a.desc;e.it_unidad=a.unidad;e.cantidad=a.cantidad;e.it_cantidad=a.cantidad;e.precio=a.precio;e.it_precio=a.precio;e.it_comision=0;e.it_total=a.total}
+  e.pct_comision=0;e.imp_comision=0;
+  e.subtotal=r.neto;e.iva=r.iva;e.total=r.total;
+  e.d_no_grav=0;e.d_grav=0;e.d_iva_cf=0;e.ret_gcias=0;
+  const pe=(r.retenciones||[]).filter(x=>x.impuesto==='IVA').reduce((s,x)=>s+x.importe,0);e.ret_iva=pe;
+  e.total_desc=liqPlata(pe);const nl=tot(/^NETO LIQUIDACI[OÓ]N/i);if(nl!==null)e.neto_pagar=nl;
+  return {erp:e,cod:cod?Number(cod[1]):null};
+}
+function liqErp(L,perfil,r){try{return perfil==='liq_granos'?liqErpGranos(L,r):perfil==='liq_venta'?liqErpHacienda(L,r):perfil==='liq_leche'?liqErpLeche(L,r):null}catch(x){return null}}
+
 /** Lectura completa: reconoce el tipo, lee por tipo y valida (IVA = neto x alícuota; el total cierra; el PDF menciona al cliente). */
 function liqExtraer(lineas,cuitCliente,razonCliente){
   const perfil=liqPerfil(lineas),gen=liqGenerico(lineas,cuitCliente),fn={liq_granos:liqGranos,liq_venta:liqHacienda,liq_leche:liqLeche}[perfil];
@@ -4105,6 +4232,7 @@ function liqExtraer(lineas,cuitCliente,razonCliente){
   if(!okIva)r.avisos.push('No se pudo confirmar que el IVA coincida con el neto por la alícuota: revisá los importes con mucho cuidado.');
   if(!fn&&r.total!==null&&!okTot&&okIva)r.avisos.push('El total del PDF no coincide con neto más IVA.');
   if(cuitCliente&&!lineas.join(' ').replace(/[-. ]/g,'').includes(cuitCliente))r.avisos.push('El PDF no menciona el CUIT del cliente elegido ('+cuitF(cuitCliente)+'): verificá que sea el cliente correcto.');
+  {const er=liqErp(lineas,perfil,r);if(er){r.erp=er.erp;r.cod=er.cod}}
   if(!lineas.length)r.avisos.unshift('El PDF no tiene texto que se pueda leer (parece una imagen escaneada). Cargá los importes a mano.');
   return r;
 }
@@ -4115,12 +4243,12 @@ function liqAbrir(){const L=LQ();L.abierta=!L.abierta;if(!L.abierta){L.datos=nul
 async function liqPdf(inp){
   const L=LQ(),f=inp.files[0];inp.value='';if(!f)return;{const ex=exentoMsg(ui.vta.cid);if(ex){flash(ex,'err');return draw()}}
   const e=await esPdf(f);if(e){flash(e,'err');return draw()}
-  L.file=f;L.leyendo=true;L.avisos=[];L.info=[];L.ret=[];L.cand=[];L.perfil=null;L.datos={fecha:'',pv:'',num:'',neto:'',iva:'',alic:'10.5',total:'',cuit:'',nombre:''};draw();
+  L.file=f;L.erp=null;L.cod=null;L.leyendo=true;L.avisos=[];L.info=[];L.ret=[];L.cand=[];L.perfil=null;L.datos={fecha:'',pv:'',num:'',neto:'',iva:'',alic:'10.5',total:'',cuit:'',nombre:''};draw();
   const cliente=ui.clients.find(c=>c.id===ui.vta.cid),s=x=>x===null||x===undefined?'':String(x);
   try{
     const lineas=await pdfTexto(f),r=liqExtraer(lineas,cliente?cliente.cuit:'',cliente?cliente.razon_social:'');
     L.datos={fecha:r.fecha||'',pv:s(r.pv),num:s(r.num),neto:s(r.neto),iva:s(r.iva),alic:String(r.alic||L.datos.alic),total:s(r.total),cuit:r.cuit||'',nombre:r.nombre||''};
-    L.cand=r.candidatos||[];L.avisos=r.avisos;L.info=r.info||[];L.confianza=r.confianza;L.perfil=r.perfil;
+    L.erp=r.erp||null;L.cod=r.cod||null;L.cand=r.candidatos||[];L.avisos=r.avisos;L.info=r.info||[];L.confianza=r.confianza;L.perfil=r.perfil;
     L.ret=(r.retenciones||[]).map(x=>({...x,sel:true}));
     if(r.perfil)L.tipo=r.perfil;
   }catch(x){L.avisos=['No se pudo leer el PDF: '+(x.message||x)+' Cargá los importes a mano.'];L.confianza='baja'}
@@ -4163,7 +4291,7 @@ async function liqGuardar(){
   let msgRet='';
   try{
     const {data:p,error:e1}=await sb.from('client_periods').upsert({client_id:v.cid,periodo:fecha.slice(0,7)+'-01'},{onConflict:'client_id,periodo'}).select('id').single();if(e1)throw e1;
-    const {error}=await sb.from('sales_invoices').insert({client_id:v.cid,period_id:p.id,fecha,tipo_cmp:tipo.cod,punto_venta:pv,numero:num,receptor_cuit:String(d.cuit||'').replace(/\D/g,'')||null,receptor_nombre:d.nombre||null,neto_gravado:neto,no_gravado:0,exento:0,otros_tributos:0,iva,importe_total:total,origen:'manual',raw,clase:L.tipo,archivo_path:path,archivo_nombre:L.file.name,datos_extraidos:{confianza:L.confianza,perfil:L.perfil,avisos:L.avisos,retenciones:(L.ret||[]).filter(x=>x.sel).map(x=>({tipo:x.tipo,impuesto:x.impuesto,importe:x.importe}))},created_by:me.id});
+    const {error}=await sb.from('sales_invoices').insert({client_id:v.cid,period_id:p.id,fecha,tipo_cmp:tipo.cod,punto_venta:pv,numero:num,receptor_cuit:String(d.cuit||'').replace(/\D/g,'')||null,receptor_nombre:d.nombre||null,neto_gravado:neto,no_gravado:0,exento:0,otros_tributos:0,iva,importe_total:total,origen:'manual',raw,clase:L.tipo,archivo_path:path,archivo_nombre:L.file.name,datos_extraidos:{...(L.erp?{erp:L.erp}:{}),...(L.cod?{cod_arca:L.cod}:{}),confianza:L.confianza,perfil:L.perfil,avisos:L.avisos,retenciones:(L.ret||[]).filter(x=>x.sel).map(x=>({tipo:x.tipo,impuesto:x.impuesto,importe:x.importe}))},created_by:me.id});
     if(error)throw error;
     // retenciones y percepciones tildadas: se cargan para el IVA aproximado (sin repetir las que ya estén)
     const sel=(L.ret||[]).filter(x=>x.sel&&x.importe>0);
