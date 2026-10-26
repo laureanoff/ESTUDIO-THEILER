@@ -1032,14 +1032,14 @@ function cel(c,imp,per){
   ${imp==='GAN_ANT'?`<input class="sm" inputmode="decimal" title="Importe del anticipo" placeholder="Importe $" style="width:110px" value="${x.importe===null||x.importe===undefined?'':String(x.importe).replace('.',',')}" onchange="cambiarImporteAnt(${A},this.value,${Z})">`:''}${imp==='GAN_ANT'?`<select class="sm" title="Número de anticipo" onchange="cambiarNumAnt(${A},this.value,${Z})">${antNumOpts(x.numero_anticipo,null)}</select>`:''}<select class="sm" title="Cómo se canceló" onchange="cambiarCancel(${A},this.value,${Z})">${opts(x.cancelacion||'')}</select>
   ${x.nota?`<span class="s">${esc(x.nota)}</span>`:''}
   <div class="row" style="gap:4px">${slots}</div>
-  <div class="row" style="gap:4px"><button class="g sm" onclick="notaPres(${A},${Z})">Nota</button><button class="g sm" onclick="deshacerPres(${A},${Z})">Deshacer</button></div></div>`;
+  <div class="row" style="gap:4px"><button class="g sm" onclick="notaPres(${A},${Z})">Nota</button><button class="g sm" onclick="deshacerPres(${A},${Z})">Deshacer</button>${imp==='IVA'||imp==='IIBB'?`<button class="g sm" onclick="ddjjAbrir('${per}','${c.id}','${imp}')" title="Datos de la declaración presentada">Datos DDJJ${x.datos&&x.datos.ddjj?' ✓':''}</button>`:''}</div></div>`;
 }
 function vPresent(c,f){
   const ap=aplica(c);
   if(!ap.length)return '<div class="card" style="color:var(--mut)">Marcá en la pestaña Datos qué impuestos presenta este cliente (IVA, IIBB, F.931, Ganancias, Bienes Personales) y acá aparecen sus columnas de presentación.</div>';
   const mens=ap.filter(k=>OBLIG[k].t==='m'&&k!=='GAN_ANT'&&k!=='F931'),anu=ap.filter(k=>OBLIG[k].t==='a'),meses=[];
   let [y,m]=workPeriod().split('-').map(Number);for(let i=0;i<8;i++){meses.push(y+'-'+String(m).padStart(2,'0'));m--;if(m===0){m=12;y--}}
-  let h=`<p class="s" style="margin-bottom:12px">Las columnas dependen de los impuestos del cliente. Marcá cada una cuando quede presentada: podés cambiar la fecha y adjuntar la declaración jurada en PDF. La app solo guarda tu marca; no verifica nada con ARCA ni con la provincia.</p>`;
+  let h=(ui.ddjj&&ui.ddjj.cid===c.id?ddjjPanel():'')+`<p class="s" style="margin-bottom:12px">Las columnas dependen de los impuestos del cliente. Marcá cada una cuando quede presentada: podés cambiar la fecha y adjuntar la declaración jurada en PDF. La app solo guarda tu marca; no verifica nada con ARCA ni con la provincia.</p>`;
   if(mens.length)h+=`<div class="tw"><table><thead><tr><th>Período</th>${mens.map(k=>`<th>${OBLIG[k].n}</th>`).join('')}</tr></thead><tbody>${meses.map(per=>`<tr><td>${per.slice(5)}/${per.slice(0,4)}${per===workPeriod()?'<span class="s">período de trabajo</span>':''}</td>${mens.map(k=>`<td>${cel(c,k,per)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
   anu.forEach(k=>{const cierre=k==='BP'?12:(c.ejercicio_cierre_mes||12);h+=`<h3>${OBLIG[k].n}</h3><div class="tw"><table><thead><tr><th>Ejercicio cerrado el</th><th>Presentación</th></tr></thead><tbody>${ejerciciosCerrados(cierre,4).map(per=>{const [yy,mm]=per.split('-').map(Number);return `<tr><td>${new Date(Date.UTC(yy,mm,0)).getUTCDate()}/${String(mm).padStart(2,'0')}/${yy}</td><td>${cel(c,k,per)}</td></tr>`}).join('')}</tbody></table></div>`});
   if(ap.includes('GAN_ANT'))h+=`<p class="s" style="margin-top:10px">Los anticipos de Ganancias se controlan en la sección <b>Anticipos</b> del menú. <a href="#" style="color:var(--pri)" onclick="cerrarFicha();show('anticipos');return false">Ir a Anticipos</a></p>`;
@@ -1104,6 +1104,127 @@ async function esPdf(f){
   if(await f.slice(0,5).text()!=='%PDF-')return 'El archivo no parece un PDF válido.';
   return null;
 }
+/* ===== Lectura de la declaración jurada de IVA presentada (PDF) ===== */
+const DDJJ_CAMPOS=[
+  ['debito','Total del débito fiscal del período',/^total del debito fiscal/],
+  ['credito','Total del crédito fiscal del período',/^total del credito fiscal/],
+  ['st_anterior','Saldo técnico a favor del período anterior',/^saldo tecnico a favor del (contribuyente|responsable) del periodo anterior/],
+  ['saldo_tecnico','Saldo técnico a favor del contribuyente (pasa al mes siguiente)',/^saldo tecnico a favor del (contribuyente|responsable)$/],
+  ['st_arca','Saldo técnico a favor de ARCA',/^saldo tecnico a favor de (la )?(arca|afip)/],
+  ['sl_anterior','Saldo de libre disponibilidad del período anterior',/^saldo a favor de libre disponibilidad del periodo anterior/],
+  ['retenciones','Retenciones, percepciones y pagos a cuenta (neto)',/^total de retenciones.*pagos a cuenta/],
+  ['reintegro','Retenciones agropecuarias reintegradas',/retenciones agropecuarias reintegrad/],
+  ['saldo_libre','Saldo de libre disponibilidad del período (pasa al mes siguiente)',/^saldo de libre disponibilidad a favor del (contribuyente|responsable)/],
+  ['a_pagar','Saldo a pagar a ARCA',/^(saldo|impuesto) (de impuesto )?(a favor de (la )?(arca|afip)|a ingresar)|^saldo a ingresar/]
+];
+const DDJJ_NOMBRE={IVA:'IVA',IIBB:'Ingresos Brutos'};
+const ddjjMontos=t=>(String(t).match(/-?\d{1,3}(?:\.\d{3})*,\d{2}|-?\d+,\d{2}/g)||[]).map(x=>Number(x.replace(/\./g,'').replace(',','.')));
+const ddjjEtiqueta=l=>liqNorm(l).replace(/\$?\s*-?\d[\d.]*,\d{2}/g,'').replace(/\s+/g,' ').replace(/[\s:$]+$/,'').trim();
+const ddjjCuit=t=>{const m=String(t).match(/\b(\d{2})-?(\d{8})-?(\d)\b/);return m?m[1]+m[2]+m[3]:null};
+/** Reconoce qué declaración es y trae los datos de cabecera para controlar que sea la del cliente y el período. */
+function ddjjTipo(lineas){
+  const L=(lineas||[]).map(x=>String(x)),T=liqNorm(L.join(' '));
+  if(/f\.?\s?2051|impuesto al valor/.test(T)&&/determinacion del impuesto|posicion mensual/.test(T))return 'IVA';
+  if(/ingresos brutos/.test(T)&&/cm03|convenio multilateral/.test(T))return 'IIBB_CM';
+  if(/ingresos brutos/.test(T))return 'IIBB_LOCAL';
+  return null;
+}
+function ddjjCabecera(lineas,tipo){
+  const L=(lineas||[]).map(x=>String(x));let per=null,cuit=null,secuencia=null,estado=null;
+  for(let i=0;i<L.length;i++){const l=L[i],n=liqNorm(l);
+    if(!cuit){const c=ddjjCuit(l);if(c&&/cuit/.test(n+' '+liqNorm(L[i-1]||'')))cuit=c;else if(c&&i<6)cuit=c}
+    if(!per){let m=null;if(tipo==='IVA'&&/periodo/.test(liqNorm(L[i-1]||''))||/anticipo\s*:?\s*20\d{4}|periodo\s*:?\s*20\d{4}/.test(n))m=l.match(/\b(20\d{2})(0[1-9]|1[0-2])\b/);if(m)per=m[1]+'-'+m[2]}
+    if(!secuencia){const m=n.match(/\b(original|rectificativa)\b/);if(m)secuencia=m[1]}
+    if(!estado){const m=n.match(/estado:?\s*(\w+)/);if(m)estado=m[1]}}
+  return {per,cuit,secuencia,estado};
+}
+/** F.2051 (IVA): busca cada dato por su etiqueta exacta; si hay dos líneas iguales (determinación y posición mensual) toma la última. */
+function ddjjIvaParse(lineas){
+  const L=(lineas||[]).map(x=>String(x).replace(/\s+/g,' ').trim()).filter(Boolean),cand={};
+  DDJJ_CAMPOS.forEach(([k,,re])=>{cand[k]=[];
+    L.forEach((l,i)=>{const et=ddjjEtiqueta(l);if(!re.test(et))return;
+      let m=ddjjMontos(l);if(!m.length&&L[i+1]&&!ddjjEtiqueta(L[i+1]))m=ddjjMontos(L[i+1]).slice(0,1);
+      if(m.length)cand[k].push({txt:l.slice(0,90),monto:m[m.length-1]})})});
+  const vals={};
+  DDJJ_CAMPOS.forEach(([k])=>{const c=cand[k];vals[k]=c.length?c[c.length-1].monto:''});
+  return {cand,vals};
+}
+/** CM03 (Convenio Multilateral): filas por jurisdicción con sus importes, en el orden impreso, y el total a pagar. */
+function ddjjCmParse(lineas){
+  const L=(lineas||[]).map(x=>String(x).replace(/\s+/g,' ').trim()).filter(Boolean),jur=[];let tot=null,aPagar=null,enc=null;
+  L.forEach(l=>{const n=liqNorm(l);
+    if(/jurisdiccion/.test(n)&&/anticipo|valores/.test(n))enc=l;
+    const m=ddjjMontos(l);
+    if(/^total a pagar/.test(n)&&m.length)aPagar=m[m.length-1];
+    else if(/^totales\b/.test(n)&&m.length>=3)tot=m;
+    else if(m.length>=3&&/^[A-ZÁÉÍÓÚÑ ().]+\s+\$/.test(l.replace(/\s+/g,' ')))jur.push({nombre:l.split('$')[0].trim(),importes:m})});
+  return {jur,totales:tot,a_pagar:aPagar,encabezado:enc};
+}
+const ddjjCampos=imp=>imp==='IVA'?DDJJ_CAMPOS:[['a_pagar','Total a pagar',null]];
+const ddjjVacio=(cid,per,imp)=>({cid,per,imp,cand:{},vals:Object.fromEntries(ddjjCampos(imp).map(([k])=>[k,''])),lineas:[],chequeos:[],jur:null,totales:null,encabezado:null});
+async function ddjjLeerArchivo(file,cid,per,imp){
+  imp=imp||'IVA';ui.ddjj={...ddjjVacio(cid,per,imp),leyendo:true};draw();
+  const D=ddjjVacio(cid,per,imp),c=ui.clients.find(x=>x.id===cid);
+  try{
+    const lineas=Array.from(await pdfTexto(file));D.lineas=lineas;
+    if(lineas.join('').replace(/\s/g,'').length<40){D.aviso='El PDF no tiene texto legible (puede ser una imagen). Cargá los datos a mano.';ui.ddjj=D;return draw()}
+    const tipo=ddjjTipo(lineas),cab=ddjjCabecera(lineas,tipo);D.tipo=tipo;
+    if(imp==='IVA'){
+      if(tipo!=='IVA')D.aviso='Este PDF no parece la declaración jurada de IVA (F.2051). Revisá que sea el archivo correcto; igual podés cargar los datos a mano.';
+      else{const P=ddjjIvaParse(lineas);D.cand=P.cand;D.vals=P.vals;if(!Object.values(P.vals).some(v=>v!==''))D.aviso='No reconocí ningún dato en este PDF.'}
+    }else{
+      if(tipo==='IIBB_CM'){const P=ddjjCmParse(lineas);D.jur=P.jur;D.totales=P.totales;D.encabezado=P.encabezado;D.vals.a_pagar=P.a_pagar===null?'':P.a_pagar;if(P.a_pagar===null)D.aviso='No encontré el total a pagar.'}
+      else if(tipo==='IIBB_LOCAL')D.aviso='Es una declaración de régimen local: todavía no la leo automáticamente. Cargá el total a pagar a mano (si querés que la lea sola, mandame un ejemplo de régimen local).';
+      else D.aviso='Este PDF no parece una declaración de Ingresos Brutos. Revisá que sea el archivo correcto.'
+    }
+    const ch=[];
+    if(cab.cuit&&c&&String(c.cuit||'').replace(/\D/g,'')&&cab.cuit!==String(c.cuit).replace(/\D/g,''))ch.push(`El CUIT del PDF (${cab.cuit}) no es el del cliente (${String(c.cuit).replace(/\D/g,'')}).`);
+    if(cab.per&&cab.per!==per)ch.push(`El período del PDF es ${cab.per.slice(5)}/${cab.per.slice(0,4)} y estás cargando ${per.slice(5)}/${per.slice(0,4)}.`);
+    if(cab.secuencia&&cab.secuencia!=='original')ch.push('Es una declaración rectificativa: confirmá que sea la vigente.');
+    D.chequeos=ch;
+  }catch(e){D.aviso=errTxt(e)}
+  ui.ddjj=D;draw();
+}
+function ddjjAbrir(per,cid,imp){
+  imp=imp||'IVA';const x=filDe(cid,imp,per),g=x&&x.datos&&x.datos.ddjj,D=ddjjVacio(cid,per,imp);
+  if(g){ddjjCampos(imp).forEach(([k])=>{if(g[k]!==undefined&&g[k]!==null)D.vals[k]=g[k]});D.guardado=g;D.jur=g.jurisdicciones||null;D.totales=g.totales||null;D.encabezado=g.encabezado||null}
+  ui.ddjj=D;draw();
+}
+async function ddjjReleer(per,cid,imp){
+  imp=imp||'IVA';const x=filDe(cid,imp,per),f=x&&ui.ffil.find(z=>z.filing_id===x.id&&z.tipo==='PRESENTACION');
+  if(!f){flash('Primero adjuntá el PDF de la presentación.','warn');return draw()}
+  try{const r=await sb.storage.from('clientes').download(f.path);if(r.error)throw r.error;await ddjjLeerArchivo(new File([r.data],f.nombre_archivo||'ddjj.pdf',{type:'application/pdf'}),cid,per,imp)}
+  catch(e){flash(errTxt(e),'err');draw()}
+}
+function ddjjSet(k,v){const D=ui.ddjj;if(!D)return;const s=String(v).trim();if(s===''){D.vals[k]='';return draw()}const n=pNum(s);if(n===null||n===undefined||isNaN(n)){flash('Importe no válido.','warn');return draw()}D.vals[k]=n;draw()}
+function ddjjElegir(k,i){const D=ui.ddjj;if(D&&D.cand[k]&&D.cand[k][i])D.vals[k]=D.cand[k][i].monto;draw()}
+function ddjjCerrar(){ui.ddjj=null;draw()}
+async function ddjjGuardar(){
+  const D=ui.ddjj;if(!D)return;const imp=D.imp||'IVA',x=filDe(D.cid,imp,D.per);if(!x){flash('La marca de presentación ya no existe.','err');return draw()}
+  const g={};ddjjCampos(imp).forEach(([k])=>{if(D.vals[k]!==''&&D.vals[k]!==null&&D.vals[k]!==undefined)g[k]=Number(D.vals[k])});
+  if(!Object.keys(g).length){flash('No hay ningún dato para guardar.','warn');return draw()}
+  if(imp==='IIBB'){const p=D.guardado||{};g.jurisdicciones=D.jur||p.jurisdicciones||null;g.totales=D.totales||p.totales||null;g.encabezado=D.encabezado||p.encabezado||null;g.regimen=D.tipo==='IIBB_CM'?'convenio':D.tipo==='IIBB_LOCAL'?'local':p.regimen||null}
+  g.confirmado_at=new Date().toISOString();g.confirmado_por=me.id;g.fuente=D.lineas&&D.lineas.length?'pdf':'manual';
+  const {error}=await sb.from('tax_filings').update({datos:{...(x.datos||{}),ddjj:g},modificado_by:me.id,modificado_at:new Date().toISOString()}).eq('client_id',D.cid).eq('periodo',D.per+'-01').eq('impuesto',imp);
+  if(error){flash(errTxt(error),'err');return draw()}
+  try{await loadFil()}catch(e){}
+  ui.ddjj=null;flash(imp==='IVA'?'Datos de la declaración guardados. El IVA aproximado del mes siguiente los toma como saldos anteriores.':'Datos de la declaración guardados.','ok');draw();
+}
+function ddjjPanel(){
+  const D=ui.ddjj;if(!D)return '';
+  if(D.leyendo)return '<div class="msg info" style="margin-bottom:12px">Leyendo el PDF de la declaración…</div>';
+  const imp=D.imp||'IVA',lab=D.per.slice(5)+'/'+D.per.slice(0,4),campos=ddjjCampos(imp);
+  const jur=D.jur&&D.jur.length?`<div class="tw" style="margin-top:8px"><table style="min-width:560px"><thead><tr><th>Jurisdicción</th><th colspan="6">Importes en el orden del cuadro de la declaración</th></tr></thead><tbody>${D.jur.map(j=>`<tr><td>${esc(j.nombre)}</td>${j.importes.map(v=>`<td>${esc(money(v))}</td>`).join('')}</tr>`).join('')}${D.totales?`<tr><td><b>Totales</b></td>${D.totales.map(v=>`<td><b>${esc(money(v))}</b></td>`).join('')}</tr>`:''}</tbody></table></div>${D.encabezado?`<div class="s">Encabezado del cuadro: ${esc(D.encabezado)}</div>`:''}`:'';
+  return `<div class="card" style="margin-bottom:14px;border:1px solid var(--blut)"><h4 style="margin-top:0">Datos de la declaración de ${DDJJ_NOMBRE[imp]} ${lab}</h4>
+  ${(D.chequeos||[]).map(c=>`<div class="msg warn" style="margin-bottom:8px">${esc(c)}</div>`).join('')}${D.aviso?`<div class="msg warn" style="margin-bottom:8px">${esc(D.aviso)}</div>`:''}
+  <div class="s" style="margin-bottom:8px">${D.lineas&&D.lineas.length?'Lectura asistida del PDF: es una ayuda, verificá cada importe contra la declaración antes de guardar.':D.guardado?`Guardado el ${fAR(isoLocal(new Date(D.guardado.confirmado_at)))} (${D.guardado.fuente==='pdf'?'leído del PDF':'cargado a mano'}). Podés corregirlo.`:'Cargalos a mano o releé el PDF.'}${imp==='IVA'?' Los saldos que pasan al mes siguiente alimentan el IVA aproximado.':''}</div>
+  <div class="fgrid">${campos.map(([k,t])=>{const c=D.cand[k]||[];return `<label>${t}<input inputmode="decimal" value="${D.vals[k]===''||D.vals[k]===undefined?'':String(D.vals[k]).replace('.',',')}" placeholder="sin dato" onchange="ddjjSet('${k}',this.value)">${c.length>1?`<select onchange="ddjjElegir('${k}',this.value)"><option value="">Otras líneas del PDF…</option>${c.map((x,i)=>`<option value="${i}">${esc(x.txt)} → ${esc(String(x.monto).replace('.',','))}</option>`).join('')}</select>`:''}</label>`}).join('')}</div>${jur}
+  <div class="row" style="gap:8px;margin-top:10px"><button class="b" onclick="ddjjGuardar()">Confirmar y guardar</button><button class="g" onclick="ddjjReleer('${D.per}','${D.cid}','${imp}')">Volver a leer el PDF</button><button class="g" onclick="ddjjCerrar()">Cerrar</button></div>
+  ${D.lineas&&D.lineas.length?`<details style="margin-top:8px"><summary class="s">Texto que leyó del PDF</summary><pre style="white-space:pre-wrap;font-size:11px;max-height:240px;overflow:auto">${esc(D.lineas.join('\n'))}</pre></details>`:''}</div>`;
+}
+/** Saldos de la declaración de IVA presentada de un mes (si fue confirmada). */
+const ddjjDe=(cid,per)=>{const x=ui.fil.find(z=>z.client_id===cid&&z.periodo.slice(0,7)===per&&z.impuesto==='IVA');return x&&x.datos&&x.datos.ddjj&&x.datos.ddjj.saldo_tecnico!==undefined?x.datos.ddjj:null};
+
 async function adjArch(tipo,imp,per,inp,cid){
   const f=inp.files[0];inp.value='';const e=await esPdf(f);if(e){flash(e,'err');return draw()}
   const x=filDe(cid,imp,per);if(!x){flash('La marca ya no existe.','err');return draw()}
@@ -1111,6 +1232,7 @@ async function adjArch(tipo,imp,per,inp,cid){
   if(up.error){flash('No se pudo subir el PDF: '+errTxt(up.error),'err');return draw()}
   const {error}=await sb.from('tax_filing_files').upsert({filing_id:x.id,client_id:cid,tipo,nombre_archivo:f.name,path,size_bytes:f.size,subido_by:me.id},{onConflict:'filing_id,tipo'});
   if(error)flash(errTxt(error),'err');else{try{await loadFil();flash('Archivo adjuntado.')}catch(z){flash(errTxt(z),'err')}}
+  if(!error&&(imp==='IVA'||imp==='IIBB')&&tipo==='PRESENTACION'){ddjjLeerArchivo(f,cid,per,imp);return}
   draw();
 }
 async function quitarArch(id){
@@ -3455,13 +3577,15 @@ async function inflTraerIva(){
   const d=ui.bal.d,I=inflDatos(),M=inflMeses(d.cl.fecha_inicio,d.cl.fecha_cierre);if(!canEdit())return;
   try{
     const L=await fetchAll((a,b)=>sb.from('iva_ajustes').select('periodo,cierre_saldo_tecnico,cierre_saldo_libre').eq('client_id',d.cl.client_id).gte('periodo',M.apertura+'-01').lte('periodo',d.cl.fecha_cierre).range(a,b));
+    const F=await fetchAll((a,b)=>sb.from('tax_filings').select('periodo,datos').eq('client_id',d.cl.client_id).eq('impuesto','IVA').gte('periodo',M.apertura+'-01').lte('periodo',d.cl.fecha_cierre).range(a,b));
     const por={};L.forEach(x=>{por[String(x.periodo).slice(0,7)]=x});
+    F.forEach(f=>{const g=f.datos&&f.datos.ddjj;if(!g||g.saldo_tecnico===undefined)return;const k=String(f.periodo).slice(0,7);por[k]={...(por[k]||{periodo:f.periodo}),cierre_saldo_tecnico:g.saldo_tecnico,cierre_saldo_libre:g.saldo_libre!==undefined?g.saldo_libre:(por[k]&&por[k].cierre_saldo_libre)}});
     const mk=(auto,nombre,campo)=>{let r=I.data.rows.find(x=>x.auto===auto);if(!r){r={id:'a_'+auto,nombre,tipo:'mon',apertura:0,meses:{},auto};I.data.rows.push(r)}
       r.meses={};r.apertura=0;let n=0;const x0=por[M.apertura];if(x0&&x0[campo]!=null)r.apertura=Number(x0[campo])||0;
       M.meses.forEach(k=>{const x=por[k];if(x&&x[campo]!=null&&x[campo]!==''){r.meses[k]=Number(x[campo])||0;n++}});return n};
     const n1=mk('iva_tec','IVA saldo técnico a favor','cierre_saldo_tecnico'),n2=mk('iva_libre','IVA saldo de libre disponibilidad','cierre_saldo_libre');
     const sin=M.meses.filter(k=>!(por[k]&&por[k].cierre_saldo_tecnico!=null));
-    I.dirty=true;I.msg=`Posición de IVA: ${n1} mes(es) con saldo técnico y ${n2} con libre disponibilidad cerrados en la app.${sin.length?` Faltan meses sin cierre de IVA: ${sin.map(inflMesTxt).join(', ')} (quedan en cero y distorsionan el RECPAM hasta que los completes).`:''}`;draw();
+    I.dirty=true;I.msg=`Posición de IVA: ${n1} mes(es) con saldo técnico y ${n2} con libre disponibilidad (de la declaración presentada o del cierre en la app).${sin.length?` Faltan meses sin cierre de IVA: ${sin.map(inflMesTxt).join(', ')} (quedan en cero y distorsionan el RECPAM hasta que los completes).`:''}`;draw();
   }catch(e){flash(errTxt(e),'err');draw()}
 }
 /* --- pantallas --- */
@@ -4934,11 +5058,14 @@ async function ivaCargar(cid,per){
   const pr=await sb.from('client_periods').select('id').eq('client_id',cid).eq('periodo',per+'-01').maybeSingle();if(pr.error)throw pr.error;
   let ven=[],com=[];
   if(pr.data)[ven,com]=await Promise.all([fetchAll((a,b)=>sb.from('sales_invoices').select('tipo_cmp,iva,neto_gravado,raw').eq('period_id',pr.data.id).range(a,b)),fetchAll((a,b)=>sb.from('vouchers').select('tipo_cmp,iva,neto_gravado,raw').eq('period_id',pr.data.id).neq('proc_status','excluido').range(a,b))]);
-  const [aj,prev,ret]=await Promise.all([sb.from('iva_ajustes').select('*').eq('client_id',cid).eq('periodo',per+'-01').maybeSingle(),sb.from('iva_ajustes').select('*').eq('client_id',cid).eq('periodo',antPrevPer(per)+'-01').maybeSingle(),sb.from('iva_retenciones').select('*').eq('client_id',cid).eq('periodo',per+'-01').order('fecha')]);
-  for(const r of [aj,prev,ret])if(r.error)throw r.error;
+  const [aj,prev,ret,dj]=await Promise.all([sb.from('iva_ajustes').select('*').eq('client_id',cid).eq('periodo',per+'-01').maybeSingle(),sb.from('iva_ajustes').select('*').eq('client_id',cid).eq('periodo',antPrevPer(per)+'-01').maybeSingle(),sb.from('iva_retenciones').select('*').eq('client_id',cid).eq('periodo',per+'-01').order('fecha'),sb.from('tax_filings').select('datos').eq('client_id',cid).eq('impuesto','IVA').eq('periodo',antPrevPer(per)+'-01').maybeSingle()]);
+  for(const r of [aj,prev,ret,dj])if(r.error)throw r.error;
+  const ddjjPrev=dj.data&&dj.data.datos&&dj.data.datos.ddjj&&dj.data.datos.ddjj.saldo_tecnico!==undefined?dj.data.datos.ddjj:null;
   let ajuste=aj.data,prefill=false;const cierrePrev=prev.data&&prev.data.cierre_saldo_tecnico!==null&&prev.data.cierre_saldo_tecnico!==undefined;
-  if(!ajuste){ajuste={saldo_tecnico_anterior:cierrePrev?Number(prev.data.cierre_saldo_tecnico):0,saldo_libre_disp:cierrePrev?Number(prev.data.cierre_saldo_libre||0):0,retenciones_percepciones:0,pagos_a_cuenta:0,excluir_percep_libro:false};prefill=cierrePrev}
-  return {cid,per,ven,com,aj:ajuste,prev:prev.data,prefill,ret:ret.data};
+  let fuente=cierrePrev?'cierre':null;
+  if(!ajuste&&ddjjPrev){ajuste={saldo_tecnico_anterior:Number(ddjjPrev.saldo_tecnico)||0,saldo_libre_disp:Number(ddjjPrev.saldo_libre)||0,retenciones_percepciones:0,pagos_a_cuenta:0,excluir_percep_libro:false};prefill=true;fuente='ddjj'}
+  else if(!ajuste){ajuste={saldo_tecnico_anterior:cierrePrev?Number(prev.data.cierre_saldo_tecnico):0,saldo_libre_disp:cierrePrev?Number(prev.data.cierre_saldo_libre||0):0,retenciones_percepciones:0,pagos_a_cuenta:0,excluir_percep_libro:false};prefill=cierrePrev}
+  return {cid,per,ven,com,aj:ajuste,prev:prev.data,prefill,ret:ret.data,ddjjPrev,fuente};
 }
 async function ivaDetalle(cid){
   const P=ui.ivaP;P.cid=cid;P.det={loading:true};P.retImp=null;draw();
@@ -4952,6 +5079,7 @@ async function ivaGuardarAj(extra){
   if(error){flash('No se pudo guardar: '+errTxt(error),'err');return false}
   P.det.prefill=false;return true;
 }
+async function ivaUsarDdjj(){const d=ui.ivaP.det,g=d.ddjjPrev;if(!g)return;d.aj.saldo_tecnico_anterior=Number(g.saldo_tecnico)||0;d.aj.saldo_libre_disp=Number(g.saldo_libre)||0;draw();if(!await ivaGuardarAj())draw();else flash('Saldos tomados de la declaración presentada.','ok')}
 async function ivaAjuste(campo,val){const a=ui.ivaP.det.aj;a[campo]=pNum(val)||0;draw();if(!await ivaGuardarAj())draw()}
 async function ivaTogglePerc(v){ui.ivaP.det.aj.excluir_percep_libro=!v;draw();if(!await ivaGuardarAj())draw()}
 async function ivaCerrar(){
@@ -5065,7 +5193,7 @@ function vIvaDetalle(c){
   <div class="grid" style="margin-bottom:14px"><div class="card kpi"><b>${money(r.deb)}</b><span>IVA ventas, débito fiscal (${d.ven.length} facturas)</span></div><div class="card kpi"><b>${money(r.cred)}</b><span>IVA compras, crédito fiscal (${d.com.length} comprobantes)</span></div><div class="card kpi"><b>${money(r.saldoTecnico)}</b><span>${r.saldoTecnico>=0?'Saldo técnico a pagar antes de ajustes':'Saldo técnico a favor del período'}</span></div></div>
   ${!d.ven.length?'<div class="msg warn">No hay ventas cargadas en este período: el débito fiscal figura en cero. Cargalas en la sección Ventas.</div>':''}${!d.com.length?'<div class="msg warn">No hay comprobantes de compra en este período.</div>':''}
   <h3>Saldos que vienen del mes anterior</h3>
-  ${d.prefill?`<div class="msg info">Tomados del cierre de ${antPrevPer(P.periodo).slice(5)}/${antPrevPer(P.periodo).slice(0,4)}. Podés corregirlos.</div>`:`<p class="s" style="margin-bottom:8px">Si cerrás el mes anterior en esta pantalla, estos saldos pasan solos. Mientras tanto, cargalos a mano.</p>`}
+  ${d.ddjjPrev&&(Math.abs((Number(a.saldo_tecnico_anterior)||0)-Number(d.ddjjPrev.saldo_tecnico))>0.005||Math.abs((Number(a.saldo_libre_disp)||0)-(Number(d.ddjjPrev.saldo_libre)||0))>0.005)?`<div class="msg warn" style="margin-bottom:8px">La declaración presentada de ${antPrevPer(P.periodo).slice(5)}/${antPrevPer(P.periodo).slice(0,4)} informa saldo técnico ${money(d.ddjjPrev.saldo_tecnico)} y libre disponibilidad ${money(Number(d.ddjjPrev.saldo_libre)||0)}, distintos de los cargados acá. <button class="g sm" onclick="ivaUsarDdjj()">Usar los de la declaración</button></div>`:''}${d.prefill?`<div class="msg info">Tomados ${d.fuente==='ddjj'?'de la declaración jurada presentada':'del cierre'} de ${antPrevPer(P.periodo).slice(5)}/${antPrevPer(P.periodo).slice(0,4)}. Podés corregirlos.</div>`:`<p class="s" style="margin-bottom:8px">Si cerrás el mes anterior en esta pantalla, estos saldos pasan solos. Mientras tanto, cargalos a mano.</p>`}
   <div class="fgrid" style="margin-bottom:14px">${campo('saldo_tecnico_anterior','Saldo técnico a favor del período anterior',a.saldo_tecnico_anterior)}${campo('saldo_libre_disp','Saldo de libre disponibilidad anterior',a.saldo_libre_disp)}${campo('pagos_a_cuenta','Pagos a cuenta de este mes',a.pagos_a_cuenta)}</div>
   <h3>Retenciones y percepciones sufridas de IVA</h3>
   ${retRows.length?`<div class="tw" style="margin-bottom:10px"><table><thead><tr><th>Fecha</th><th>Tipo</th><th>Agente</th><th>Comprobante</th><th>Importe</th><th></th></tr></thead><tbody>${retRows.map(x=>`<tr><td>${fAR(x.fecha)}</td><td>${x.tipo==='retencion'?'Retención':'Percepción'}${x.impuesto!=='IVA'?` <span class="s">${esc(x.impuesto)}</span>`:''}</td><td>${esc(x.agente_nombre||'')}<span class="s">${x.agente_cuit?cuitF(x.agente_cuit):''}</span></td><td>${esc(x.comprobante||'')}</td><td>${money(Number(x.importe))}</td><td><button class="dng sm" onclick="retQuitar('${x.id}')">Quitar</button></td></tr>`).join('')}</tbody></table></div>`:'<p class="s" style="margin-bottom:8px">Todavía no hay retenciones ni percepciones cargadas para este mes.</p>'}
