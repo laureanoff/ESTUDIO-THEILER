@@ -386,7 +386,7 @@ function vComp(){
   <label>Período<br>${mesPick(ui.periodo,`ui.periodo=this.value;show('comprobantes')`)}</label>
   <label>Buscar<br><input value="${esc(ui.q)}" placeholder="CUIT, proveedor o número" oninput="ui.q=this.value;redrawTable()"></label>
   <label>Filtro<br><select onchange="ui.filtro=this.value;ui.sel.clear();draw()">${F.map(([k,t])=>`<option value="${k}" ${ui.filtro===k?'selected':''}>${t}</option>`).join('')}</select></label>
-  <button class="g" onclick="copiarFaltantes()">Copiar lista de faltantes</button><button class="b" onclick="abrirFicha(ui.cid,'pedir',ui.periodo)">Pedir faltantes por WhatsApp</button></div>${resumenIvaCompras()}<div id="tabla">${tabla(filtered())}</div>`;
+  <button class="g" onclick="copiarFaltantes()">Copiar lista de faltantes</button><button class="b" onclick="abrirFicha(ui.cid,'pedir',ui.periodo)">Pedir faltantes por WhatsApp</button><button class="g" onclick="comprasExportarExcel()">Exportar Excel para importar al sistema</button></div>${(ui.cmpAvisos||[]).length?`<div class="card" style="margin-bottom:12px"><b>Avisos de la última exportación</b>${ui.cmpAvisos.slice(0,30).map(a=>`<div class="msg warn">${esc(a)}</div>`).join('')}${ui.cmpAvisos.length>30?`<div class="s">y ${ui.cmpAvisos.length-30} más</div>`:''}</div>`:''}${resumenIvaCompras()}<div id="tabla">${tabla(filtered())}</div>`;
 }
 function redrawTable(){$('tabla').innerHTML=tabla(filtered())}
 function tabla(vs){
@@ -1571,6 +1571,49 @@ async function erpReleer(id){
     await loadVentas();flash('Se volvieron a leer los datos del PDF. Revisalos contra el documento.');
   }catch(err){flash(errTxt(err),'err')}
   draw();
+}
+
+/* ===== Compras: Excel para importar al sistema contable (estructura de columnas A a AD) ===== */
+const CMP_COLS=['Fecha','Tipo de Comprobante','Número','Número Desde','Número Hasta','Cód. Autorización','Tipo Doc. Emisor','Nro. Doc. Emisor','Denominación Emisor','','','Tipo Cambio','Moneda','Neto Gravado IVA 0%','IVA 2.5%','Neto Gravado IVA 2.5%','IVA 5%','Neto Gravado IVA 5%','IVA 10.5%','Neto Gravado IVA 10.5%','IVA 21%','Neto Gravado IVA 21%','IVA 27%','Neto Gravado IVA 27%','Neto Gravado Total','Imp. Neto No Gravado','Op. Exentas','Otros Tributos','Total IVA','Total'];
+/** Arma las filas a partir de los comprobantes de compra del período (ARCA + Libro IVA). Devuelve filas y avisos. */
+function cmpArmar(vs){
+  const avisos=[],filas=[],r2=n=>Math.round((Number(n)+Number.EPSILON)*100)/100,ab=n=>r2(Math.abs(Number(n)||0));
+  let sinDesglose=0,noCierra=0,ext=0;
+  const L=vs.filter(v=>v.proc_status!=='excluido').slice().sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha))||String(a.emisor_cuit).localeCompare(String(b.emisor_cuit))||(a.punto_venta-b.punto_venta)||(a.numero-b.numero));
+  for(const v of L){
+    const raw=v.raw||{},al=alicDeRaw(raw),neto=ab(v.neto_gravado),iva=ab(v.iva),nog=ab(v.no_gravado),exe=ab(v.exento),otr=ab(v.otros_tributos),tot=ab(v.importe_total);
+    const g=k=>{const a=al[k];return a?{n:ab(a.neto),i:ab(a.iva)}:{n:0,i:0}};
+    let t={'0':g('0'),'2.5':g('2.5'),'5':g('5'),'10.5':g('10.5'),'21':g('21'),'27':g('27')};
+    const sn=Object.values(t).reduce((s,x)=>s+x.n,0);
+    if(neto>0&&Math.abs(sn-neto)>1){ // sin desglose por alícuota: se deduce de neto e IVA
+      const tasa=iva===0?0:liqTasa(neto,iva),k=tasa===null||tasa===undefined?null:String(tasa);
+      if(k&&t[k]){t={'0':{n:0,i:0},'2.5':{n:0,i:0},'5':{n:0,i:0},'10.5':{n:0,i:0},'21':{n:0,i:0},'27':{n:0,i:0}};t[k]={n:neto,i:iva}}
+      else{sinDesglose++;avisos.push(`${nroF(v.punto_venta,v.numero)} de ${v.emisor_nombre||v.emisor_cuit}: no se pudo repartir el neto por alícuota; quedó solo en "Neto Gravado Total".`)}
+    }
+    if(Math.abs(neto+nog+exe+otr+iva-tot)>1.5){noCierra++;avisos.push(`${nroF(v.punto_venta,v.numero)} de ${v.emisor_nombre||v.emisor_cuit}: el total no es igual a la suma de neto, no gravado, exento, otros tributos e IVA.`)}
+    if(v.moneda&&v.moneda!=='PES')ext++;
+    const ka=Object.keys(raw).find(k=>/^cod\.? autorizacion$/.test(norm(k))),tx=raw.Tipo||raw['Tipo de Comprobante'];
+    const tipoTxt=tx&&/^\d+\s*-/.test(String(tx))?String(tx).trim():`${v.tipo_cmp} - ${tipoNombre(v.tipo_cmp)}`;
+    const pv=String(v.punto_venta).padStart(5,'0'),nro=String(v.numero).padStart(8,'0');
+    const cu=String(v.emisor_cuit||'').replace(/\D/g,'');
+    filas.push([v.fecha,tipoTxt,`${pv}-${nro}`,v.numero,v.numero,ka&&raw[ka]!==null&&raw[ka]!==undefined?String(raw[ka]):'',cu.length===11?80:'',cu,v.emisor_nombre||'','','',1,'PES',
+      t['0'].n,t['2.5'].i,t['2.5'].n,t['5'].i,t['5'].n,t['10.5'].i,t['10.5'].n,t['21'].i,t['21'].n,t['27'].i,t['27'].n,neto,nog,exe,otr,iva,tot]);
+  }
+  if(ext)avisos.unshift(`${ext} comprobante(s) están en moneda extranjera: se exportan en pesos (ya convertidos) con moneda PES y tipo de cambio 1.`);
+  return {filas,avisos,sinDesglose,noCierra};
+}
+function comprasExportarExcel(){
+  const v=ui.vs||[],c=ui.clients.find(x=>x.id===ui.cid);
+  if(!v.length){flash('No hay comprobantes de compra en este período para exportar.','err');return draw()}
+  if(typeof XLSX==='undefined'){flash('No se pudo cargar el generador de Excel (¿sin conexión?).','err');return draw()}
+  const r=cmpArmar(v),ws=XLSX.utils.aoa_to_sheet([CMP_COLS,...r.filas]);
+  ws['!cols']=CMP_COLS.map((h,i)=>({wch:i===1||i===8?30:i<8?16:14}));
+  r.filas.forEach((_,i)=>{for(let col=11;col<30;col++){if(col===12)continue;const a=XLSX.utils.encode_cell({r:i+1,c:col});if(ws[a]&&typeof ws[a].v==='number')ws[a].z='#,##0.00'}});
+  const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Compras');
+  ui.cmpAvisos=r.avisos;
+  const nom=String((c&&c.razon_social)||'cliente').normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^A-Za-z0-9]+/g,'_').slice(0,40);
+  bajar({blob:new Blob([XLSX.write(wb,{type:'array',bookType:'xlsx'})],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),name:`Compras_importacion_${nom}_${ui.periodo}.xlsx`});
+  flash(`Se exportaron ${r.filas.length} comprobantes de compra.`+(r.avisos.length?` Hay ${r.avisos.length} aviso(s) para revisar.`:''));draw();
 }
 
 function ventaForm(){
