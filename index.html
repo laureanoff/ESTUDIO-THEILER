@@ -1039,7 +1039,7 @@ function vPresent(c,f){
   if(!ap.length)return '<div class="card" style="color:var(--mut)">Marcá en la pestaña Datos qué impuestos presenta este cliente (IVA, IIBB, F.931, Ganancias, Bienes Personales) y acá aparecen sus columnas de presentación.</div>';
   const mens=ap.filter(k=>OBLIG[k].t==='m'&&k!=='GAN_ANT'&&k!=='F931'),anu=ap.filter(k=>OBLIG[k].t==='a'),meses=[];
   let [y,m]=workPeriod().split('-').map(Number);for(let i=0;i<8;i++){meses.push(y+'-'+String(m).padStart(2,'0'));m--;if(m===0){m=12;y--}}
-  let h=(ui.ddjj&&ui.ddjj.cid===c.id?ddjjPanel():'')+`<p class="s" style="margin-bottom:12px">Las columnas dependen de los impuestos del cliente. Marcá cada una cuando quede presentada: podés cambiar la fecha y adjuntar la declaración jurada en PDF. La app solo guarda tu marca; no verifica nada con ARCA ni con la provincia.</p>`;
+  let h=(ui.ddjj&&ui.ddjj.cid===c.id?ddjjPanel():'')+ddjjLotePanel(c.id)+`<p class="s" style="margin-bottom:12px">Las columnas dependen de los impuestos del cliente. Marcá cada una cuando quede presentada: podés cambiar la fecha y adjuntar la declaración jurada en PDF. La app solo guarda tu marca; no verifica nada con ARCA ni con la provincia.</p>`;
   if(mens.length)h+=`<div class="tw"><table><thead><tr><th>Período</th>${mens.map(k=>`<th>${OBLIG[k].n}</th>`).join('')}</tr></thead><tbody>${meses.map(per=>`<tr><td>${per.slice(5)}/${per.slice(0,4)}${per===workPeriod()?'<span class="s">período de trabajo</span>':''}</td>${mens.map(k=>`<td>${cel(c,k,per)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
   anu.forEach(k=>{const cierre=k==='BP'?12:(c.ejercicio_cierre_mes||12);h+=`<h3>${OBLIG[k].n}</h3><div class="tw"><table><thead><tr><th>Ejercicio cerrado el</th><th>Presentación</th></tr></thead><tbody>${ejerciciosCerrados(cierre,4).map(per=>{const [yy,mm]=per.split('-').map(Number);return `<tr><td>${new Date(Date.UTC(yy,mm,0)).getUTCDate()}/${String(mm).padStart(2,'0')}/${yy}</td><td>${cel(c,k,per)}</td></tr>`}).join('')}</tbody></table></div>`});
   if(ap.includes('GAN_ANT'))h+=`<p class="s" style="margin-top:10px">Los anticipos de Ganancias se controlan en la sección <b>Anticipos</b> del menú. <a href="#" style="color:var(--pri)" onclick="cerrarFicha();show('anticipos');return false">Ir a Anticipos</a></p>`;
@@ -1162,28 +1162,76 @@ function ddjjCmParse(lineas){
 }
 const ddjjCampos=imp=>imp==='IVA'?DDJJ_CAMPOS:[['a_pagar','Total a pagar',null]];
 const ddjjVacio=(cid,per,imp)=>({cid,per,imp,cand:{},vals:Object.fromEntries(ddjjCampos(imp).map(([k])=>[k,''])),lineas:[],chequeos:[],jur:null,totales:null,encabezado:null});
+/** Analiza las líneas de un PDF: devuelve los datos, los chequeos y si es seguro guardarlos sin revisión (ok). */
+function ddjjAnalizar(lineas,cid,per,imp){
+  const D=ddjjVacio(cid,per,imp),c=ui.clients.find(x=>x.id===cid),M=[];
+  D.lineas=lineas;
+  if(lineas.join('').replace(/\s/g,'').length<40){D.aviso='El PDF no tiene texto legible (puede ser una imagen). Cargá los datos a mano.';D.motivos=['PDF sin texto legible'];D.ok=false;return D}
+  const tipo=ddjjTipo(lineas),cab=ddjjCabecera(lineas,tipo);D.tipo=tipo;
+  if(imp==='IVA'){
+    if(tipo!=='IVA'){D.aviso='Este PDF no parece la declaración jurada de IVA (F.2051). Revisá que sea el archivo correcto; igual podés cargar los datos a mano.';M.push('no parece una DDJJ de IVA (F.2051)')}
+    else{const P=ddjjIvaParse(lineas);D.cand=P.cand;D.vals=P.vals;const v=P.vals;
+      if(!Object.values(v).some(x=>x!==''))D.aviso='No reconocí ningún dato en este PDF.';
+      ['debito','credito','saldo_tecnico','saldo_libre'].forEach(k=>{if(v[k]==='')M.push('falta '+k.replace('_',' '))});
+      const n=k=>Number(v[k])||0;
+      if(v.debito!==''&&v.credito!==''&&v.saldo_tecnico!==''){const esp=Math.max(0,n('st_anterior')+n('credito')-n('debito'));if(Math.abs(esp-n('saldo_tecnico'))>0.02)M.push('el saldo técnico no cierra con débito, crédito y saldo anterior')}
+      if(v.saldo_libre!==''&&n('st_arca')===0&&v.sl_anterior!==''&&v.retenciones!==''){const esp=n('sl_anterior')+n('retenciones')-n('reintegro');if(Math.abs(esp-n('saldo_libre'))>0.02)M.push('el saldo de libre disponibilidad no cierra con sus componentes')}}
+  }else{
+    if(tipo==='IIBB_CM'){const P=ddjjCmParse(lineas);D.jur=P.jur;D.totales=P.totales;D.encabezado=P.encabezado;D.vals.a_pagar=P.a_pagar===null?'':P.a_pagar;if(P.a_pagar===null){D.aviso='No encontré el total a pagar.';M.push('falta el total a pagar')}if(!P.jur.length)M.push('no se leyeron jurisdicciones')}
+    else if(tipo==='IIBB_LOCAL'){D.aviso='Es una declaración de régimen local: todavía no la leo automáticamente. Cargá el total a pagar a mano (si querés que la lea sola, mandame un ejemplo de régimen local).';M.push('régimen local (sin lector)')}
+    else{D.aviso='Este PDF no parece una declaración de Ingresos Brutos. Revisá que sea el archivo correcto.';M.push('no parece una DDJJ de Ingresos Brutos')}
+  }
+  const ch=[];
+  if(cab.cuit&&c&&String(c.cuit||'').replace(/\D/g,'')&&cab.cuit!==String(c.cuit).replace(/\D/g,''))ch.push(`El CUIT del PDF (${cab.cuit}) no es el del cliente (${String(c.cuit).replace(/\D/g,'')}).`);
+  if(!cab.cuit)M.push('no se encontró el CUIT');
+  if(cab.per&&cab.per!==per)ch.push(`El período del PDF es ${cab.per.slice(5)}/${cab.per.slice(0,4)} y estás cargando ${per.slice(5)}/${per.slice(0,4)}.`);
+  if(!cab.per)M.push('no se encontró el período');
+  if(cab.secuencia&&cab.secuencia!=='original')ch.push('Es una declaración rectificativa: confirmá que sea la vigente.');
+  D.chequeos=ch;D.motivos=[...ch.map(x=>x.replace(/\.$/,'')),...M];D.ok=D.motivos.length===0;return D;
+}
 async function ddjjLeerArchivo(file,cid,per,imp){
   imp=imp||'IVA';ui.ddjj={...ddjjVacio(cid,per,imp),leyendo:true};draw();
-  const D=ddjjVacio(cid,per,imp),c=ui.clients.find(x=>x.id===cid);
-  try{
-    const lineas=Array.from(await pdfTexto(file));D.lineas=lineas;
-    if(lineas.join('').replace(/\s/g,'').length<40){D.aviso='El PDF no tiene texto legible (puede ser una imagen). Cargá los datos a mano.';ui.ddjj=D;return draw()}
-    const tipo=ddjjTipo(lineas),cab=ddjjCabecera(lineas,tipo);D.tipo=tipo;
-    if(imp==='IVA'){
-      if(tipo!=='IVA')D.aviso='Este PDF no parece la declaración jurada de IVA (F.2051). Revisá que sea el archivo correcto; igual podés cargar los datos a mano.';
-      else{const P=ddjjIvaParse(lineas);D.cand=P.cand;D.vals=P.vals;if(!Object.values(P.vals).some(v=>v!==''))D.aviso='No reconocí ningún dato en este PDF.'}
-    }else{
-      if(tipo==='IIBB_CM'){const P=ddjjCmParse(lineas);D.jur=P.jur;D.totales=P.totales;D.encabezado=P.encabezado;D.vals.a_pagar=P.a_pagar===null?'':P.a_pagar;if(P.a_pagar===null)D.aviso='No encontré el total a pagar.'}
-      else if(tipo==='IIBB_LOCAL')D.aviso='Es una declaración de régimen local: todavía no la leo automáticamente. Cargá el total a pagar a mano (si querés que la lea sola, mandame un ejemplo de régimen local).';
-      else D.aviso='Este PDF no parece una declaración de Ingresos Brutos. Revisá que sea el archivo correcto.'
-    }
-    const ch=[];
-    if(cab.cuit&&c&&String(c.cuit||'').replace(/\D/g,'')&&cab.cuit!==String(c.cuit).replace(/\D/g,''))ch.push(`El CUIT del PDF (${cab.cuit}) no es el del cliente (${String(c.cuit).replace(/\D/g,'')}).`);
-    if(cab.per&&cab.per!==per)ch.push(`El período del PDF es ${cab.per.slice(5)}/${cab.per.slice(0,4)} y estás cargando ${per.slice(5)}/${per.slice(0,4)}.`);
-    if(cab.secuencia&&cab.secuencia!=='original')ch.push('Es una declaración rectificativa: confirmá que sea la vigente.');
-    D.chequeos=ch;
-  }catch(e){D.aviso=errTxt(e)}
+  let D;try{D=ddjjAnalizar(Array.from(await pdfTexto(file)),cid,per,imp)}catch(e){D=ddjjVacio(cid,per,imp);D.aviso=errTxt(e)}
   ui.ddjj=D;draw();
+}
+/** Lee todas las presentaciones ya cargadas (IVA e IIBB) que todavía no tienen datos. Guarda solo las que pasan todos los controles. */
+async function ddjjLote(cid){
+  if(ui.ddjjLote&&ui.ddjjLote.corriendo)return;
+  const pend=ui.fil.filter(x=>(x.impuesto==='IVA'||x.impuesto==='IIBB')&&!(x.datos&&x.datos.ddjj)&&(!cid||x.client_id===cid)&&ui.ffil.some(f=>f.filing_id===x.id&&f.tipo==='PRESENTACION')).sort((a,b)=>a.periodo<b.periodo?-1:1);
+  const L=ui.ddjjLote={corriendo:true,cancelar:false,total:pend.length,i:0,res:[],cid:cid||null};
+  if(!pend.length){L.corriendo=false;draw();return}
+  draw();
+  for(const x of pend){
+    if(L.cancelar)break;
+    const cl=ui.clients.find(c=>c.id===x.client_id),per=x.periodo.slice(0,7),f=ui.ffil.find(z=>z.filing_id===x.id&&z.tipo==='PRESENTACION'),r={cid:x.client_id,nombre:cl?cl.razon_social:'(cliente)',imp:x.impuesto,per,archivo:f.nombre_archivo};
+    try{
+      const dl=await sb.storage.from('clientes').download(f.path);if(dl.error)throw dl.error;
+      const D=ddjjAnalizar(Array.from(await pdfTexto(new File([dl.data],f.nombre_archivo||'ddjj.pdf',{type:'application/pdf'}))),x.client_id,per,x.impuesto);
+      if(D.ok){
+        const g={};ddjjCampos(x.impuesto).forEach(([k])=>{if(D.vals[k]!==''&&D.vals[k]!==undefined)g[k]=Number(D.vals[k])});
+        if(x.impuesto==='IIBB'){g.jurisdicciones=D.jur;g.totales=D.totales;g.encabezado=D.encabezado;g.regimen='convenio'}
+        g.confirmado_at=new Date().toISOString();g.confirmado_por=me.id;g.fuente='pdf_lote';
+        const u=await sb.from('tax_filings').update({datos:{...(x.datos||{}),ddjj:g},modificado_by:me.id,modificado_at:new Date().toISOString()}).eq('id',x.id);
+        if(u.error)throw u.error;
+        x.datos={...(x.datos||{}),ddjj:g};r.estado='guardado'
+      }else{r.estado='revisar';r.motivo=D.motivos.join('; ')}
+    }catch(e){r.estado='error';r.motivo=errTxt(e)}
+    L.res.push(r);L.i++;if(L.i%3===0||L.i===L.total)draw();
+  }
+  L.corriendo=false;try{await loadFil()}catch(e){}
+  draw();
+}
+function ddjjLoteCancelar(){if(ui.ddjjLote)ui.ddjjLote.cancelar=true;draw()}
+async function ddjjRevisar(cid,per,imp){abrirFicha(cid,'present');await ddjjReleer(per,cid,imp)}
+function ddjjLotePanel(cid){
+  const L=ui.ddjjLote,hay=ui.fil.filter(x=>(x.impuesto==='IVA'||x.impuesto==='IIBB')&&!(x.datos&&x.datos.ddjj)&&(!cid||x.client_id===cid)&&ui.ffil.some(f=>f.filing_id===x.id&&f.tipo==='PRESENTACION')).length;
+  const mio=L&&(L.cid||null)===(cid||null);
+  const sm=mio?{g:L.res.filter(r=>r.estado==='guardado').length,r:L.res.filter(r=>r.estado==='revisar'),e:L.res.filter(r=>r.estado==='error')}:null;
+  return `<div class="card" style="margin-bottom:14px"><b>Leer las presentaciones ya cargadas</b>
+  <div class="s" style="margin:4px 0 8px">Lee los PDF de IVA e Ingresos Brutos (Convenio) que ya estaban adjuntos y guarda sus datos. Solo guarda los que pasan todos los controles (CUIT y período del cliente, datos completos y cuentas que cierran); el resto queda en la lista para que lo revises. No modifica los PDF ni las marcas.</div>
+  ${mio&&L.corriendo?`<div class="msg info">Leyendo ${L.i} de ${L.total}…</div><button class="g" onclick="ddjjLoteCancelar()">Cancelar</button>`:`<div class="row" style="gap:8px;align-items:center"><button class="b" onclick="ddjjLote(${cid?`'${cid}'`:'null'})" ${hay?'':'disabled'}>Leer ${hay} presentación(es) pendiente(s)</button>${hay?'':'<span class="s">No hay presentaciones con PDF y sin datos.</span>'}</div>`}
+  ${sm&&!L.corriendo?`<div class="msg ${sm.r.length||sm.e.length?'warn':'ok'}" style="margin-top:8px">Se guardaron ${sm.g} de ${L.res.length}. ${sm.r.length?`${sm.r.length} para revisar. `:''}${sm.e.length?`${sm.e.length} con error. `:''}${L.cancelar?'Se canceló antes de terminar.':''}</div>`:''}
+  ${sm&&(sm.r.length||sm.e.length)?`<div class="tw" style="margin-top:8px"><table style="min-width:640px"><thead><tr><th>Cliente</th><th>Impuesto</th><th>Período</th><th>Motivo</th><th></th></tr></thead><tbody>${[...sm.r,...sm.e].map(r=>`<tr><td>${esc(r.nombre)}</td><td>${r.imp==='IVA'?'IVA':'IIBB'}</td><td>${r.per.slice(5)}/${r.per.slice(0,4)}</td><td>${esc(r.motivo)}</td><td>${r.estado==='revisar'?`<button class="g sm" onclick="ddjjRevisar('${r.cid}','${r.per}','${r.imp}')">Revisar</button>`:''}</td></tr>`).join('')}</tbody></table></div>`:''}</div>`;
 }
 function ddjjAbrir(per,cid,imp){
   imp=imp||'IVA';const x=filDe(cid,imp,per),g=x&&x.datos&&x.datos.ddjj,D=ddjjVacio(cid,per,imp);
@@ -2352,7 +2400,7 @@ function bkPanelHtml(){
 function vAdmin(){
   if(!isAdmin())return '<h2>Administración</h2><div class="card">Esta sección es solo para administradores.</div>';
   const u=bkUltimo(),f=u?new Date(u.fecha):null;
-  return `<h2>Administración</h2><div class="card" style="padding:20px"><h3 style="margin-top:0">Copia de seguridad completa</h3>
+  return `<h2>Administración</h2>${ddjjLotePanel(null)}<div class="card" style="padding:20px"><h3 style="margin-top:0">Copia de seguridad completa</h3>
   ${u?`<p class="s" style="margin-bottom:12px">Último backup desde este navegador: ${f.toLocaleDateString('es-AR')} ${f.toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'})}, ${u.estado==='completo'?'completo':'con avisos'} (${u.filas} filas y ${u.adjuntos} archivos).</p>`:''}
   <div id="bkpanel">${bkPanelHtml()}</div></div>`;
 }
