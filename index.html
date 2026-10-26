@@ -170,7 +170,7 @@ function planImport(parsed,meta,existing,ctx){
 
 
 /* ===== Supabase ===== */
-const APP_VERSION='26/10/2026, ventas: liquidaciones leídas por completo en el Libro IVA Digital; sueldos: tipo de personal por empleador';
+const APP_VERSION='26/10/2026, balances: ajuste por inflación completo (IPC, bienes de uso, existencias agropecuarias, patrimonio neto, IVA) y paquetes de documentación agro';
 const SUPABASE_URL='https://tugdqcoxcpsiynlvnqdu.supabase.co';
 const SUPABASE_KEY='sb_publishable_2-96VeZrsNNftRXkzA1l_A_YG7ThJrL'; // clave pública: los permisos los da la base (RLS)
 const sb=(typeof supabase!=='undefined')?supabase.createClient(SUPABASE_URL,SUPABASE_KEY):null;
@@ -1024,12 +1024,12 @@ const filDe=(cid,imp,per)=>ui.fil.find(z=>z.client_id===cid&&z.periodo.slice(0,7
 function cel(c,imp,per){
   const x=filDe(c.id,imp,per),k=`${c.id}_${imp}_${per}`,ob=OBLIG[imp],A=`'${imp}','${per}'`,Z=`'${c.id}'`;
   const opts=sel=>Object.entries(CANC).map(([v,t])=>`<option value="${v}" ${sel===v?'selected':''}>${t}</option>`).join('');
-  if(!x)return `<div class="cel"><input type="date" class="sm" id="pf_${k}" value="${hoyISO()}" title="Fecha">${imp==='GAN_ANT'?antSel(c.id,per,k):''}<select class="sm" id="pc_${k}" title="Cómo se canceló">${opts('')}</select><button class="b sm" onclick="marcarPres(${A},${Z})">Marcar ${ob.v}</button></div>`;
+  if(!x)return `<div class="cel"><input type="date" class="sm" id="pf_${k}" value="${hoyISO()}" title="Fecha">${imp==='GAN_ANT'?antSel(c.id,per,k)+`<input class="sm" id="pi_${k}" inputmode="decimal" placeholder="Importe $" title="Importe del anticipo (opcional)" style="width:110px">`:''}<select class="sm" id="pc_${k}" title="Cómo se canceló">${opts('')}</select><button class="b sm" onclick="marcarPres(${A},${Z})">Marcar ${ob.v}</button></div>`;
   const fd=x.presentado_at?isoLocal(new Date(x.presentado_at)):'',files=ui.ffil.filter(f=>f.filing_id===x.id);
   const slots=ADJ.map(([t,et])=>{const f=files.find(z=>z.tipo===t);return f?`<span class="row" style="gap:2px"><button class="g sm" onclick="verArchivo('${f.path}')" title="${esc(f.nombre_archivo)}">${et}</button><button class="g sm" onclick="quitarArch('${f.id}')" title="Quitar">×</button></span>`:`<label class="g sm">+ ${et}<input type="file" accept="application/pdf,.pdf" hidden onchange="adjArch('${t}',${A},this,${Z})"></label>`}).join('');
   return `<div class="cel"><span class="tag" style="background:var(--grn);color:var(--grnt)">${ob.v==='pagado'?'Pagado':'Presentado'}${imp==='GAN_ANT'&&x.numero_anticipo?' · anticipo '+x.numero_anticipo:''}</span>
   <input type="date" class="sm" value="${fd}" title="Fecha (se puede cambiar)" onchange="cambiarFechaPres(${A},this.value,${Z})">
-  ${imp==='GAN_ANT'?`<select class="sm" title="Número de anticipo" onchange="cambiarNumAnt(${A},this.value,${Z})">${antNumOpts(x.numero_anticipo,null)}</select>`:''}<select class="sm" title="Cómo se canceló" onchange="cambiarCancel(${A},this.value,${Z})">${opts(x.cancelacion||'')}</select>
+  ${imp==='GAN_ANT'?`<input class="sm" inputmode="decimal" title="Importe del anticipo" placeholder="Importe $" style="width:110px" value="${x.importe===null||x.importe===undefined?'':String(x.importe).replace('.',',')}" onchange="cambiarImporteAnt(${A},this.value,${Z})">`:''}${imp==='GAN_ANT'?`<select class="sm" title="Número de anticipo" onchange="cambiarNumAnt(${A},this.value,${Z})">${antNumOpts(x.numero_anticipo,null)}</select>`:''}<select class="sm" title="Cómo se canceló" onchange="cambiarCancel(${A},this.value,${Z})">${opts(x.cancelacion||'')}</select>
   ${x.nota?`<span class="s">${esc(x.nota)}</span>`:''}
   <div class="row" style="gap:4px">${slots}</div>
   <div class="row" style="gap:4px"><button class="g sm" onclick="notaPres(${A},${Z})">Nota</button><button class="g sm" onclick="deshacerPres(${A},${Z})">Deshacer</button></div></div>`;
@@ -1053,7 +1053,7 @@ async function marcarPres(imp,per,cid){
   const ns=document.getElementById('pn_'+cid+'_'+imp+'_'+per);if(imp==='GAN_ANT'&&!(ns&&ns.value)){flash('Elegí el número de anticipo (1, 2, 3...).','err');return draw()}
   const nota=prompt(`${OBLIG[imp].n} (${per.slice(5)}/${per.slice(0,4)}) de ${c.razon_social}.\nNota opcional (por ejemplo, el número de presentación):`,'');
   if(nota===null)return;
-  const {error}=await sb.from('tax_filings').insert({client_id:cid,periodo:per+'-01',impuesto:imp,presentado_by:me.id,presentado_at:nuevaFecha(fecha),nota:nota.trim()||null,cancelacion:(cs&&cs.value)||null,numero_anticipo:(ns&&ns.value)?Number(ns.value):null});
+  const {error}=await sb.from('tax_filings').insert({client_id:cid,periodo:per+'-01',impuesto:imp,presentado_by:me.id,presentado_at:nuevaFecha(fecha),nota:nota.trim()||null,cancelacion:(cs&&cs.value)||null,numero_anticipo:(ns&&ns.value)?Number(ns.value):null,...(imp==='GAN_ANT'?(()=>{const e=document.getElementById(`pi_${cid}_${imp}_${per}`),v=e&&e.value.trim()?inflNum(e.value):null;return v!==null&&v>=0?{importe:v}:{}})():{})});
   if(error)flash(errTxt(error),'err');else{try{await loadFil();flash(`${OBLIG[imp].n} de ${c.razon_social} ${per.slice(5)}/${per.slice(0,4)}: marcado como ${OBLIG[imp].v} el ${fAR(fecha)}.`)}catch(e){flash(errTxt(e),'err')}}
   draw();
 }
@@ -3255,6 +3255,301 @@ function balLineasAMovs(lineas){
   return {rows,descartadas};
 }
 
+/* ===== Ajuste por inflación + paquetes de documentación (agro / ajuste) ===== */
+const BAL_PAQ={
+  agro:{nombre:'Actividad agropecuaria',items:[
+    ['agro_produccion','Hectáreas, campaña y producción por cultivo (qq)','Agropecuario'],
+    ['agro_stock','Existencias de granos y hacienda al cierre (cantidad y lugar)','Agropecuario'],
+    ['agro_cotiz','Precios de cierre y gastos de comercialización (flete, comisión)','Agropecuario'],
+    ['agro_arrend','Contratos de arrendamiento y su devengamiento','Agropecuario'],
+    ['agro_liq','Liquidaciones de granos / hacienda / leche del ejercicio','Agropecuario'],
+    ['agro_costos','Costos de producción por cultivo o actividad','Agropecuario']]},
+  infl:{nombre:'Ajuste por inflación',items:[
+    ['infl_bal_ant_aj','Balance anterior ajustado, con los componentes del patrimonio neto','Ajuste por inflación'],
+    ['infl_cotiz_me','Cotizaciones de cierre de moneda extranjera (bancos, deudas)','Ajuste por inflación'],
+    ['infl_ret_ant','Retenciones y anticipos de Ganancias, créditos de IVA y del impuesto a los créditos y débitos','Ajuste por inflación'],
+    ['infl_socios','Detalle de la cuenta particular de los socios','Ajuste por inflación']]}
+};
+function balPaqueteFaltan(k,reqs){const p=BAL_PAQ[k];return p?p.items.filter(i=>!reqs.some(q=>q.codigo===i[0])):[]}
+async function balPaqueteAgregar(k){
+  const d=ui.bal.d;if(!canEdit())return;const f=balPaqueteFaltan(k,d.reqs);if(!f.length)return;
+  const r=await sb.from('bal_requirements').insert(f.map(i=>({closing_id:d.cl.id,client_id:d.cl.client_id,codigo:i[0],nombre:i[1],grupo:i[2],estado:'solicitado',updated_by:me.id}))).select('*');
+  if(r.error){flash(errTxt(r.error),'err');return draw()}
+  d.reqs.push(...r.data);await balAudit(d.cl.id,d.cl.client_id,'paquete_documentacion',{paquete:k,agregados:f.length});flash(`Se agregaron ${f.length} documentos (${BAL_PAQ[k].nombre}).`,'ok');draw();
+}
+/* --- cálculo puro --- */
+const INFL_MES=['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+const inflMk=(y,m)=>y+'-'+String(m).padStart(2,'0');
+const inflMesTxt=k=>INFL_MES[Number(k.slice(5,7))-1]+'-'+k.slice(2,4);
+/** Meses del ejercicio (de inicio a cierre) y el mes de apertura (el anterior al primero). */
+function inflMeses(inicio,cierre){
+  const c=String(cierre).slice(0,7),cy=Number(c.slice(0,4)),cm=Number(c.slice(5,7));
+  let y,m;if(inicio){[y,m]=String(inicio).slice(0,7).split('-').map(Number)}else{y=cy-1;m=cm+1;if(m>12){m=1;y=cy}}
+  const out=[];for(let i=0;i<40;i++){const k=inflMk(y,m);out.push(k);if(k===c)break;m++;if(m>12){m=1;y++}}
+  const py=Number(out[0].slice(0,4)),pm=Number(out[0].slice(5,7));
+  return {meses:out,apertura:pm===1?inflMk(py-1,12):inflMk(py,pm-1),cierre:c};
+}
+function inflNum(v){if(v===null||v===undefined)return null;let t=String(v).trim().replace(/\s/g,'');if(t==='')return null;
+  if(t.includes(',')&&t.includes('.'))t=t.lastIndexOf(',')>t.lastIndexOf('.')?t.replace(/\./g,'').replace(',','.'):t.replace(/,/g,'');
+  else if(t.includes(','))t=t.replace(',','.');else if(/^-?\d{1,3}(\.\d{3})+$/.test(t))t=t.replace(/\./g,'');
+  const n=Number(t);return isFinite(n)?n:null}
+/** Pega de Excel: "2025-01 7694,01" o "01/2025 7694,01" o "ene-25 7694,01", una por línea. */
+function inflParseIpc(txt){
+  const ipc={},malas=[];
+  String(txt||'').split(/\r?\n/).forEach(l=>{l=l.trim();if(!l)return;
+    const p=l.split(/[\t;]+|\s{2,}|\s(?=[\d.,]+$)/).map(x=>x.trim()).filter(Boolean);if(p.length<2){malas.push(l);return}
+    const f=p[0].toLowerCase(),v=inflNum(p[p.length-1]);let k=null,m;
+    if((m=f.match(/^(\d{4})[-\/](\d{1,2})$/)))k=inflMk(Number(m[1]),Number(m[2]));
+    else if((m=f.match(/^(\d{1,2})[-\/](\d{4})$/)))k=inflMk(Number(m[2]),Number(m[1]));
+    else if((m=f.match(/^([a-z]{3})[a-z]*[-\/ ](\d{2}|\d{4})$/))){const i=INFL_MES.indexOf(m[1].replace('set','sep'));if(i>=0)k=inflMk(m[2].length===2?2000+Number(m[2]):Number(m[2]),i+1)}
+    if(!k||v===null||v<=0||Number(k.slice(5,7))>12||Number(k.slice(5,7))<1)malas.push(l);else ipc[k]=v});
+  return {ipc,malas};
+}
+/** coef[mes] = índice de cierre / índice del mes. */
+function inflCoefs(ipc,M){
+  const ic=ipc[M.cierre],coef={},falta=[];
+  [M.apertura,...M.meses].forEach(k=>{if(ipc[k]>0&&ic>0)coef[k]=ic/ipc[k];else falta.push(k)});
+  return {coef,falta,ic:ic>0?ic:null};
+}
+/** Tipos: 'res' resultado (se ajusta mes a mes); 'nm' no monetaria (apertura + altas del mes); 'mon' monetaria (saldo al fin de cada mes; para el RECPAM de control). */
+function inflCalc(data,M){
+  const C=inflCoefs(data.ipc||{},M),out={filas:[],recpam:null,falta:C.falta,coef:C.coef,ok:C.falta.length===0};
+  const sumaF=(r,flujo)=>{let h=0,a=0;if(flujo&&r.tipo==='nm'){h+=Number(r.apertura)||0;a+=(Number(r.apertura)||0)*(C.coef[M.apertura]||0)}
+    M.meses.forEach(k=>{const v=Number(r.meses&&r.meses[k])||0;h+=v;a+=v*(C.coef[k]||0)});return {h,a}};
+  let rec=0,hayMon=false;
+  (data.rows||[]).forEach(r=>{
+    if(r.tipo==='mon'){hayMon=true;let prev=Number(r.apertura)||0,pk=M.apertura;
+      M.meses.forEach(k=>{rec-=prev*((C.coef[pk]||0)-(C.coef[k]||0));prev=Number(r.meses&&r.meses[k])||0;pk=k});
+      const fin=prev;out.filas.push({id:r.id,nombre:r.nombre,tipo:'mon',hist:fin,aj:fin,dif:0});return}
+    const s=sumaF(r,true);out.filas.push({id:r.id,nombre:r.nombre,tipo:r.tipo,hist:s.h,aj:s.a,dif:s.a-s.h})});
+  out.recpam=hayMon&&out.ok?rec:null;return out;
+}
+/* --- datos y pantalla --- */
+function inflDatos(){
+  const B=ui.bal,d=B.d;if(B.infl&&B.infl.cid===d.cl.id)return B.infl;
+  let data=null;try{data=d.inflRow&&d.inflRow.datos?JSON.parse(d.inflRow.datos):null}catch(e){}
+  data=data&&typeof data==='object'?data:{v:1,ipc:{},rows:[]};data.ipc=data.ipc||{};data.rows=data.rows||[];
+  B.infl={cid:d.cl.id,data,dirty:false,msg:null,pegar:''};return B.infl;
+}
+const inflMarcar=()=>{ui.bal.infl.dirty=true};
+function inflFilaNueva(){
+  const I=inflDatos(),n=(document.getElementById('infl_n')||{}).value||'',t=(document.getElementById('infl_t')||{}).value||'res';
+  if(!n.trim()){flash('Escribí el nombre del rubro.','warn');return draw()}
+  I.data.rows.push({id:'r'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),nombre:n.trim(),tipo:t,apertura:0,meses:{}});I.dirty=true;draw();
+}
+function inflFilaBorrar(id){const I=inflDatos();if(!confirm('¿Quitar este rubro del ajuste?'))return;I.data.rows=I.data.rows.filter(r=>r.id!==id);I.dirty=true;draw()}
+function inflCelda(id,k,v){const I=inflDatos(),r=I.data.rows.find(x=>x.id===id);if(!r)return;const n=inflNum(v);
+  if(String(v).trim()!==''&&n===null){flash('Importe no válido.','warn');return draw()}
+  if(k==='apertura')r.apertura=n||0;else{r.meses=r.meses||{};if(n===null)delete r.meses[k];else r.meses[k]=n}I.dirty=true;draw()}
+function inflIpcCelda(k,v){const I=inflDatos(),n=inflNum(v);if(String(v).trim()===''){delete I.data.ipc[k]}else if(n===null||n<=0){flash('Índice no válido.','warn');return draw()}else I.data.ipc[k]=n;I.dirty=true;draw()}
+function inflIpcPegar(){const I=inflDatos(),t=(document.getElementById('infl_p')||{}).value||'',P=inflParseIpc(t);
+  const n=Object.keys(P.ipc).length;if(!n){flash('No pude leer ningún índice. Formato: "2025-01  7694,01", una línea por mes.','warn');return draw()}
+  Object.assign(I.data.ipc,P.ipc);I.dirty=true;flash(`Se cargaron ${n} índices${P.malas.length?` (${P.malas.length} línea(s) no se entendieron)`:''}.`,P.malas.length?'warn':'ok');draw()}
+async function inflTraer(){
+  const B=ui.bal,d=B.d,I=inflDatos(),M=inflMeses(d.cl.fecha_inicio,d.cl.fecha_cierre);if(!canEdit())return;
+  const desde=M.meses[0]+'-01',hasta=d.cl.fecha_cierre;
+  try{
+    const qv=(t)=>fetchAll((a,b)=>sb.from(t).select('fecha,tipo_cmp,neto_gravado,no_gravado,exento,iva,importe_total').eq('client_id',d.cl.client_id).gte('fecha',desde).lte('fecha',hasta).range(a,b));
+    const [vs,cs]=await Promise.all([qv('sales_invoices'),qv('vouchers')]);
+    const agr=(L,esCompra)=>{const m={};L.forEach(x=>{const k=String(x.fecha).slice(0,7);if(!M.meses.includes(k))return;
+      let n=(Number(x.neto_gravado)||0)+(Number(x.no_gravado)||0)+(Number(x.exento)||0);if(!n&&esCompra)n=(Number(x.importe_total)||0)-(Number(x.iva)||0);
+      m[k]=Math.round(((m[k]||0)+sgnVal(x.tipo_cmp,n))*100)/100});return m};
+    const put=(auto,nombre,meses)=>{let r=I.data.rows.find(x=>x.auto===auto);if(!r){r={id:'a_'+auto,nombre,tipo:'res',apertura:0,meses:{},auto};I.data.rows.unshift(r)}r.meses=meses};
+    put('ventas','Ventas (neto, del Libro IVA Ventas)',agr(vs,false));put('compras','Compras (neto, del Libro IVA Compras)',agr(cs,true));
+    I.dirty=true;I.msg=`Se trajeron ${vs.length} comprobantes de ventas y ${cs.length} de compras del período. Revisá que estén cargados todos los meses.`;draw();
+  }catch(e){flash(errTxt(e),'err');draw()}
+}
+async function inflGuardar(){
+  const B=ui.bal,d=B.d,I=inflDatos();if(!canEdit())return;
+  const base={objetivo:'Ajuste por inflación: IPC, movimientos mensuales y RECPAM de control',datos:JSON.stringify(I.data),updated_by:me.id,updated_at:new Date().toISOString()};
+  try{
+    if(d.inflRow){const r=await sb.from('bal_workpapers').update(base).eq('id',d.inflRow.id);if(r.error)throw r.error;Object.assign(d.inflRow,base)}
+    else{const r=await sb.from('bal_workpapers').insert({closing_id:d.cl.id,client_id:d.cl.client_id,codigo:'infl_datos',titulo:'Datos del ajuste por inflación',estado:'pendiente',...base}).select('*').single();if(r.error)throw r.error;d.inflRow=r.data}
+    I.dirty=false;await balAudit(d.cl.id,d.cl.client_id,'ajuste_inflacion_guardado',{rubros:I.data.rows.length,indices:Object.keys(I.data.ipc).length});flash('Datos del ajuste guardados.','ok');draw();
+  }catch(e){flash(errTxt(e),'err');draw()}
+}
+function balInfl0(){
+  const B=ui.bal,d=B.d,ed=canEdit(),I=inflDatos(),M=inflMeses(d.cl.fecha_inicio,d.cl.fecha_cierre),R=inflCalc(I.data,M),inp=(v,fn,w)=>ed?`<input style="width:${w||92}px;text-align:right" value="${v===undefined||v===null?'':esc(String(v).replace('.',','))}" onchange="${fn}">`:esc(v===undefined?'':money(v));
+  const TT={res:'Resultado',nm:'No monetaria',mon:'Monetaria'};
+  const paq=['agro','infl'].map(k=>({k,f:balPaqueteFaltan(k,d.reqs)})).filter(x=>x.f.length);
+  const aviso=I.msg?`<div class="msg info" style="margin-bottom:10px">${esc(I.msg)}</div>`:'';
+  const ipcT=`<div class="tw"><table style="min-width:${150+(M.meses.length+1)*86}px"><thead><tr><th></th>${[M.apertura,...M.meses].map(k=>`<th>${inflMesTxt(k)}${k===M.apertura?'<span class="s">apertura</span>':''}</th>`).join('')}</tr></thead><tbody><tr><td>Índice IPC</td>${[M.apertura,...M.meses].map(k=>`<td>${inp(I.data.ipc[k],`inflIpcCelda('${k}',this.value)`,80)}</td>`).join('')}</tr><tr><td>Coeficiente</td>${[M.apertura,...M.meses].map(k=>`<td>${R.coef[k]?R.coef[k].toFixed(4).replace('.',','):'<span class="s">falta</span>'}</td>`).join('')}</tr></tbody></table></div>`;
+  const movT=`<div class="tw"><table style="min-width:${300+M.meses.length*92}px"><thead><tr><th>Rubro</th><th>Tipo</th><th>Apertura</th>${M.meses.map(k=>`<th>${inflMesTxt(k)}</th>`).join('')}<th></th></tr></thead><tbody>${I.data.rows.map(r=>`<tr><td>${esc(r.nombre)}${r.auto?'<span class="s">automático</span>':''}</td><td>${TT[r.tipo]||r.tipo}</td><td>${r.tipo==='res'?'':inp(r.apertura,`inflCelda('${r.id}','apertura',this.value)`)}</td>${M.meses.map(k=>`<td>${inp(r.meses&&r.meses[k],`inflCelda('${r.id}','${k}',this.value)`)}</td>`).join('')}<td>${ed?`<button class="g sm" onclick="inflFilaBorrar('${r.id}')">✕</button>`:''}</td></tr>`).join('')||`<tr><td colspan="${M.meses.length+4}" style="color:var(--mut)">Todavía no hay rubros. Traé ventas y compras del Libro IVA o agregá un rubro.</td></tr>`}</tbody></table></div>`;
+  const resT=R.filas.length?`<div class="tw"><table style="min-width:620px"><thead><tr><th>Rubro</th><th>Balance histórico</th><th>Balance ajustado</th><th>Efecto de la inflación</th></tr></thead><tbody>${R.filas.map(f=>f.tipo==='mon'?`<tr><td>${esc(f.nombre)}<span class="s">saldo al cierre (monetaria, no se reexpresa)</span></td><td>${esc(money(f.hist))}</td><td>${esc(money(f.aj))}</td><td>-</td></tr>`:`<tr><td>${esc(f.nombre)}</td><td>${esc(money(f.hist))}</td><td>${R.ok?esc(money(f.aj)):'<span class="s">faltan índices</span>'}</td><td>${R.ok?esc(money(f.dif)):'-'}</td></tr>`).join('')}</tbody></table></div>`:'';
+  return `<div class="card" style="margin-bottom:12px"><b>Balance histórico y balance ajustado</b><div class="s" style="margin-top:4px">Cargá el IPC una vez, traé las ventas y compras mensuales del Libro IVA y completá los demás rubros. El sistema muestra en paralelo el importe histórico y el ajustado, y calcula el RECPAM de control con las partidas monetarias. Es una ayuda de cálculo: el criterio de cada rubro lo define el profesional.</div></div>
+  ${aviso}${paq.length&&ed?`<div class="card" style="margin-bottom:12px"><b>Documentación sugerida para este tipo de balance</b>${paq.map(p=>`<div class="row" style="gap:8px;align-items:center;margin-top:6px"><button class="g" onclick="balPaqueteAgregar('${p.k}')">Agregar paquete: ${esc(BAL_PAQ[p.k].nombre)}</button><span class="s">${p.f.length} documento(s) más en la lista; si alguno no corresponde lo marcás "no corresponde".</span></div>`).join('')}</div>`:''}
+  <h4>1. Índices de precios (IPC)</h4>${ipcT}${ed?`<div class="row" style="gap:8px;margin-top:8px;align-items:flex-start;flex-wrap:wrap"><textarea id="infl_p" rows="3" placeholder="Pegá desde Excel: mes e índice, una línea por mes&#10;2025-01  7694,01" style="flex:1;min-width:240px"></textarea><button class="g" onclick="inflIpcPegar()">Cargar índices pegados</button></div>`:''}
+  ${R.falta.length?`<div class="msg warn" style="margin-top:8px">Faltan índices de: ${R.falta.map(inflMesTxt).join(', ')}. Sin ellos no se calcula el ajuste.</div>`:''}
+  <h4>2. Movimientos mensuales por rubro</h4><div class="s" style="margin-bottom:6px"><b>Resultado</b>: importe del mes (ventas, compras, gastos). <b>No monetaria</b>: saldo de apertura y altas del mes (bienes de uso, bienes de cambio, capital). <b>Monetaria</b>: saldo al fin de cada mes (caja, bancos, créditos, deudas con signo negativo).</div>
+  ${ed?`<div class="row" style="gap:8px;margin-bottom:8px;flex-wrap:wrap"><button class="b" onclick="inflTraer()">Traer ventas y compras del Libro IVA</button><input id="infl_n" placeholder="Nuevo rubro (ej. Gastos de administración)" style="min-width:240px"><select id="infl_t"><option value="res">Resultado</option><option value="nm">No monetaria</option><option value="mon">Monetaria</option></select><button class="g" onclick="inflFilaNueva()">Agregar rubro</button></div>`:''}${movT}
+  <h4>3. Resultado</h4>${resT||'<div class="s">Sin datos todavía.</div>'}
+  ${R.recpam!==null?`<div class="card" style="margin-top:10px"><b>RECPAM de control: ${esc(money(R.recpam))}</b><div class="s">Calculado con los saldos mensuales de las partidas monetarias. Compará este importe con el RECPAM del balance: una diferencia grande indica partidas mal clasificadas o saldos mensuales incompletos.</div></div>`:''}
+  ${ed?`<div class="row" style="gap:8px;margin-top:12px;align-items:center"><button class="b" onclick="inflGuardar()">Guardar datos del ajuste</button>${I.dirty?'<span class="tag" style="background:var(--amb);color:var(--ambt)">Cambios sin guardar</span>':''}</div>`:''}`;
+}
+function balPaqCard(){
+  const d=ui.bal.d,ed=canEdit(),paq=['agro','infl'].map(k=>({k,f:balPaqueteFaltan(k,d.reqs)})).filter(x=>x.f.length);
+  if(!paq.length||!ed)return '';
+  return `<div class="card" style="margin-bottom:12px"><b>Documentación según la actividad</b><div class="s">La lista general se mantiene. Si el balance es agropecuario o ajustado por inflación, sumá los documentos propios de ese caso.</div>${paq.map(p=>`<div class="row" style="gap:8px;align-items:center;margin-top:6px"><button class="g" onclick="balPaqueteAgregar('${p.k}')">Agregar: ${esc(BAL_PAQ[p.k].nombre)}</button><span class="s">${p.f.length} documento(s)</span></div>`).join('')}</div>`;
+}
+/* ===== Etapa 2: bienes de uso reexpresados, existencias agropecuarias, patrimonio neto, IVA ===== */
+const inflR=n=>Math.round((Number(n)||0)*100)/100;
+const inflMi=s=>Number(String(s).slice(0,4))*12+Number(String(s).slice(5,7))-1;
+const inflKm=i=>inflMk(Math.floor(i/12),i%12+1);
+/** Anexo I: cada bien a valores históricos y reexpresados. El mes de origen se toma de la fecha de alta; si es anterior al ejercicio se usa el índice de apertura. */
+function inflBienes(assets,M,coef,inicio,cierre){
+  const rows=[],aviso=[];
+  (assets||[]).forEach(a=>{
+    if(a.fecha_baja&&inflMi(a.fecha_baja)<inflMi(M.meses[0]))return;
+    const f0=a.fecha_alta||a.fecha_uso,origen=Number(a.valor_origen)||0;
+    if(!f0){aviso.push(`${a.descripcion}: sin fecha de alta`);return}
+    const kAlta=String(f0).slice(0,7),nuevo=M.meses.includes(kAlta),kO=nuevo?kAlta:M.apertura;
+    const am=balAmort(a,inicio,cierre),imp=am.ok?am.importe:0;
+    if(!am.ok)aviso.push(`${a.descripcion}: falta ${am.faltan.join(' y ')} para amortizar`);
+    let ejAj=0;
+    if(am.ok&&am.meses>0){const f1=a.fecha_uso||a.fecha_alta;let d=inflMi(f1);const ini=inflMi(M.meses[0]);if(d<ini)d=ini;const per=imp/am.meses;for(let i=0;i<am.meses;i++)ejAj+=per*(coef[inflKm(d+i)]||0)}
+    const ini=nuevo?0:(Number(a.amort_acum_inicial)||0);
+    const oAj=origen*(coef[kO]||0),iAj=ini*(coef[M.apertura]||0);
+    rows.push({desc:a.descripcion,origen_h:origen,origen_a:oAj,ini_h:ini,ini_a:iAj,ej_h:imp,ej_a:ejAj,neto_h:origen-ini-imp,neto_a:oAj-iAj-ejAj});
+  });
+  const T={origen_h:0,origen_a:0,ini_h:0,ini_a:0,ej_h:0,ej_a:0,neto_h:0,neto_a:0};rows.forEach(r=>Object.keys(T).forEach(k=>T[k]+=r[k]));
+  return {rows,T,aviso};
+}
+/** Existencias agropecuarias a valor neto de realización (RT 22): cantidad × (precio − gastos de comercialización). */
+function agroCalc(rows){
+  const out=(rows||[]).map(r=>{const ex=Number(r.exist_qq)||0,pr=Number(r.precio)||0,gc=Number(r.gastos)||0,costo=Number(r.costo)||0,has=Number(r.has)||0,prod=Number(r.prod_qq)||0;
+    const vnr=ex*(pr-gc);return {...r,vnr,tenencia:vnr-costo,rinde:has>0?prod/has:null,hay:ex>0&&pr<=0}});
+  const T={vnr:0,costo:0,tenencia:0,has:0,prod:0};out.forEach(r=>{T.vnr+=r.vnr;T.costo+=Number(r.costo)||0;T.tenencia+=r.tenencia;T.has+=Number(r.has)||0;T.prod+=Number(r.prod_qq)||0});
+  return {rows:out,T};
+}
+/** Control del patrimonio neto: componentes reexpresados + resultado vs. activo − pasivo ajustados. */
+function pnControl(filas,rows,ctl){
+  const pn=filas.filter(f=>{const r=rows.find(x=>x.id===f.id);return r&&r.pn});
+  const comp=pn.reduce((s,f)=>s+f.aj,0),res=Number(ctl&&ctl.resultado)||0,act=Number(ctl&&ctl.activo)||0,pas=Number(ctl&&ctl.pasivo)||0;
+  const tiene=ctl&&ctl.activo!==undefined&&ctl.activo!==''&&ctl.pasivo!==undefined&&ctl.pasivo!=='';
+  return {comp,res,total:comp+res,esperado:act-pas,dif:tiene?comp+res-(act-pas):null,n:pn.length,tiene};
+}
+/* --- estado y persistencia (mismos papeles de trabajo, códigos propios) --- */
+function agroDatos(){
+  const B=ui.bal,d=B.d;if(B.agro&&B.agro.cid===d.cl.id)return B.agro;
+  let data=null;try{data=d.agroRow&&d.agroRow.datos?JSON.parse(d.agroRow.datos):null}catch(e){}
+  data=data&&Array.isArray(data.rows)?data:{v:1,rows:[]};B.agro={cid:d.cl.id,data,dirty:false};return B.agro;
+}
+async function wpGuardar(rowKey,codigo,titulo,obj,objetivo){
+  const d=ui.bal.d,base={objetivo,datos:JSON.stringify(obj),updated_by:me.id,updated_at:new Date().toISOString()};
+  if(d[rowKey]){const r=await sb.from('bal_workpapers').update(base).eq('id',d[rowKey].id);if(r.error)throw r.error;Object.assign(d[rowKey],base)}
+  else{const r=await sb.from('bal_workpapers').insert({closing_id:d.cl.id,client_id:d.cl.client_id,codigo,titulo,estado:'pendiente',...base}).select('*').single();if(r.error)throw r.error;d[rowKey]=r.data}
+}
+async function agroGuardar(){
+  if(!canEdit())return;const A=agroDatos();
+  try{await wpGuardar('agroRow','agro_datos','Existencias agropecuarias a valor neto de realización',A.data,'Valuación de existencias agropecuarias (RT 22)');A.dirty=false;await balAudit(ui.bal.d.cl.id,ui.bal.d.cl.client_id,'agro_guardado',{cultivos:A.data.rows.length});flash('Planilla agropecuaria guardada.','ok');draw()}
+  catch(e){flash(errTxt(e),'err');draw()}
+}
+function agroFilaNueva(){const A=agroDatos(),n=((document.getElementById('agro_n')||{}).value||'').trim();if(!n){flash('Escribí el cultivo o la actividad.','warn');return draw()}
+  A.data.rows.push({id:'g'+Date.now().toString(36)+Math.random().toString(36).slice(2,4),cultivo:n,has:0,prod_qq:0,exist_qq:0,precio:0,gastos:0,costo:0});A.dirty=true;draw()}
+function agroFilaBorrar(id){if(!confirm('¿Quitar esta fila?'))return;const A=agroDatos();A.data.rows=A.data.rows.filter(r=>r.id!==id);A.dirty=true;draw()}
+function agroCelda(id,k,v){const A=agroDatos(),r=A.data.rows.find(x=>x.id===id);if(!r)return;const n=inflNum(v);if(String(v).trim()!==''&&n===null){flash('Importe no válido.','warn');return draw()}r[k]=n||0;A.dirty=true;draw()}
+function inflPnPreset(){const I=inflDatos();const nombres=['Capital social','Ajuste del capital','Reservas','Resultados no asignados'];let n=0;
+  nombres.forEach(x=>{if(!I.data.rows.some(r=>r.pn&&r.nombre===x)){I.data.rows.push({id:'p'+Date.now().toString(36)+n++,nombre:x,tipo:'nm',pn:true,apertura:0,meses:{}})}});I.dirty=true;draw()}
+function inflControl(k,v){const I=inflDatos(),n=inflNum(v);I.data.control=I.data.control||{};if(String(v).trim()==='')delete I.data.control[k];else if(n===null){flash('Importe no válido.','warn');return draw()}else I.data.control[k]=n;I.dirty=true;draw()}
+async function inflTraerIva(){
+  const d=ui.bal.d,I=inflDatos(),M=inflMeses(d.cl.fecha_inicio,d.cl.fecha_cierre);if(!canEdit())return;
+  try{
+    const L=await fetchAll((a,b)=>sb.from('iva_ajustes').select('periodo,cierre_saldo_tecnico,cierre_saldo_libre').eq('client_id',d.cl.client_id).gte('periodo',M.apertura+'-01').lte('periodo',d.cl.fecha_cierre).range(a,b));
+    const por={};L.forEach(x=>{por[String(x.periodo).slice(0,7)]=x});
+    const mk=(auto,nombre,campo)=>{let r=I.data.rows.find(x=>x.auto===auto);if(!r){r={id:'a_'+auto,nombre,tipo:'mon',apertura:0,meses:{},auto};I.data.rows.push(r)}
+      r.meses={};r.apertura=0;let n=0;const x0=por[M.apertura];if(x0&&x0[campo]!=null)r.apertura=Number(x0[campo])||0;
+      M.meses.forEach(k=>{const x=por[k];if(x&&x[campo]!=null&&x[campo]!==''){r.meses[k]=Number(x[campo])||0;n++}});return n};
+    const n1=mk('iva_tec','IVA saldo técnico a favor','cierre_saldo_tecnico'),n2=mk('iva_libre','IVA saldo de libre disponibilidad','cierre_saldo_libre');
+    const sin=M.meses.filter(k=>!(por[k]&&por[k].cierre_saldo_tecnico!=null));
+    I.dirty=true;I.msg=`Posición de IVA: ${n1} mes(es) con saldo técnico y ${n2} con libre disponibilidad cerrados en la app.${sin.length?` Faltan meses sin cierre de IVA: ${sin.map(inflMesTxt).join(', ')} (quedan en cero y distorsionan el RECPAM hasta que los completes).`:''}`;draw();
+  }catch(e){flash(errTxt(e),'err');draw()}
+}
+/* --- pantallas --- */
+function balInflExtra(){
+  const B=ui.bal,d=B.d,ed=canEdit(),I=inflDatos(),M=inflMeses(d.cl.fecha_inicio,d.cl.fecha_cierre),R=inflCalc(I.data,M),A=agroDatos(),m=v=>esc(money(v)),
+    inp=(v,fn,w)=>ed?`<input style="width:${w||96}px;text-align:right" value="${v===undefined||v===null||v===0?'':esc(String(v).replace('.',','))}" onchange="${fn}">`:esc(v?String(v).replace('.',','):'');
+  // Anexo I
+  const BU=inflBienes(d.assets,M,R.coef,d.cl.fecha_inicio,d.cl.fecha_cierre),T=BU.T;
+  const bu=BU.rows.length?`<div class="tw"><table style="min-width:900px"><thead><tr><th>Bien</th><th>Valor de origen hist.</th><th>Valor de origen ajust.</th><th>Amort. acum. inicial ajust.</th><th>Amort. del ejercicio hist.</th><th>Amort. del ejercicio ajust.</th><th>Neto hist.</th><th>Neto ajust.</th></tr></thead><tbody>${BU.rows.map(r=>`<tr><td>${esc(r.desc)}</td><td>${m(r.origen_h)}</td><td>${R.ok?m(r.origen_a):'-'}</td><td>${R.ok?m(r.ini_a):'-'}</td><td>${m(r.ej_h)}</td><td>${R.ok?m(r.ej_a):'-'}</td><td>${m(r.neto_h)}</td><td>${R.ok?m(r.neto_a):'-'}</td></tr>`).join('')}<tr><td><b>Total</b></td><td><b>${m(T.origen_h)}</b></td><td><b>${R.ok?m(T.origen_a):'-'}</b></td><td><b>${R.ok?m(T.ini_a):'-'}</b></td><td><b>${m(T.ej_h)}</b></td><td><b>${R.ok?m(T.ej_a):'-'}</b></td><td><b>${m(T.neto_h)}</b></td><td><b>${R.ok?m(T.neto_a):'-'}</b></td></tr></tbody></table></div>${BU.aviso.length?`<div class="msg warn" style="margin-top:8px">${BU.aviso.map(esc).join('<br>')}</div>`:''}<div class="s" style="margin-top:6px">Los bienes anteriores al ejercicio se reexpresan con el índice de apertura (no hay fecha de origen más precisa en el registro). Las altas del ejercicio, con el índice de su mes.</div>`:'<div class="s">Todavía no hay bienes en el registro. Cargalos en "Ajustes y bienes de uso" y acá se reexpresan solos.</div>';
+  // Agro
+  const G=agroCalc(A.data.rows),GT=G.T;
+  const ag=`<div class="s" style="margin-bottom:6px">Valor neto de realización = existencia (qq) × (precio − gastos de comercialización por qq: flete, comisión). Resultado por tenencia = valor neto de realización − costo en libros.</div>
+  ${ed?`<div class="row" style="gap:8px;margin-bottom:8px"><input id="agro_n" placeholder="Cultivo o actividad (ej. Soja 24/25)" style="min-width:240px"><button class="g" onclick="agroFilaNueva()">Agregar</button><button class="b" onclick="agroGuardar()">Guardar planilla</button>${A.dirty?'<span class="tag" style="background:var(--amb);color:var(--ambt)">Cambios sin guardar</span>':''}</div>`:''}
+  <div class="tw"><table style="min-width:1000px"><thead><tr><th>Cultivo</th><th>Hectáreas</th><th>Producción (qq)</th><th>Rinde qq/ha</th><th>Existencia (qq)</th><th>Precio de cierre $/qq</th><th>Flete y comisión $/qq</th><th>Costo en libros</th><th>Valor neto de realización</th><th>Resultado por tenencia</th><th></th></tr></thead><tbody>${G.rows.map(r=>`<tr><td>${esc(r.cultivo)}${r.hay?'<span class="s">falta el precio</span>':''}</td><td>${inp(r.has,`agroCelda('${r.id}','has',this.value)`,70)}</td><td>${inp(r.prod_qq,`agroCelda('${r.id}','prod_qq',this.value)`)}</td><td>${r.rinde===null?'-':r.rinde.toFixed(1).replace('.',',')}</td><td>${inp(r.exist_qq,`agroCelda('${r.id}','exist_qq',this.value)`)}</td><td>${inp(r.precio,`agroCelda('${r.id}','precio',this.value)`)}</td><td>${inp(r.gastos,`agroCelda('${r.id}','gastos',this.value)`)}</td><td>${inp(r.costo,`agroCelda('${r.id}','costo',this.value)`,110)}</td><td>${m(r.vnr)}</td><td>${m(r.tenencia)}</td><td>${ed?`<button class="g sm" onclick="agroFilaBorrar('${r.id}')">✕</button>`:''}</td></tr>`).join('')||'<tr><td colspan="11" style="color:var(--mut)">Sin cultivos cargados.</td></tr>'}${G.rows.length?`<tr><td><b>Total</b></td><td><b>${GT.has.toLocaleString('es-AR')}</b></td><td><b>${GT.prod.toLocaleString('es-AR')}</b></td><td></td><td></td><td></td><td></td><td><b>${m(GT.costo)}</b></td><td><b>${m(GT.vnr)}</b></td><td><b>${m(GT.tenencia)}</b></td><td></td></tr>`:''}</tbody></table></div>`;
+  // PN
+  const C=pnControl(R.filas,I.data.rows,I.data.control),ctl=I.data.control||{};
+  const pn=`<div class="s" style="margin-bottom:6px">Marcá los componentes del patrimonio neto (capital, reservas, resultados) como rubros "No monetaria" con su saldo de apertura y los aportes o distribuciones del año. Después comparalos con el activo y el pasivo ajustados del balance.</div>
+  ${ed?`<button class="g" onclick="inflPnPreset()">Agregar rubros de patrimonio neto</button>`:''}
+  <div class="fgrid" style="margin-top:8px"><label>Activo ajustado total (del estado de situación)${inp(ctl.activo,`inflControl('activo',this.value)`,150)}</label><label>Pasivo ajustado total${inp(ctl.pasivo,`inflControl('pasivo',this.value)`,150)}</label><label>Resultado del ejercicio ajustado${inp(ctl.resultado,`inflControl('resultado',this.value)`,150)}</label></div>
+  ${C.n?`<div class="card" style="margin-top:8px"><div>Componentes del patrimonio neto reexpresados: <b>${R.ok?m(C.comp):'-'}</b> · más resultado del ejercicio: <b>${R.ok?m(C.total):'-'}</b></div>${C.tiene&&R.ok?`<div>Activo − pasivo: <b>${m(C.esperado)}</b> · diferencia: <b style="color:${Math.abs(C.dif)<1?'var(--grnt)':'var(--redt)'}">${m(C.dif)}</b> ${Math.abs(C.dif)<1?'(coincide)':'(revisar: puede faltar un movimiento del patrimonio o un rubro del activo o pasivo)'}</div>`:'<div class="s">Cargá activo, pasivo y resultado para ver el control cruzado.</div>'}</div>`:''}`;
+  return `<h4>4. Bienes de uso reexpresados (Anexo I)</h4>${bu}<h4>5. Existencias agropecuarias (RT 22)</h4>${ag}<h4>6. Patrimonio neto y control cruzado</h4>${pn}
+  <h4>7. Traer datos de la app</h4><div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">${ed?`<button class="g" onclick="inflTraerIva()">Traer posición de IVA (saldos cerrados)</button>`:''}${ed?`<button class="g" onclick="inflTraerAnt()">Traer anticipos de Ganancias (sección Anticipos)</button>`:''}<span class="s">Los anticipos salen del importe que cargues en la sección Anticipos. Las retenciones de Ganancias sufridas se cargan a mano como rubro "Monetaria".</span></div>`;
+}
+function balInfl(){return balInfl0()+balInflExtra()+balInflControles()}
+/* ===== Etapa 3: anticipos de Ganancias, controles automáticos y plantillas de asientos de cierre ===== */
+async function inflTraerAnt(){
+  const d=ui.bal.d,I=inflDatos(),M=inflMeses(d.cl.fecha_inicio,d.cl.fecha_cierre);if(!canEdit())return;
+  try{
+    const L=await fetchAll((a,b)=>sb.from('tax_filings').select('periodo,importe,numero_anticipo').eq('client_id',d.cl.client_id).eq('impuesto','GAN_ANT').gte('periodo',M.meses[0]+'-01').lte('periodo',d.cl.fecha_cierre).range(a,b));
+    const por={},sin=[];L.forEach(x=>{const k=String(x.periodo).slice(0,7);if(x.importe===null||x.importe===undefined||x.importe==='')sin.push(k);else por[k]=(por[k]||0)+Number(x.importe)});
+    let r=I.data.rows.find(x=>x.auto==='ant_gan');if(!r){r={id:'a_ant_gan',nombre:'Anticipos de Ganancias ingresados (acumulado)',tipo:'mon',apertura:0,meses:{},auto:'ant_gan'};I.data.rows.push(r)}
+    r.meses={};let acum=0;M.meses.forEach(k=>{acum+=por[k]||0;r.meses[k]=Math.round(acum*100)/100});
+    I.dirty=true;const n=Object.keys(por).length;
+    I.msg=n||sin.length?`Anticipos de Ganancias: ${n} mes(es) con importe, acumulado ${money(acum)}.${sin.length?` Hay ${sin.length} anticipo(s) marcados sin importe (${[...new Set(sin)].map(inflMesTxt).join(', ')}): cargales el importe en la sección Anticipos y volvé a traer.`:''} El saldo de apertura (anticipos del ejercicio anterior que sigan sin imputar) cargalo a mano.`:'No hay anticipos de Ganancias marcados en ese ejercicio para este cliente.';
+    draw();
+  }catch(e){flash(errTxt(e),'err');draw()}
+}
+/** Controles automáticos sobre los datos del ajuste. Devuelve [{sev:'adv'|'info'|'ok',msg}]. */
+function inflControlesCalc(data,M,R,BU,ctl){
+  const out=[],rows=data.rows||[];
+  if(R.falta.length)out.push({sev:'adv',msg:`Faltan índices de ${R.falta.map(inflMesTxt).join(', ')}: el ajuste no se puede calcular.`});
+  rows.filter(r=>r.auto==='ventas'||r.auto==='compras').forEach(r=>{const sin=M.meses.filter(k=>!(Number(r.meses&&r.meses[k])));
+    if(sin.length)out.push({sev:'adv',msg:`${r.nombre}: sin movimientos en ${sin.map(inflMesTxt).join(', ')}. Verificá que estén cargados todos los meses del Libro IVA.`})});
+  rows.filter(r=>r.tipo==='res').forEach(r=>{const v=M.meses.map(k=>Number(r.meses&&r.meses[k])||0),tot=v.reduce((a,b)=>a+b,0);if(tot<=0||v.length<4)return;
+    v.forEach((x,i)=>{const otros=v.filter((_,j)=>j!==i).sort((a,b)=>a-b),med=otros[Math.floor(otros.length/2)]||0;
+      if(x/tot>0.4&&x>med*3)out.push({sev:'adv',msg:`${r.nombre}: ${inflMesTxt(M.meses[i])} concentra el ${Math.round(x/tot*100)}% del año. Puede faltar devengar mes a mes (seguros, arrendamientos, fletes) o haber un pago adelantado.`})});
+    if(v.some(x=>x<0)&&r.auto!=='ventas')out.push({sev:'info',msg:`${r.nombre}: tiene meses con importe negativo (notas de crédito o reclasificaciones). Revisalo.`})});
+  const cf=R.coef[M.apertura];
+  if(cf&&rows.some(r=>r.pn)){
+    const pnAp=rows.filter(r=>r.pn).reduce((s,r)=>s+(Number(r.apertura)||0),0);
+    out.push({sev:'info',msg:`Factor de reexpresión del comparativo: ${cf.toFixed(4).replace('.',',')}. El comparativo del estado de situación patrimonial tiene que ser el balance del ejercicio anterior (a su fecha de cierre) multiplicado por este factor. Si en el modelo usaron otro factor (por ejemplo 1,32), revisá de dónde sale.`});
+    if(ctl&&ctl.pn_ant!==undefined&&ctl.pn_ant!==''){const dif=pnAp-Number(ctl.pn_ant);out.push(Math.abs(dif)<1?{sev:'ok',msg:'El patrimonio neto de apertura coincide con el cierre del balance anterior.'}:{sev:'adv',msg:`El patrimonio neto de apertura (${money(pnAp)}) no coincide con el cierre del balance anterior (${money(Number(ctl.pn_ant))}): diferencia ${money(dif)}.`})}
+  }
+  if(R.recpam!==null&&ctl&&ctl.recpam_bal!==undefined&&ctl.recpam_bal!==''){const b=Number(ctl.recpam_bal),dif=b-R.recpam,rel=Math.abs(R.recpam)>0?Math.abs(dif)/Math.abs(R.recpam):1;
+    out.push(rel<=0.05?{sev:'ok',msg:`El RECPAM del balance (${money(b)}) coincide con el de control (${money(R.recpam)}) dentro del 5%.`}:{sev:'adv',msg:`El RECPAM del balance (${money(b)}) difiere del de control (${money(R.recpam)}) en ${money(dif)} (${Math.round(rel*100)}%). Revisá la clasificación monetaria / no monetaria y los saldos mensuales.`})}
+  if(R.recpam===null&&R.ok&&rows.some(r=>r.tipo==='mon')===false)out.push({sev:'info',msg:'No hay partidas monetarias cargadas: sin ellas no hay RECPAM de control. Cargá caja y bancos, créditos y deudas con el saldo a fin de cada mes.'});
+  (BU.aviso||[]).forEach(a=>out.push({sev:'adv',msg:'Bienes de uso: '+a}));
+  const g=agroCalc((ui.bal.agro&&ui.bal.agro.data.rows)||[]);g.rows.filter(r=>r.hay).forEach(r=>out.push({sev:'adv',msg:`Existencias: ${r.cultivo} tiene cantidad pero no precio de cierre.`}));
+  const ant=rows.find(r=>r.auto==='ant_gan');if(ant){const gan=rows.some(r=>/ganancias/i.test(r.nombre)&&r.auto!=='ant_gan');
+    out.push({sev:'info',msg:'Ganancias: si hay anticipos y también deuda por el impuesto determinado, exponelos compensados cuando corresponda o justificá por qué no.'})}
+  if(!out.some(o=>o.sev==='adv'))out.push({sev:'ok',msg:'Sin alertas con los datos cargados hasta ahora.'});
+  return out;
+}
+function balInflControles(){
+  const B=ui.bal,d=B.d,ed=canEdit(),I=inflDatos(),M=inflMeses(d.cl.fecha_inicio,d.cl.fecha_cierre),R=inflCalc(I.data,M),BU=inflBienes(d.assets,M,R.coef,d.cl.fecha_inicio,d.cl.fecha_cierre),ctl=I.data.control||{},
+    inp=(v,fn)=>ed?`<input style="width:150px;text-align:right" value="${v===undefined||v===null?'':esc(String(v).replace('.',','))}" onchange="${fn}">`:esc(v===undefined?'':money(v));
+  const C=inflControlesCalc(I.data,M,R,BU,ctl),col={adv:'var(--ambt)',info:'var(--blut)',ok:'var(--grnt)'},lab={adv:'Revisar',info:'Nota',ok:'Bien'};
+  const G=agroCalc((B.agro&&B.agro.data.rows)||[]),T=BU.T,pl=[];
+  if(G.rows.length&&Math.abs(G.T.tenencia)>0.005)pl.push({k:'tenencia',t:'Valuación de existencias a valor neto de realización',d:'Reconocer la diferencia entre el valor neto de realización y el costo en libros de las existencias agropecuarias.',imp:Math.abs(G.T.tenencia),dir:G.T.tenencia>0?'D':'H',l1:'Bienes de cambio / existencias',l2:'Resultado por tenencia'});
+  if(R.ok&&BU.rows.length&&Math.abs(T.origen_a-T.origen_h)>0.005)pl.push({k:'bu_origen',t:'Reexpresión del valor de origen de bienes de uso',d:'Llevar el valor de origen de los bienes de uso a moneda de cierre.',imp:Math.abs(T.origen_a-T.origen_h),dir:T.origen_a>=T.origen_h?'D':'H',l1:'Bienes de uso',l2:'Ajuste por inflación / ajuste de capital'});
+  if(R.ok&&BU.rows.length&&Math.abs((T.ini_a-T.ini_h)+(T.ej_a-T.ej_h))>0.005)pl.push({k:'bu_amort',t:'Reexpresión de la amortización acumulada',d:'Llevar la amortización acumulada y la del ejercicio de los bienes de uso a moneda de cierre.',imp:Math.abs((T.ini_a-T.ini_h)+(T.ej_a-T.ej_h)),dir:'D',l1:'Ajuste por inflación / ajuste de capital',l2:'Amortización acumulada de bienes de uso'});
+  if(R.recpam!==null&&Math.abs(R.recpam)>0.005)pl.push({k:'recpam',t:'Resultado por exposición a la inflación (RECPAM)',d:'Registrar el RECPAM del ejercicio calculado con las partidas monetarias.',imp:Math.abs(R.recpam),dir:R.recpam<0?'D':'H',l1:'RECPAM',l2:'Ajuste por inflación / contrapartida'});
+  pl.push({k:'deveng',t:'Devengamiento de gastos del ejercicio',d:'Distribuir en el ejercicio gastos pagados de una sola vez (seguros, arrendamientos, fletes) o reconocer los devengados no pagados.',imp:0,dir:'D',l1:'Gasto devengado',l2:'Gastos pagados por adelantado / deudas'});
+  pl.push({k:'comp_gan',t:'Compensación del impuesto a las ganancias',d:'Exponer el impuesto determinado neto de anticipos y retenciones.',imp:0,dir:'D',l1:'Impuesto a las ganancias a pagar',l2:'Anticipos y retenciones de Ganancias'});
+  B.inflPl=pl;
+  return `<h4>8. Controles automáticos</h4><div class="fgrid"><label>Patrimonio neto del cierre anterior (histórico, según balance anterior)${inp(ctl.pn_ant,`inflControl('pn_ant',this.value)`)}</label><label>RECPAM según el balance${inp(ctl.recpam_bal,`inflControl('recpam_bal',this.value)`)}</label></div>
+  <div style="margin-top:8px">${C.map(c=>`<div class="msg ${c.sev==='adv'?'warn':c.sev==='ok'?'ok':'info'}" style="margin-bottom:6px"><b>${lab[c.sev]}:</b> ${esc(c.msg)}</div>`).join('')}</div><div class="s">Los errores de fórmulas del Excel (#REF!) no se pueden detectar desde acá: este sistema controla los datos que cargás.</div>
+  <h4>9. Plantillas de asientos de cierre</h4><div class="s" style="margin-bottom:6px">Cada plantilla abre una propuesta de ajuste con el motivo, la fórmula y el importe ya completos. Vos elegís las cuentas de tu plan; no se registra nada hasta que apruebes la propuesta.</div>
+  <div class="tw"><table style="min-width:640px"><thead><tr><th>Asiento</th><th>Importe calculado</th><th></th></tr></thead><tbody>${pl.map((p,i)=>`<tr><td>${esc(p.t)}<span class="s">${esc(p.d)}</span></td><td>${p.imp?esc(money(p.imp)):'<span class="s">a completar</span>'}</td><td>${ed&&d.act?`<button class="g sm" onclick="inflPlantilla(${i})">Preparar propuesta</button>`:'<span class="s">importá primero las sumas y saldos</span>'}</td></tr>`).join('')}</tbody></table></div>`;
+}
+function inflPlantilla(i){
+  const B=ui.bal,p=(B.inflPl||[])[i];if(!p||!canEdit())return;
+  const f=p.imp?String(Math.round(p.imp*100)/100).replace('.',','):'';
+  const a=p.dir==='D'?[{key:'',debe:f,haber:''},{key:'',debe:'',haber:f}]:[{key:'',debe:'',haber:f},{key:'',debe:f,haber:''}];
+  B.aj={tipo:p.k==='deveng'?'devengamiento':p.k==='comp_gan'?'impuestos':p.k==='tenencia'?'inventario':'otro',motivo:p.t,formula:p.imp?`${p.d} Importe calculado en la sección Ajuste por inflación. Cuentas sugeridas: ${p.l1} / ${p.l2}.`:`${p.d} Cuentas sugeridas: ${p.l1} / ${p.l2}.`,supuestos:'',docs:'Sección Ajuste por inflación del cierre',lines:a};
+  B.sec='ajustes';draw();
+}
+
 /* ===== Preparación de balances: pantalla, cierres, checklist e importación ===== */
 const balTag=(txt,col)=>`<span class="tag" style="background:var(--${col});color:var(--${col}t)">${esc(txt)}</span>`;
 const balCli=id=>ui.clients.find(c=>c.id===id)||{razon_social:'(cliente)',cuit:''};
@@ -3414,7 +3709,7 @@ function vBalLista(){
 }
 function balCheck(){
   const B=ui.bal,d=B.d,ed=canEdit(),grupos=[...new Set(d.reqs.map(q=>q.grupo))];
-  return grupos.map(g=>`<h4>${esc(g)}</h4><div class="tw"><table style="min-width:640px"><thead><tr><th>Documento</th><th>Estado</th><th>Archivo</th></tr></thead><tbody>${d.reqs.filter(q=>q.grupo===g).map(q=>`<tr><td>${esc(q.nombre)}${q.justificacion?`<span class="s">No corresponde: ${esc(q.justificacion)}</span>`:''}</td><td>${ed?`<select onchange="balReq('${q.id}',this.value)">${Object.entries(BAL_REQ_ESTADO).map(([k,t])=>`<option value="${k}" ${q.estado===k?'selected':''}>${t}</option>`).join('')}</select>`:esc(BAL_REQ_ESTADO[q.estado])}</td><td>${q.doc_path?`<a href="#" onclick="balVerDoc('${esc(q.doc_path)}');return false">${esc(q.doc_name||'ver')}</a> `:''}${ed&&q.codigo!=='sumas_saldos'?`<label class="g" style="cursor:pointer;padding:3px 8px;border-radius:8px">${q.doc_path?'Reemplazar':'Adjuntar'}<input type="file" style="display:none" onchange="balSubirDoc('${q.id}',this)"></label>`:''}${q.codigo==='sumas_saldos'?'<span class="s">Se carga desde “Sumas y saldos”</span>':''}</td></tr>`).join('')}</tbody></table></div>`).join('');
+  return balPaqCard()+grupos.map(g=>`<h4>${esc(g)}</h4><div class="tw"><table style="min-width:640px"><thead><tr><th>Documento</th><th>Estado</th><th>Archivo</th></tr></thead><tbody>${d.reqs.filter(q=>q.grupo===g).map(q=>`<tr><td>${esc(q.nombre)}${q.justificacion?`<span class="s">No corresponde: ${esc(q.justificacion)}</span>`:''}</td><td>${ed?`<select onchange="balReq('${q.id}',this.value)">${Object.entries(BAL_REQ_ESTADO).map(([k,t])=>`<option value="${k}" ${q.estado===k?'selected':''}>${t}</option>`).join('')}</select>`:esc(BAL_REQ_ESTADO[q.estado])}</td><td>${q.doc_path?`<a href="#" onclick="balVerDoc('${esc(q.doc_path)}');return false">${esc(q.doc_name||'ver')}</a> `:''}${ed&&q.codigo!=='sumas_saldos'?`<label class="g" style="cursor:pointer;padding:3px 8px;border-radius:8px">${q.doc_path?'Reemplazar':'Adjuntar'}<input type="file" style="display:none" onchange="balSubirDoc('${q.id}',this)"></label>`:''}${q.codigo==='sumas_saldos'?'<span class="s">Se carga desde “Sumas y saldos”</span>':''}</td></tr>`).join('')}</tbody></table></div>`).join('');
 }
 function balSumas(){
   const B=ui.bal,d=B.d,ed=canEdit();
@@ -3476,7 +3771,7 @@ async function balAbrir(id,silent){
     const cl=B.list.find(x=>x.id===id);if(!cl)throw new Error('El cierre no existe o no tenés acceso.');
     const q=(t,o)=>fetchAll((a,b)=>{let r=sb.from(t).select('*').eq('closing_id',id);(o||[]).forEach(c=>{r=r.order(c)});return r.range(a,b)});
     const [rq,au,ents,eln,assets,recs,ritems,adjs,pap,tasks,vers,base]=await Promise.all([q('bal_requirements',['grupo','nombre']),fetchAll((a,b)=>sb.from('bal_audit').select('*').eq('closing_id',id).order('created_at',{ascending:false}).range(a,b)),q('bal_entries',['fecha','created_at']),q('bal_entry_lines'),q('bal_assets',['created_at']),q('bal_reconciliations',['created_at']),q('bal_recon_items'),q('bal_adjustments',['propuesto_at']),q('bal_workpapers',['codigo']),q('bal_tasks',['created_at']),fetchAll((a,b)=>sb.from('bal_report_versions').select('*').eq('closing_id',id).order('generated_at',{ascending:false}).range(a,b)),balCargarActiva(id)]);
-    const d={cl,reqs:rq,imps:base.imps,act:base.act,lines:base.lines,audit:au,ents,entLines:eln,assets,recs,recItems:ritems,adjs,papers:pap,tasks,vers,prev:null};
+    const d={cl,reqs:rq,imps:base.imps,act:base.act,lines:base.lines,audit:au,ents,entLines:eln,assets,recs,recItems:ritems,adjs,papers:pap.filter(x=>!['infl_datos','agro_datos'].includes(x.codigo)),inflRow:pap.find(x=>x.codigo==='infl_datos')||null,agroRow:pap.find(x=>x.codigo==='agro_datos')||null,tasks,vers,prev:null};
     // cierre anterior del mismo cliente (para comparativos y saldos iniciales)
     const pv=B.list.filter(x=>x.client_id===cl.client_id&&x.fecha_cierre<cl.fecha_cierre).sort((a,b)=>a.fecha_cierre<b.fecha_cierre?1:-1)[0];
     if(pv){const pb=await balCargarActiva(pv.id);if(pb.act){const [pe,pl]=await Promise.all([fetchAll((a,b)=>sb.from('bal_entries').select('*').eq('closing_id',pv.id).range(a,b)),fetchAll((a,b)=>sb.from('bal_entry_lines').select('*').eq('closing_id',pv.id).range(a,b))]);d.prev={cl:pv,S:balSaldos(pb.lines,pe,pl)}}else d.prev={cl:pv,S:null,sinBalance:true}}
@@ -4003,13 +4298,13 @@ function balInc2(){
   return balInc()+`<h4>Tareas pendientes</h4>${ed?`<form class="row" style="gap:8px;margin-bottom:8px" onsubmit="return balTareaNueva(event)"><input name="t" placeholder="Nueva tarea pendiente" style="flex:1;min-width:220px"><button class="g">Agregar</button></form>`:''}<div class="tw"><table style="min-width:520px"><tbody>${t.map(x=>`<tr><td style="width:36px"><input type="checkbox" ${x.estado==='hecha'?'checked':''} ${ed?'':'disabled'} onchange="balTareaEstado('${x.id}')"></td><td>${x.estado==='hecha'?`<s>${esc(x.titulo)}</s>`:esc(x.titulo)}${x.origen?`<span class="s">${esc(x.origen)}</span>`:''}</td><td>${ed?`<button class="g" onclick="balTareaBorrar('${x.id}')">✕</button>`:''}</td></tr>`).join('')||'<tr><td style="text-align:center;color:var(--mut)">Sin tareas.</td></tr>'}</tbody></table></div>`;
 }
 /* ---- detalle del cierre ---- */
-const BAL_SEC=[['check','Documentación'],['bs','Sumas y saldos'],['asientos','Asientos'],['recs','Conciliaciones'],['ajustes','Ajustes y bienes de uso'],['estados','Estados'],['papeles','Papeles'],['inc','Incidencias'],['hist','Historial']];
+const BAL_SEC=[['check','Documentación'],['bs','Sumas y saldos'],['asientos','Asientos'],['recs','Conciliaciones'],['ajustes','Ajustes y bienes de uso'],['infl','Ajuste por inflación'],['estados','Estados'],['papeles','Papeles'],['inc','Incidencias'],['hist','Historial']];
 function vBalDetalle(){
   const B=ui.bal,d=B.d,cl=d.cl,ed=canEdit(),c=balCli(cl.client_id),sec=B.sec||'check';
   const nB=d.act?[...(d.act.errores||[])].length:0,pend=balPendientes(d).length;
   const edit=B.edit?`<form class="card" style="margin:10px 0" onsubmit="return balEditarGuardar(event)"><h4 style="margin-top:0">Editar cierre</h4><div class="fgrid"><label>Tipo de entidad<select name="entidad">${Object.entries(BAL_ENT).map(([k,t])=>`<option value="${k}" ${cl.entidad===k?'selected':''}>${t}</option>`).join('')}</select></label><label>Llevanza contable<select name="contab">${Object.entries(BAL_CONT).map(([k,t])=>`<option value="${k}" ${cl.contabilidad===k?'selected':''}>${t}</option>`).join('')}</select></label><label>Ejercicio<input name="ejercicio" value="${esc(cl.ejercicio)}"></label><label>Inicio<input type="date" name="inicio" value="${cl.fecha_inicio||''}"></label><label>Cierre<input type="date" name="cierre" value="${cl.fecha_cierre}" required></label><label>Notas<input name="notas" value="${esc(cl.notas||'')}"></label></div><div class="s" style="margin:6px 0">Los asientos aprobados no se modifican. Si cambia la entidad o la llevanza, se agregan los documentos que falten sin tocar los existentes. El cambio queda en el historial.</div><div class="row" style="gap:8px"><button class="b">Guardar cambios</button><button type="button" class="g" onclick="balEditar()">Cancelar</button></div></form>`:'';
   const rec=d.reqs.filter(q=>['cargado','procesado','validado','observado','no_aplica'].includes(q.estado)).length;const kp=[['Documentación recibida',rec+' de '+d.reqs.length],['Cuentas',d.S.cuentas.length],['Asientos aprobados',d.ents.filter(e=>e.estado==='aprobado').length],['Conciliaciones abiertas',d.recs.filter(r=>r.estado!=='resuelta').length],['Ajustes por aprobar',d.adjs.filter(a=>a.estado==='propuesto').length],['Pendientes',pend]];
-  const body={check:balCheck,bs:balSumas,asientos:balAsientos,recs:balRecs,ajustes:balAjustes,estados:balEstadosHtml,papeles:balPapeles,inc:balInc2,hist:balHist}[sec]();
+  const body={check:balCheck,bs:balSumas,asientos:balAsientos,recs:balRecs,ajustes:balAjustes,infl:balInfl,estados:balEstadosHtml,papeles:balPapeles,inc:balInc2,hist:balHist}[sec]();
   return `<div class="row" style="justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap;margin:10px 0"><div><button class="g" onclick="ui.bal.sel=null;ui.bal.d=null;draw()">← Cierres</button> <b style="font-size:18px">${esc(c.razon_social)}</b> <span class="s">Ejercicio ${esc(cl.ejercicio)} · cierre ${fAR(cl.fecha_cierre)} · ${esc(BAL_ENT[cl.entidad])}</span></div><div class="row" style="gap:8px;flex-wrap:wrap">${balEstTag(cl.estado)}${ed?`<select onchange="balEstado(this.value)">${Object.entries(BAL_ESTADO).map(([k,t])=>`<option value="${k}" ${cl.estado===k?'selected':''}>${t[0]}</option>`).join('')}</select><button class="g" onclick="balEditar()">Editar</button><button class="g" onclick="balEliminar('${cl.id}')">Eliminar</button>`:''}<button class="g" onclick="balExcel()">Exportar Excel</button></div></div>${edit}
   <div class="grid" style="margin-bottom:10px">${kp.map(([t,v])=>`<div class="card kpi"><b style="font-size:20px">${v}</b><span>${t}</span></div>`).join('')}</div>
   <div class="row" style="gap:6px;flex-wrap:wrap;margin-bottom:12px">${BAL_SEC.map(([k,t])=>`<button class="${sec===k?'b':'g'}" onclick="ui.bal.sec='${k}';draw()">${t}</button>`).join('')}</div>${body}`;
@@ -4506,6 +4801,7 @@ const pad2=n=>String(n).padStart(2,'0');
 function antPrevPer(per){let [y,m]=per.split('-').map(Number);m--;if(m===0){m=12;y--}return y+'-'+pad2(m)}
 function antNumOpts(sel,sug){return '<option value="">N° de anticipo</option>'+[1,2,3,4,5,6,7,8,9,10].map(n=>`<option value="${n}" ${(sel?+sel===n:sug===n)?'selected':''}>Anticipo ${n}${(!sel&&sug===n)?' (sugerido)':''}</option>`).join('')}
 function antSel(cid,per,k){const prev=filDe(cid,'GAN_ANT',antPrevPer(per)),sug=prev&&prev.numero_anticipo&&prev.numero_anticipo<10?prev.numero_anticipo+1:null;return `<select class="sm" id="pn_${k}" title="Número de anticipo">${antNumOpts(null,sug)}</select>`}
+function cambiarImporteAnt(imp,per,v,cid){const n=String(v).trim()===''?null:inflNum(v);if(n!==null&&n<0||String(v).trim()!==''&&n===null){flash('Importe no válido.','err');return draw()}return updPres(imp,per,{importe:n},'Importe del anticipo guardado.',cid)}
 function cambiarNumAnt(imp,per,v,cid){return updPres(imp,per,{numero_anticipo:v?Number(v):null},'Número de anticipo actualizado.',cid)}
 
 /* ===== Presentación de cada obligación, a partir de lo que se marcó ===== */
