@@ -170,7 +170,7 @@ function planImport(parsed,meta,existing,ctx){
 
 
 /* ===== Supabase ===== */
-const APP_VERSION='26/10/2026, sueldos: empleadores solo de Sueldos, filtro por tipo de personal y envío de recibos por WhatsApp a empleador, empleado o ambos';
+const APP_VERSION='26/10/2026, sueldos: empleadores solo de Sueldos, filtro por tipo de personal y envío de recibos por WhatsApp a empleador, empleado o ambos, con estado enviado/pendiente';
 const SUPABASE_URL='https://tugdqcoxcpsiynlvnqdu.supabase.co';
 const SUPABASE_KEY='sb_publishable_2-96VeZrsNNftRXkzA1l_A_YG7ThJrL'; // clave pública: los permisos los da la base (RLS)
 const sb=(typeof supabase!=='undefined')?supabase.createClient(SUPABASE_URL,SUPABASE_KEY):null;
@@ -1456,7 +1456,7 @@ function vSueldos(c,f){
     const sub=lbl=>`<label class="g sm">${lbl}<input type="file" accept="application/pdf,.pdf" hidden onchange="subirRecibo('${e.id}',this)"></label>`;
     return `<tr><td>${esc(e.nombre)}<span class="s">${e.cuil?cuitF(e.cuil):''}</span>${sueTag(e.tipo)}${envio(e)}</td>
     <td>${p?`<span class="tag" style="background:var(--grn);color:var(--grnt)">Cargado</span><span class="s">${esc(p.nombre_archivo)}</span><div class="row" style="gap:4px;margin-top:4px"><button class="g sm" onclick="verArchivo('${p.path}')">Ver</button>${sub('Reemplazar')}<button class="g sm" onclick="quitarRecibo('${p.id}')">Quitar</button></div>`:`<span class="tag" style="background:var(--amb);color:var(--ambt)">Falta</span> ${sub('Subir PDF')}`}</td>
-    <td>${p?(ok?`<div class="row" style="gap:4px;flex-wrap:wrap">${T.lista.filter(t=>t.ok).map(t=>`<button class="b sm" onclick="enviarReciboWa('${p.id}','${t.rol}')">Enviar PDF al ${t.rol}</button>`).join('')}<button class="g sm" onclick="descargarRecibo('${p.id}')">Descargar</button></div><span class="s">Se envía a: ${T.lista.filter(t=>t.ok).map(t=>t.rol+' ('+esc(t.quien)+')').join(' y ')}</span>${p.wa_preparado_at?`<span class="s">WhatsApp preparado el ${new Date(p.wa_preparado_at).toLocaleDateString('es-AR')}</span>`:''}`:`<span class="s">${T.lista.map(t=>esc(t.motivo)).join('. ')}</span><button class="g sm" onclick="descargarRecibo('${p.id}')">Descargar</button>`):'<span class="s">Subí primero el recibo</span>'}</td></tr>`}).join('');
+    <td>${p?(ok?`<div class="row" style="gap:4px;flex-wrap:wrap">${T.lista.filter(t=>t.ok).map(t=>`<button class="b sm" onclick="enviarReciboWa('${p.id}','${t.rol}')">Enviar PDF al ${t.rol}</button>`).join('')}<button class="g sm" onclick="descargarRecibo('${p.id}')">Descargar</button></div><span class="s">Se envía a: ${T.lista.filter(t=>t.ok).map(t=>t.rol+' ('+esc(t.quien)+')').join(' y ')}</span><div style="margin-top:4px">${sueEstadoHtml(p,true)}</div>`:`<span class="s">${T.lista.map(t=>esc(t.motivo)).join('. ')}</span><button class="g sm" onclick="descargarRecibo('${p.id}')">Descargar</button><div style="margin-top:4px">${sueEstadoHtml(p,false)}</div>`):'<span class="s">Subí primero el recibo</span>'}</td></tr>`}).join('');
   return `<h3 style="margin-top:0">Fichas de liquidación</h3><p class="s" style="margin-bottom:8px">Datos de cómo se liquida y se envía cada tipo de personal de este cliente: a quién van los recibos y el VEP, medio de pago, boletas y vencimientos según la terminación del CUIT.</p>${sueSelector(c,f,tipos)}${tipos.map(t=>sueFicha(c,f,t)).join('')}
   <h3>Empleados</h3>${tipos.length||edit?form:'<div class="msg warn">Tildá arriba qué tipo de personal tiene este empleador para poder agregar empleados.</div>'}${empT}
   <h3>Recibos de ${mesAnio(s.periodo+'-01')}</h3>
@@ -1674,7 +1674,21 @@ function sueTargets(k,e,ov){
   return {a,lista,opts,pr};
 }
 /* --- envío de recibos por WhatsApp en tanda --- */
-const sueEnvSt=()=>ui.sueEnv||(ui.sueEnv={sel:new Set(),cola:null,idx:0,busy:false,ov:{}});
+/** Estado de un recibo: pendiente (no se mandó), preparado (se abrió WhatsApp) o enviado (marcado a mano). */
+const sueEstado=p=>p.enviado_at?'enviado':p.wa_preparado_at?'preparado':'pendiente';
+async function sueMarcarEnv(ids,on){
+  ids=[].concat(ids);if(!ids.length)return;
+  const val=on?new Date().toISOString():null;
+  try{
+    const {data,error}=await sb.from('payslips').update({enviado_at:val,enviado_by:on?me.id:null}).in('id',ids).select('id');
+    if(error)throw error;if(!data||data.length!==ids.length)throw new Error('No se pudieron actualizar todos los recibos (¿permisos?).');
+    ids.forEach(id=>{[ui.sdAll.pay,ui.sd&&ui.sd.pay].forEach(L=>{const p=L&&L.find(x=>x.id===id);if(p){p.enviado_at=val;p.enviado_by=on?me.id:null}})});
+    sueEnvSt().sel=new Set();flash(on?`${ids.length} recibo(s) marcado(s) como enviado(s).`:'Volvió a pendiente.','ok');
+  }catch(x){flash(errTxt(x),'err')}
+  draw();
+}
+function sueEnvFiltro(f){sueEnvSt().f=f;sueEnvSt().sel=new Set();draw()}
+const sueEnvSt=()=>ui.sueEnv||(ui.sueEnv={sel:new Set(),cola:null,idx:0,busy:false,ov:{},f:'pend'});
 function sueEnvFilas(){
   const s=ui.sueCfg,E=sueEnvSt(),rows=[],faltan=[];
   sueClientes().filter(k=>k.active!==false&&sueFiltroOk(k)).forEach(k=>{
@@ -1685,9 +1699,9 @@ function sueEnvFilas(){
   return {rows,faltan};
 }
 function sueEnvMarcar(modo){
-  const E=sueEnvSt(),R=sueEnvFilas().rows;E.sel=new Set();
+  const E=sueEnvSt(),F=E.f||'pend',R=sueEnvFilas().rows.filter(r=>F==='todos'||(F==='env'?sueEstado(r.p)==='enviado':sueEstado(r.p)!=='enviado'));E.sel=new Set();
   if(modo==='todos')R.filter(r=>r.ok).forEach(r=>E.sel.add(r.p.id));
-  if(modo==='nuevos')R.filter(r=>r.ok&&!r.p.wa_preparado_at).forEach(r=>E.sel.add(r.p.id));
+  if(modo==='nuevos')R.filter(r=>r.ok&&r.p.enviado_at==null).forEach(r=>E.sel.add(r.p.id));
   E.cola=null;draw();
 }
 function sueEnvTog(id,on){const E=sueEnvSt();on?E.sel.add(id):E.sel.delete(id);E.cola=null;draw()}
@@ -1759,25 +1773,36 @@ function sueMsgCard(){
    <div class="full"><label>Mensaje para el empleador<textarea rows="5" oninput="sueMsgSet('pdfEmp',this.value)">${esc(s.pdfEmp)}</textarea></label><div class="s" style="margin-top:4px">Vista previa:</div><pre id="sue_pv_emp" style="white-space:pre-wrap;margin:4px 0;padding:10px;border-radius:10px;background:var(--grn,#e8f5e9);font:inherit">${esc(P.emp)}</pre><button type="button" class="g sm" onclick="sueMsgReset('pdfEmp')">Volver al mensaje original</button></div>
    <div class="full"><label>Mensaje para el empleado<textarea rows="5" oninput="sueMsgSet('pdfAdo',this.value)">${esc(s.pdfAdo)}</textarea></label><div class="s" style="margin-top:4px">Vista previa:</div><pre id="sue_pv_ado" style="white-space:pre-wrap;margin:4px 0;padding:10px;border-radius:10px;background:var(--grn,#e8f5e9);font:inherit">${esc(P.ado)}</pre><button type="button" class="g sm" onclick="sueMsgReset('pdfAdo')">Volver al mensaje original</button></div></div></div>`;
 }
+function sueEstadoHtml(p,ok){
+  const e=sueEstado(p),fe=d=>new Date(d).toLocaleDateString('es-AR');
+  const b=e==='enviado'?`<span class="tag" style="background:var(--grn);color:var(--grnt)">Enviado</span><span class="s">${fe(p.enviado_at)}</span><button class="g sm" onclick="sueMarcarEnv('${p.id}',false)">Deshacer</button>`
+   :`<span class="tag" style="background:var(--amb);color:var(--ambt)">Pendiente</span>${e==='preparado'?`<span class="s">WhatsApp abierto el ${fe(p.wa_preparado_at)}</span>`:ok?'':'<span class="s">No corresponde enviar</span>'}<button class="g sm" onclick="sueMarcarEnv('${p.id}',true)">Marcar enviado</button>`;
+  return b;
+}
 function sueEnvioPanel(){
   const E=sueEnvSt(),s=ui.sueCfg,{rows,faltan}=sueEnvFilas();
   if(!rows.length&&!faltan.length)return '';
-  const sel=rows.filter(r=>E.sel.has(r.p.id)).length,corresp=rows.filter(r=>r.ok).length,nuevos=rows.filter(r=>r.ok&&!r.p.wa_preparado_at).length;
+  const cnt={pend:rows.filter(r=>sueEstado(r.p)!=='enviado').length,env:rows.filter(r=>sueEstado(r.p)==='enviado').length,todos:rows.length},F=E.f||'pend';
+  const vis=rows.filter(r=>F==='todos'||(F==='env'?sueEstado(r.p)==='enviado':sueEstado(r.p)!=='enviado'));
+  const sel=vis.filter(r=>E.sel.has(r.p.id)).length,corresp=vis.filter(r=>r.ok).length,nuevos=vis.filter(r=>r.ok&&!r.p.enviado_at).length;
+  const selIds=vis.filter(r=>E.sel.has(r.p.id)).map(r=>r.p.id);
   const cola=E.cola?`<div class="card" style="margin:10px 0;border:1px solid var(--blut)"><b>Cola de envío: ${Math.min(E.idx+1,E.cola.length)} de ${E.cola.length}</b>
    ${E.idx<E.cola.length?`<p style="margin:8px 0">Sigue: <b>${esc(E.cola[E.idx].empleado)}</b> → ${E.cola[E.idx].rol==='empleador'?'empleador':'empleado'} <span class="s">${esc(E.cola[E.idx].empleador)} · ${esc(E.cola[E.idx].quien)}</span></p><div class="row" style="gap:8px"><button class="b" onclick="sueEnvSiguiente()">Abrir WhatsApp (${E.idx+1} de ${E.cola.length})</button><button class="g" onclick="sueEnvSaltar()">Saltear</button><button class="g" onclick="sueEnvCancelar()">Cancelar cola</button></div><p class="s" style="margin-top:6px">En WhatsApp tocá enviar, volvé a esta pestaña y abrí el siguiente. La app anota "preparado" al abrirlo, pero no puede saber si realmente lo enviaste.</p>`
    :`<p style="margin:8px 0">Listo: se abrieron los ${E.cola.length} mensajes.</p><button class="g" onclick="sueEnvCancelar()">Cerrar</button>`}</div>`:'';
-  const tabla=rows.length?`<div class="tw" style="margin-bottom:10px"><table style="min-width:900px"><thead><tr><th style="width:34px"></th><th>Empleador</th><th>Empleado</th><th>Recibo</th><th>Enviar a</th><th>WhatsApp</th><th>Estado</th></tr></thead><tbody>${rows.map(r=>{
+  const tabla=vis.length?`<div class="tw" style="margin-bottom:10px"><table style="min-width:900px"><thead><tr><th style="width:34px"></th><th>Empleador</th><th>Empleado</th><th>Recibo</th><th>Enviar a</th><th>WhatsApp</th><th>Estado</th></tr></thead><tbody>${vis.map(r=>{
     const T=r.T,id=r.p.id,a=T.a,emp=T.lista.find(x=>x.rol==='empleador'),ado=T.lista.find(x=>x.rol==='empleado');
     const selA=T.a==='ninguno'?'<span class="s">-</span>':`<select onchange="sueEnvOv('${id}','a',this.value)">${Object.entries(SUE_A).map(([k,t])=>`<option value="${k}" ${a===k?'selected':''}>${t}</option>`).join('')}</select>`;
     const numEmp=emp?(emp.ok?(T.opts.length>1?`<select onchange="sueEnvOv('${id}','num',this.value)">${T.opts.map(o=>`<option value="${o.num}" ${o.num===emp.num?'selected':''}>${esc(sueEtqWa(o))}</option>`).join('')}</select>`:`<span>${esc(emp.quien)}</span>`):`<span class="s" style="color:var(--redt)">${esc(emp.motivo)}</span>`):'';
     const numAdo=ado?(ado.ok?`<span>${esc(ado.quien)}</span><span class="s">empleado</span>`:`<span class="s" style="color:var(--redt)">${esc(ado.motivo)}</span>`):'';
     const nin=T.a==='ninguno'?`<span class="s">${esc(T.lista[0].motivo)}</span>`:'';
-    return `<tr><td><input type="checkbox" ${r.ok?'':'disabled'} ${E.sel.has(id)?'checked':''} onchange="sueEnvTog('${id}',this.checked)"></td><td>${esc(r.k.razon_social)}${r.k.solo_sueldos?'<span class="s">Solo Sueldos</span>':''}</td><td>${esc(r.e.nombre)}${sueTag(r.e.tipo)}</td><td>${esc(r.p.nombre_archivo)}</td><td>${selA}</td><td>${nin||numEmp+(emp&&ado?'<br>':'')+numAdo}</td><td>${r.p.wa_preparado_at?`<span class="s">Preparado el ${new Date(r.p.wa_preparado_at).toLocaleDateString('es-AR')}</span>`:r.ok?'<span class="s">Sin enviar</span>':'<span class="tag" style="background:var(--amb);color:var(--ambt)">No corresponde</span>'}</td></tr>`}).join('')}</tbody></table></div>`
-    :'<div class="card" style="margin-bottom:10px;color:var(--mut)">Todavía no hay recibos cargados de este período para los empleadores del filtro.</div>';
+    return `<tr><td><input type="checkbox" ${r.ok?'':'disabled'} ${E.sel.has(id)?'checked':''} onchange="sueEnvTog('${id}',this.checked)"></td><td>${esc(r.k.razon_social)}${r.k.solo_sueldos?'<span class="s">Solo Sueldos</span>':''}</td><td>${esc(r.e.nombre)}${sueTag(r.e.tipo)}</td><td>${esc(r.p.nombre_archivo)}</td><td>${selA}</td><td>${nin||numEmp+(emp&&ado?'<br>':'')+numAdo}</td><td>${sueEstadoHtml(r.p,r.ok)}</td></tr>`}).join('')}</tbody></table></div>`
+    :`<div class="card" style="margin-bottom:10px;color:var(--mut)">${rows.length?(F==='env'?'Todavía no marcaste ningún recibo como enviado.':'No quedan recibos pendientes. '):'Todavía no hay recibos cargados de este período para los empleadores del filtro.'}</div>`;
   const falt=faltan.length?`<details style="margin-bottom:12px"><summary class="s" style="cursor:pointer"><b>Faltan cargar ${faltan.length} recibo(s)</b> (no se pueden enviar todavía)</summary><div class="s" style="margin-top:6px">${faltan.map(f=>esc(f.k.razon_social)+': '+esc(f.e.nombre)).join('<br>')}</div></details>`:'';
   return `<h3>Enviar recibos por WhatsApp (varios)</h3>
   <p class="s" style="margin-bottom:8px">Recibos de ${mesAnio(s.periodo+'-01')} (${esc(s.tipo)}) de los empleadores del filtro de arriba. Por defecto van al empleador, al número cargado en Clientes (si hay más de uno, elegís cuál); podés cambiar a "Empleado" o "Ambos" en cada fila, o fijarlo en la ficha de liquidación. Solo se pueden elegir los que corresponde enviar.</p>
+  <div class="row" style="gap:6px;flex-wrap:wrap;margin-bottom:8px">${[['pend','Pendientes'],['env','Enviados'],['todos','Todos']].map(([k,t])=>`<button class="${F===k?'b':'g'} sm" onclick="sueEnvFiltro('${k}')">${t} (${cnt[k]})</button>`).join('')}</div>
   <div class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:8px"><button class="g sm" onclick="sueEnvMarcar('nuevos')">Elegir los no enviados (${nuevos})</button><button class="g sm" onclick="sueEnvMarcar('todos')">Elegir todos los que corresponden (${corresp})</button><button class="g sm" onclick="sueEnvMarcar('ninguno')">Desmarcar</button>
+   <button class="g sm" onclick="sueMarcarEnv(${JSON.stringify(selIds).replace(/"/g,'&quot;')},true)" ${sel?'':'disabled'}>Marcar ${sel} como enviado(s)</button><button class="g sm" onclick="sueMarcarEnv(${JSON.stringify(selIds).replace(/"/g,'&quot;')},false)" ${sel?'':'disabled'}>Volver a pendiente</button>
    <button class="b" onclick="sueEnvPreparar()" ${sel&&!E.busy?'':'disabled'}>${E.busy?'Preparando…':`Preparar envío de ${sel} recibo(s)`}</button></div>
   ${cola}${tabla}${falt}${sueMsgCard()}`;
 }
