@@ -234,7 +234,7 @@ async function show(t){
     if(t==='reclamos'){await loadDash();await loadSched()}
     if(t==='anticipos'||t==='vencimientos'){await loadDeadlines();await loadFil()}
     if(t==='sueldos'){await loadSueldosAll();setSd(sueClientes().find(c=>c.id===(ui.sd&&ui.sd.id||ui.cid)&&c.active!==false)?(ui.sd&&ui.sd.id||ui.cid):(sueClientes().find(c=>c.active!==false)||{}).id)}
-    if(t==='carga'){await loadSueldosAll();setSd(sueClientes().find(c=>c.id===(ui.sd&&ui.sd.id)&&c.active!==false)?ui.sd.id:(sueClientes().find(c=>c.active!==false)||{}).id)}
+    if(t==='carga'){await loadSueldosAll();setSd(sueClientes().find(c=>c.id===(ui.sd&&ui.sd.id)&&c.active!==false&&sueEsEmpleador(c))?ui.sd.id:(sueClientes().find(c=>c.active!==false&&sueEsEmpleador(c))||{}).id)}
     if(t==='inicio')await loadDash();
     if(t==='importar'){const {data,error}=await sb.from('import_batches').select('*, clients(razon_social)').order('imported_at',{ascending:false}).limit(50);if(error)throw error;ui.batches=data}
     if(t==='comprobantes')await loadVouchers();
@@ -1570,9 +1570,12 @@ async function compartirRecibo(id){
 /* ===== Sueldos: empleadores solo de Sueldos, filtros por tipo de personal y envío de recibos por WhatsApp en tanda ===== */
 const sueClientes=()=>ui.clientsAll||ui.clients;
 const sueCli=id=>sueClientes().find(x=>x.id===id);
-const sueFilSt=()=>ui.sueFil||(ui.sueFil={tipo:'',origen:'',q:'',faltan:false});
+const sueFilSt=()=>ui.sueFil||(ui.sueFil={tipo:'',origen:'',q:'',faltan:false,ver:''});
+/** Empleador de verdad: tiene tipo de personal tildado, empleados cargados o es un empleador solo de Sueldos. */
+const sueEsEmpleador=k=>!!k.solo_sueldos||sueTiposDe(k,ui.sdAll.emp).length>0||ui.sdAll.emp.some(e=>e.client_id===k.id);
 function sueFiltroOk(k){
   const F=sueFilSt(),ts=sueTiposDe(k,ui.sdAll.emp);
+  if(F.ver!=='todos'&&!sueEsEmpleador(k))return false;
   if(F.tipo&&!ts.includes(F.tipo))return false;
   if(F.origen==='solo'&&!k.solo_sueldos)return false;
   if(F.origen==='clientes'&&k.solo_sueldos)return false;
@@ -1629,6 +1632,7 @@ function sueFiltroBar(){
   return `<div class="card row" style="margin-bottom:12px;gap:12px;flex-wrap:wrap;align-items:flex-end">
    <label>Tipo de personal<br><select onchange="sueFil('tipo',this.value)"><option value="">Todos</option>${Object.entries(SUE_TIPOS).map(([k,t])=>`<option value="${k}" ${F.tipo===k?'selected':''}>${t}</option>`).join('')}</select></label>
    <label>Empleadores<br><select onchange="sueFil('origen',this.value)"><option value="">Todos</option><option value="solo" ${F.origen==='solo'?'selected':''}>Solo de Sueldos</option><option value="clientes" ${F.origen==='clientes'?'selected':''}>Clientes del estudio</option></select></label>
+   <label>Mostrar<br><select onchange="sueFil('ver',this.value)"><option value="">Solo empleadores</option><option value="todos" ${F.ver==='todos'?'selected':''}>Todos los clientes</option></select></label>
    <label>Buscar<br><input value="${esc(F.q)}" placeholder="Nombre o CUIT" onchange="sueFil('q',this.value)"></label>
    <label class="row" style="gap:6px;align-items:center"><input type="checkbox" style="margin:0" ${F.faltan?'checked':''} onchange="sueFil('faltan',this.checked)"> Con recibos sin cargar</label></div>`;
 }
@@ -1822,7 +1826,7 @@ function cgReq(k){
   const vep=tipos.map(t=>CG_VEP[t]);
   const decl=[...(pr.boletas||[]),...String(pr.boletas_otras||'').split(',').map(x=>x.trim().toUpperCase()).filter(Boolean)];
   const subidas=(ui.sdAll.pf||[]).filter(x=>x.client_id===k.id&&x.categoria==='sindicato'&&x.periodo.slice(0,7)===per).map(x=>x.concepto);
-  const extra=(cgSt().extra[k.id]||[]);
+  const extra=[];
   const sind=[...new Set([...decl.filter(b=>b!=='F.931'&&b!=='F931'),...subidas,...extra])];
   return {tipos,vep,sind,decl};
 }
@@ -1869,15 +1873,36 @@ async function cgEnviado(id,on){
   const x=(ui.sdAll.pf||[]).find(p=>p.id===id);if(x){x.enviado_at=val}
   draw();
 }
-function cgAgregarSind(sel){const v=sel.value;if(!v)return;const E=cgSt().extra;(E[ui.sd.id]=E[ui.sd.id]||[]).push(v);draw()}
+const cgFichaDep=cid=>(ui.sdAll.prof||[]).find(p=>p.client_id===cid&&p.tipo==='dependencia')||{};
+async function cgGuardarBoletas(cid,bol,otras){
+  const {error}=await sb.from('payroll_profiles').upsert({client_id:cid,tipo:'dependencia',boletas:bol,boletas_otras:otras||null,updated_by:me.id,updated_at:new Date().toISOString()},{onConflict:'client_id,tipo'});
+  if(error)throw error;await recargarSueldos();
+}
+/** Agrega una boleta a la ficha del empleador (queda guardada y la ve todo el estudio). */
+async function cgAgregarSind(sel){
+  const v=sel.value;if(!v)return;const cid=ui.sd.id,p=cgFichaDep(cid);
+  try{await cgGuardarBoletas(cid,[...new Set([...(p.boletas||[]),v])],p.boletas_otras);flash('Se agregó '+v+' a la lista de este empleador.')}catch(x){flash(errTxt(x),'err')}
+  draw();
+}
+/** Saca una boleta de la lista del empleador (y su archivo del período, si lo hay). */
+async function cgQuitarSind(conc){
+  const cid=ui.sd.id,p=cgFichaDep(cid),x=cgPf(cid,'sindicato',conc);
+  if(!confirm('¿Quitar '+conc+' de la lista de este empleador?'+(x?String.fromCharCode(10)+'Se elimina también el archivo cargado de este período.':'')))return;
+  try{
+    if(x){const r=await sb.storage.from('clientes').remove([x.path]);if(r.error)throw r.error;const d=await sb.from('payroll_files').delete().eq('id',x.id);if(d.error)throw d.error}
+    const otras=String(p.boletas_otras||'').split(',').map(z=>z.trim()).filter(z=>z&&z.toUpperCase()!==conc).join(', ');
+    await cgGuardarBoletas(cid,(p.boletas||[]).filter(b=>b!==conc),otras);flash(conc+' quitada de la lista.')
+  }catch(e){flash(errTxt(e),'err')}
+  draw();
+}
 function cgEleg(cid){setSd(cid);draw()}
 const cgBar=(a,b)=>b?`<span class="tag" style="background:var(--${a>=b?'grn':'amb'});color:var(--${a>=b?'grnt':'ambt'})">${a} de ${b}</span>`:'<span class="s">-</span>';
 function cgSlot(k,cat,conc,etq,req){
   const x=cgPf(k.id,cat,conc);
   const sub=lbl=>`<label class="g sm">${lbl}<input type="file" accept="application/pdf,.pdf" hidden onchange="cgSubir('${cat}','${esc(conc)}',this)"></label>`;
-  return `<tr><td>${esc(etq)}${req?'':'<span class="s">Agregada a mano, no figura en la ficha</span>'}</td>
+  return `<tr><td>${esc(etq)}${req?'':'<span class="s">No figura en la ficha del empleador</span>'}</td>
    <td>${x?`<span class="tag" style="background:var(--grn);color:var(--grnt)">Cargado</span><span class="s">${esc(x.nombre_archivo)}</span>`:`<span class="tag" style="background:var(--amb);color:var(--ambt)">Falta</span>`}</td>
-   <td><div class="row" style="gap:4px;flex-wrap:wrap">${x?`<button class="g sm" onclick="verArchivo('${x.path}')">Ver</button>${sub('Reemplazar')}<button class="g sm" onclick="cgQuitar('${x.id}')">Quitar</button>${isLiq()?'':x.enviado_at?`<button class="g sm" onclick="cgEnviado('${x.id}',false)">Enviado: deshacer</button>`:`<button class="g sm" onclick="cgEnviado('${x.id}',true)">Marcar enviado</button>`}`:sub('Subir PDF')}</div></td></tr>`;
+   <td><div class="row" style="gap:4px;flex-wrap:wrap">${x?`<button class="g sm" onclick="verArchivo('${x.path}')">Ver</button>${sub('Reemplazar')}<button class="g sm" onclick="cgQuitar('${x.id}')">Quitar archivo</button>${isLiq()?'':x.enviado_at?`<button class="g sm" onclick="cgEnviado('${x.id}',false)">Enviado: deshacer</button>`:`<button class="g sm" onclick="cgEnviado('${x.id}',true)">Marcar enviado</button>`}`:sub('Subir PDF')}${cat==='sindicato'?`<button class="g sm" onclick="cgQuitarSind('${esc(conc)}')">Quitar de la lista</button>`:''}</div></td></tr>`;
 }
 function cgDetalle(k){
   const s=ui.sueCfg,f=ui.sd,g=cgProg(k),R=g.R,per=s.periodo,ct=(ui.sdAll.ct||[]).filter(c=>c.client_id===k.id);
@@ -1901,7 +1926,7 @@ function cgDetalle(k){
    <p class="s" style="margin-top:10px">Para cargar varios recibos juntos, cada PDF debe llevar en el nombre el CUIL o el nombre y apellido del empleado. <label class="g sm" style="margin-left:6px">Subir varios recibos<input type="file" accept="application/pdf,.pdf" multiple hidden onchange="subirVarios(this)"></label></p>`;
 }
 function vCarga(){
-  const act=sueClientes().filter(c=>c.active!==false),s=ui.sueCfg,F=cgSt();
+  const act=sueClientes().filter(c=>c.active!==false&&sueEsEmpleador(c)),s=ui.sueCfg,F=cgSt();
   if(!act.length)return '<h2>Carga de sueldos</h2><div class="card">No hay empleadores cargados.</div>';
   if(!ui.sd)setSd(act[0].id);
   const lista=act.filter(cgOk),all=act.map(k=>({k,g:cgProg(k)})),compl=all.filter(x=>x.g.completo).length;
@@ -1911,7 +1936,7 @@ function vCarga(){
   <p class="s" style="margin-bottom:12px">Cargá los recibos de sueldo, el VEP y las boletas de sindicatos de cada empleador. Lo que cargues aparece en el perfil del estudio para enviarlo.</p>
   <div class="card row" style="margin-bottom:12px;gap:14px;flex-wrap:wrap;align-items:flex-end"><label>Período<br>${mesPick(s.periodo,`ui.sueCfg.periodo=this.value;draw()`)}</label>
    <label>Tipo de recibo<br><select onchange="ui.sueCfg.tipo=this.value;draw()">${TIPOS_REC.map(t=>`<option ${s.tipo===t?'selected':''}>${t}</option>`).join('')}</select></label>
-   <div class="card kpi"><b>${act.length}</b><span>Empleadores</span></div><div class="card kpi"><b>${compl}</b><span>Completos</span></div><div class="card kpi"><b>${act.length-compl}</b><span>Con pendientes</span></div></div>
+   <div class="card kpi"><b>${act.length}</b><span>${act.length===1?'Empleador':'Empleadores'}</span></div><div class="card kpi"><b>${compl}</b><span>Completos</span></div><div class="card kpi"><b>${act.length-compl}</b><span>Con pendientes</span></div></div>
   <div class="card row" style="margin-bottom:12px;gap:12px;flex-wrap:wrap;align-items:flex-end">
    <label>Tipo de personal<br><select onchange="cgFil('tipo',this.value)"><option value="">Todos</option>${Object.entries(SUE_TIPOS).map(([k,t])=>`<option value="${k}" ${F.tipo===k?'selected':''}>${t}</option>`).join('')}</select></label>
    <label>Estado<br><select onchange="cgFil('est',this.value)"><option value="">Todos</option><option value="pend" ${F.est==='pend'?'selected':''}>Con pendientes</option><option value="ok" ${F.est==='ok'?'selected':''}>Completos</option></select></label>
