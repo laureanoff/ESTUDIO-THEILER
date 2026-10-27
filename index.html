@@ -170,7 +170,7 @@ function planImport(parsed,meta,existing,ctx){
 
 
 /* ===== Supabase ===== */
-const APP_VERSION='26/10/2026, resúmenes bancarios: lector de PDF y fotos, clasificación, Excel y conciliación con el balance';
+const APP_VERSION='26/10/2026, sueldos: empleadores solo de Sueldos, filtro por tipo de personal y envío de recibos por WhatsApp en tanda';
 const SUPABASE_URL='https://tugdqcoxcpsiynlvnqdu.supabase.co';
 const SUPABASE_KEY='sb_publishable_2-96VeZrsNNftRXkzA1l_A_YG7ThJrL'; // clave pública: los permisos los da la base (RLS)
 const sb=(typeof supabase!=='undefined')?supabase.createClient(SUPABASE_URL,SUPABASE_KEY):null;
@@ -215,7 +215,7 @@ async function boot(user){
   try{await loadClients()}catch(e){flash(errTxt(e),'err')}
   await show('inicio');
 }
-async function loadClients(){const {data,error}=await sb.from('clients').select('*').order('razon_social');if(error)throw error;ui.clients=data;if(!ui.cid||!data.find(c=>c.id===ui.cid))ui.cid=data[0]?data[0].id:null}
+async function loadClients(){const {data,error}=await sb.from('clients').select('*').order('razon_social');if(error)throw error;ui.clientsAll=data;ui.clients=data.filter(c=>!c.solo_sueldos);if(!ui.cid||!ui.clients.find(c=>c.id===ui.cid))ui.cid=ui.clients[0]?ui.clients[0].id:null}
 async function logout(){await sb.auth.signOut()}
 
 /* ===== Navegación y carga de datos ===== */
@@ -232,7 +232,7 @@ async function show(t){
     if(t==='avisos'){await loadDash();await loadDeadlines();await loadCfg();await loadSched()}
     if(t==='reclamos'){await loadDash();await loadSched()}
     if(t==='anticipos'||t==='vencimientos'){await loadDeadlines();await loadFil()}
-    if(t==='sueldos'){await loadSueldosAll();setSd(ui.clients.find(c=>c.id===ui.cid&&c.active!==false)?ui.cid:(ui.clients.find(c=>c.active!==false)||{}).id)}
+    if(t==='sueldos'){await loadSueldosAll();setSd(sueClientes().find(c=>c.id===(ui.sd&&ui.sd.id||ui.cid)&&c.active!==false)?(ui.sd&&ui.sd.id||ui.cid):(sueClientes().find(c=>c.active!==false)||{}).id)}
     if(t==='inicio')await loadDash();
     if(t==='importar'){const {data,error}=await sb.from('import_batches').select('*, clients(razon_social)').order('imported_at',{ascending:false}).limit(50);if(error)throw error;ui.batches=data}
     if(t==='comprobantes')await loadVouchers();
@@ -1049,7 +1049,7 @@ function vPresent(c,f){
   return h;
 }
 async function marcarPres(imp,per,cid){
-  const c=ui.clients.find(x=>x.id===cid),inp=document.getElementById(`pf_${cid}_${imp}_${per}`),cs=document.getElementById(`pc_${cid}_${imp}_${per}`),fecha=inp&&inp.value;
+  const c=sueCli(cid),inp=document.getElementById(`pf_${cid}_${imp}_${per}`),cs=document.getElementById(`pc_${cid}_${imp}_${per}`),fecha=inp&&inp.value;
   if(!fecha){flash('Elegí la fecha.','err');return draw()}
   const ns=document.getElementById('pn_'+cid+'_'+imp+'_'+per);if(imp==='GAN_ANT'&&!(ns&&ns.value)){flash('Elegí el número de anticipo (1, 2, 3...).','err');return draw()}
   const nota=prompt(`${OBLIG[imp].n} (${per.slice(5)}/${per.slice(0,4)}) de ${c.razon_social}.\nNota opcional (por ejemplo, el número de presentación):`,'');
@@ -1385,7 +1385,7 @@ const SUE_PAGO=['Transferencia bancaria','Efectivo','Cheque','Débito automátic
 /** Tipos de personal que tiene este empleador: los tildados en su ficha (F.931 / Servicio doméstico) o los que ya tienen empleados activos. */
 const sueTiposDe=(c,emp)=>Object.keys(SUE_TIPOS).filter(t=>(c.impuestos||[]).includes(SUE_IMP[t])||(emp||[]).some(e=>e.client_id===c.id&&e.tipo===t&&e.activo));
 async function setPersonal(tipo,on){
-  const c=ui.clients.find(x=>x.id===ui.sd.id);if(!c)return;
+  const c=sueCli(ui.sd.id);if(!c)return;
   if(!on&&ui.sd.emp.some(e=>e.tipo===tipo&&e.activo)){flash(`Hay empleados activos de ${SUE_TIPOS[tipo].toLowerCase()}: dalos de baja antes de destildarlo.`,'err');return draw()}
   const k=SUE_IMP[tipo],cur=(c.impuestos||[]).filter(x=>x!==k),arr=on?[...cur,k]:cur;
   try{const {data,error}=await sb.from('clients').update({impuestos:arr}).eq('id',c.id).select('id');
@@ -1539,7 +1539,7 @@ async function marcarPrep(id){
 }
 /** Abre WhatsApp con el mensaje y un enlace privado y temporal al recibo. */
 async function enviarReciboWa(id){
-  const f=ui.sd,s=sueState(f),p=f.pay.find(x=>x.id===id),e=f.emp.find(x=>x.id===p.employee_id),c=ui.clients.find(x=>x.id===f.id),w=waNum(e.whatsapp);
+  const f=ui.sd,s=sueState(f),p=f.pay.find(x=>x.id===id),e=f.emp.find(x=>x.id===p.employee_id),c=sueCli(f.id),w=waNum(e.whatsapp);
   if(!w||!w.ok){flash(`Revisá el WhatsApp de ${e.nombre}: código de área + número, sin 0 ni 15.`,'err');return draw()}
   const win=window.open('about:blank','_blank');
   const {data,error}=await sb.storage.from('clientes').createSignedUrl(p.path,s.horas*3600,{download:p.nombre_archivo});
@@ -1554,13 +1554,159 @@ async function descargarRecibo(id){
   const a=document.createElement('a');a.href=data.signedUrl;a.download=p.nombre_archivo;document.body.appendChild(a);a.click();a.remove();
 }
 async function compartirRecibo(id){
-  const f=ui.sd,p=f.pay.find(x=>x.id===id),e=f.emp.find(x=>x.id===p.employee_id),c=ui.clients.find(x=>x.id===f.id);
+  const f=ui.sd,p=f.pay.find(x=>x.id===id),e=f.emp.find(x=>x.id===p.employee_id),c=sueCli(f.id);
   try{
     const {data,error}=await sb.storage.from('clientes').createSignedUrl(p.path,120);if(error||!data)throw error||new Error('sin respuesta');
     const file=new File([await (await fetch(data.signedUrl)).blob()],p.nombre_archivo,{type:'application/pdf'});
     if(!navigator.canShare||!navigator.canShare({files:[file]})){flash('Este dispositivo no permite compartir archivos desde el navegador. Usá "WhatsApp con enlace" o "Descargar".','warn');return draw()}
     await navigator.share({files:[file],text:armarRec(MSG_REC_ARCH,c,e,p.periodo.slice(0,7),null,0),title:p.nombre_archivo});await marcarPrep(id);
   }catch(x){if(x.name!=='AbortError'){flash('No se pudo compartir: '+(x.message||x),'err');draw()}}
+}
+
+/* ===== Sueldos: empleadores solo de Sueldos, filtros por tipo de personal y envío de recibos por WhatsApp en tanda ===== */
+const sueClientes=()=>ui.clientsAll||ui.clients;
+const sueCli=id=>sueClientes().find(x=>x.id===id);
+const sueFilSt=()=>ui.sueFil||(ui.sueFil={tipo:'',origen:'',q:'',faltan:false});
+function sueFiltroOk(k){
+  const F=sueFilSt(),ts=sueTiposDe(k,ui.sdAll.emp);
+  if(F.tipo&&!ts.includes(F.tipo))return false;
+  if(F.origen==='solo'&&!k.solo_sueldos)return false;
+  if(F.origen==='clientes'&&k.solo_sueldos)return false;
+  if(F.q){const q=normN(F.q),dq=F.q.replace(/\D/g,'');if(!(normN(k.razon_social).includes(q)||(dq&&String(k.cuit).includes(dq))))return false}
+  if(F.faltan){const s=ui.sueCfg,em=ui.sdAll.emp.filter(e=>e.client_id===k.id&&e.activo),ok=em.filter(e=>ui.sdAll.pay.some(p=>p.employee_id===e.id&&p.periodo.slice(0,7)===s.periodo&&p.tipo===s.tipo)).length;if(em.length-ok<=0)return false}
+  return true;
+}
+function sueFil(k,v){const F=sueFilSt();F[k]=v;draw()}
+/** Alta de un empleador que solo se gestiona en Sueldos (no aparece en Clientes). */
+async function sueAltaEmpleador(e){
+  e.preventDefault();const fd=new FormData(e.target),rs=String(fd.get('rs')||'').trim(),cuit=String(fd.get('cuit')||'').replace(/\D/g,''),wa=String(fd.get('wa')||'').trim()||null,tipos=fd.getAll('tp'),solo=fd.get('solo')==='on';
+  if(!rs){flash('Falta el nombre o razón social del empleador.','err');return draw(),false}
+  if(cuit.length!==11){flash('El CUIT/CUIL del empleador debe tener 11 dígitos.','err');return draw(),false}
+  if(!tipos.length){flash('Elegí al menos un tipo de personal (servicio doméstico o relación de dependencia).','err');return draw(),false}
+  const ya=sueClientes().find(c=>String(c.cuit)===cuit);
+  if(ya){flash(`Ya existe "${ya.razon_social}" con ese CUIT${ya.solo_sueldos?' (solo Sueldos)':' (cliente del estudio)'}: elegilo en la lista.`,'warn');setSd(ya.id);return draw(),false}
+  const impuestos=tipos.map(t=>SUE_IMP[t]);
+  try{
+    const {data,error}=await sb.from('clients').insert({razon_social:rs,cuit,telefono:wa,impuestos,solo_sueldos:solo}).select('id').single();if(error)throw error;
+    await loadClients();await loadSueldosAll();setSd(data.id);flash(solo?'Empleador agregado solo en Sueldos.':'Empleador agregado como cliente.');
+  }catch(x){flash(errTxt(x),'err')}
+  draw();return false;
+}
+async function sueSoloCambiar(solo){
+  const c=sueCli(ui.sd&&ui.sd.id);if(!c)return;
+  if(solo&&!confirm(`"${c.razon_social}" va a dejar de aparecer en Clientes y en los demás módulos (IVA, ventas, cumplimiento, balances). Sus datos no se borran y sigue en Sueldos. ¿Seguir?`))return;
+  try{const {data,error}=await sb.from('clients').update({solo_sueldos:solo}).eq('id',c.id).select('id');if(error)throw error;if(!data||!data.length)throw new Error('No tenés permiso para editar clientes.');
+    await loadClients();await loadSueldosAll();setSd(c.id);flash(solo?'Ahora figura solo en Sueldos.':'Ahora figura también en Clientes.')}catch(x){flash(errTxt(x),'err')}
+  draw();
+}
+async function sueEliminarEmpleador(){
+  const c=sueCli(ui.sd&&ui.sd.id);if(!c||!c.solo_sueldos)return;
+  const n=ui.sd.emp.length,r=ui.sd.pay.length;
+  if(!confirm(`¿Eliminar definitivamente a "${c.razon_social}"? Se borran sus ${n} empleado(s) y ${r} recibo(s). No se puede deshacer.`))return;
+  try{
+    if(ui.sd.pay.length){const rm=await sb.storage.from('clientes').remove(ui.sd.pay.map(p=>p.path));if(rm.error)throw rm.error}
+    const {data,error}=await sb.from('clients').delete().eq('id',c.id).select('id');if(error)throw error;if(!data||!data.length)throw new Error('No tenés permiso para eliminar.');
+    await loadClients();await loadSueldosAll();const sig=sueClientes().find(k=>k.active!==false);setSd(sig?sig.id:null);flash('Empleador eliminado.')}catch(x){flash(errTxt(x),'err')}
+  draw();
+}
+function sueAltaCard(){
+  return `<details class="card" style="margin-bottom:14px" ${ui.sueAltaAb?'open':''} ontoggle="ui.sueAltaAb=this.open"><summary style="cursor:pointer;font-weight:700">Agregar empleador (solo para Sueldos)</summary>
+  <p class="s" style="margin:6px 0 10px">Para empleadores que no necesitás tener como clientes: se cargan con lo mínimo y no aparecen en el panel de Clientes ni en IVA, ventas, balances o cumplimiento. Solo se usan acá.</p>
+  <form onsubmit="return sueAltaEmpleador(event)"><div class="fgrid">
+   <label>Nombre o razón social del empleador<input name="rs" required placeholder="Apellido y nombre"></label>
+   <label>CUIT / CUIL del empleador<input name="cuit" inputmode="numeric" required placeholder="20-12345678-9"></label>
+   <label>WhatsApp del empleador (opcional)<input name="wa" inputmode="tel" placeholder="3537 412345"></label>
+   <div class="full"><div class="s" style="margin-bottom:6px">Tipo de personal que tiene</div><div class="row" style="gap:18px">${Object.entries(SUE_TIPOS).map(([k,t])=>`<label class="row" style="gap:6px;align-items:center"><input type="checkbox" name="tp" value="${k}" style="margin:0"> ${t}</label>`).join('')}</div></div>
+   <label class="full row" style="gap:8px;align-items:center"><input type="checkbox" name="solo" checked style="margin:0"> Solo para Sueldos (no mostrarlo en Clientes)</label>
+   <div class="full row"><button class="b">Agregar empleador</button></div></div></form></details>`;
+}
+function sueFiltroBar(){
+  const F=sueFilSt();
+  return `<div class="card row" style="margin-bottom:12px;gap:12px;flex-wrap:wrap;align-items:flex-end">
+   <label>Tipo de personal<br><select onchange="sueFil('tipo',this.value)"><option value="">Todos</option>${Object.entries(SUE_TIPOS).map(([k,t])=>`<option value="${k}" ${F.tipo===k?'selected':''}>${t}</option>`).join('')}</select></label>
+   <label>Empleadores<br><select onchange="sueFil('origen',this.value)"><option value="">Todos</option><option value="solo" ${F.origen==='solo'?'selected':''}>Solo de Sueldos</option><option value="clientes" ${F.origen==='clientes'?'selected':''}>Clientes del estudio</option></select></label>
+   <label>Buscar<br><input value="${esc(F.q)}" placeholder="Nombre o CUIT" onchange="sueFil('q',this.value)"></label>
+   <label class="row" style="gap:6px;align-items:center"><input type="checkbox" style="margin:0" ${F.faltan?'checked':''} onchange="sueFil('faltan',this.checked)"> Con recibos sin cargar</label></div>`;
+}
+/* --- envío de recibos por WhatsApp en tanda --- */
+const sueEnvSt=()=>ui.sueEnv||(ui.sueEnv={sel:new Set(),cola:null,idx:0,msg:'',busy:false});
+/** A quién corresponde enviar el recibo de un empleado según su ficha. */
+function sueDestino(k,e){
+  const pr=ui.sdAll.prof.find(p=>p.client_id===k.id&&p.tipo===e.tipo);
+  if(pr&&pr.recibos_no_envia)return {ok:false,motivo:'La ficha dice que no se envían los recibos'};
+  const d=pr&&pr.recibos_destino?String(pr.recibos_destino).trim():'';
+  if(d){const solo=/^[\d\s+()\-.]+$/.test(d),w=solo?waNum(d):null;
+    if(w&&w.ok)return {ok:true,num:w.num,quien:d,aOtro:true};
+    return {ok:false,motivo:solo?`La ficha indica un número que no sirve (${d})`:`La ficha indica enviar a "${d}" (no es un WhatsApp): enviarlo a mano`}}
+  if(!e.whatsapp)return {ok:false,motivo:'El empleado no tiene WhatsApp cargado'};
+  const w=waNum(e.whatsapp);if(!w||!w.ok)return {ok:false,motivo:'Revisá el WhatsApp del empleado'};
+  return {ok:true,num:w.num,quien:e.whatsapp,aOtro:false};
+}
+function sueEnvFilas(){
+  const s=ui.sueCfg,out=[];
+  sueClientes().filter(k=>k.active!==false&&sueFiltroOk(k)).forEach(k=>{
+    ui.sdAll.emp.filter(e=>e.client_id===k.id&&e.activo).forEach(e=>{
+      const p=ui.sdAll.pay.find(x=>x.employee_id===e.id&&x.periodo.slice(0,7)===s.periodo&&x.tipo===s.tipo);
+      out.push({k,e,p,d:p?sueDestino(k,e):{ok:false,motivo:'Falta el recibo'}})})});
+  return out;
+}
+function sueEnvMarcar(modo){
+  const E=sueEnvSt(),F=sueEnvFilas();E.sel=new Set();
+  if(modo==='todos')F.filter(r=>r.p&&r.d.ok).forEach(r=>E.sel.add(r.p.id));
+  if(modo==='nuevos')F.filter(r=>r.p&&r.d.ok&&!r.p.wa_preparado_at).forEach(r=>E.sel.add(r.p.id));
+  E.cola=null;draw();
+}
+function sueEnvTog(id,on){const E=sueEnvSt();on?E.sel.add(id):E.sel.delete(id);E.cola=null;draw()}
+function sueEnvTogK(kid,on){const E=sueEnvSt();sueEnvFilas().filter(r=>r.k.id===kid&&r.p&&r.d.ok).forEach(r=>on?E.sel.add(r.p.id):E.sel.delete(r.p.id));E.cola=null;draw()}
+/** Arma la cola: genera los enlaces temporales de todos los recibos elegidos. Después cada WhatsApp se abre con un clic. */
+async function sueEnvPreparar(){
+  const E=sueEnvSt(),s=ui.sueCfg,F=sueEnvFilas().filter(r=>r.p&&E.sel.has(r.p.id)&&r.d.ok);
+  if(!F.length){flash('No hay recibos elegidos para enviar.','warn');return draw()}
+  E.busy=true;draw();
+  try{
+    const cola=[],fallan=[];
+    for(const r of F){
+      const {data,error}=await sb.storage.from('clientes').createSignedUrl(r.p.path,s.horas*3600,{download:r.p.nombre_archivo});
+      if(error||!data){fallan.push(r.e.nombre);continue}
+      const per=r.p.periodo.slice(0,7),tpl=r.d.aOtro?'Hola, ¿cómo estás? Te paso el recibo de sueldo de {empleado} de {periodo} de {empresa}. Podés descargarlo acá: {link}\n\nEl enlace vence en {horas} horas. Cualquier duda, avisanos. Estudio Theiler.':s.msg;
+      let texto=armarRec(tpl.replace(/\{empleado\}/g,r.e.nombre),r.k,r.e,per,data.signedUrl,s.horas);
+      cola.push({pid:r.p.id,url:'https://wa.me/'+r.d.num+'?text='+encodeURIComponent(texto),empleado:r.e.nombre,empleador:r.k.razon_social,quien:r.d.quien})}
+    E.cola=cola;E.idx=0;
+    if(fallan.length)flash(`No se pudo generar el enlace de: ${fallan.join(', ')}.`,'warn');
+    else flash(`Cola lista: ${cola.length} mensaje(s). Abrí cada WhatsApp con el botón.`,'ok');
+  }catch(x){flash(errTxt(x),'err')}
+  E.busy=false;draw();
+}
+/** Abre el WhatsApp del siguiente de la cola (el clic del usuario evita el bloqueo de ventanas) y anota que se preparó. */
+function sueEnvSiguiente(){
+  const E=sueEnvSt(),it=E.cola&&E.cola[E.idx];if(!it)return;
+  const w=window.open(it.url,'wa_envio');
+  if(!w){flash('El navegador bloqueó la ventana emergente. Permitila para esta página e intentá de nuevo.','warn');return draw()}
+  const pid=it.pid;E.idx++;
+  sb.from('payslips').update({wa_preparado_at:new Date().toISOString(),wa_preparado_by:me.id}).eq('id',pid).select('id').then(r=>{
+    if(!r.error){const p=ui.sdAll.pay.find(x=>x.id===pid);if(p)p.wa_preparado_at=new Date().toISOString();if(ui.sd){const q=ui.sd.pay.find(x=>x.id===pid);if(q)q.wa_preparado_at=new Date().toISOString()}}
+    if(ui.tab==='sueldos')draw()});
+  draw();
+}
+function sueEnvSaltar(){const E=sueEnvSt();if(E.cola&&E.idx<E.cola.length){E.idx++;draw()}}
+function sueEnvCancelar(){const E=sueEnvSt();E.cola=null;draw()}
+function sueEnvioPanel(){
+  const E=sueEnvSt(),s=ui.sueCfg,F=sueEnvFilas(),conRec=F.filter(r=>r.p),faltan=F.filter(r=>!r.p).length;
+  if(!F.length)return '';
+  const sel=F.filter(r=>r.p&&E.sel.has(r.p.id)).length,corresp=F.filter(r=>r.p&&r.d.ok).length;
+  const cola=E.cola?`<div class="card" style="margin:10px 0;border:1px solid var(--blut)"><b>Cola de envío: ${Math.min(E.idx+1,E.cola.length)} de ${E.cola.length}</b>
+   ${E.idx<E.cola.length?`<p style="margin:8px 0">Sigue: <b>${esc(E.cola[E.idx].empleado)}</b> <span class="s">${esc(E.cola[E.idx].empleador)} · ${esc(E.cola[E.idx].quien)}</span></p><div class="row" style="gap:8px"><button class="b" onclick="sueEnvSiguiente()">Abrir WhatsApp de ${esc(E.cola[E.idx].empleado.split(/\s+/)[0])}</button><button class="g" onclick="sueEnvSaltar()">Saltear</button><button class="g" onclick="sueEnvCancelar()">Cancelar cola</button></div><p class="s" style="margin-top:6px">En WhatsApp tocá enviar, volvé a esta pestaña y abrí el siguiente. La app anota "preparado" al abrirlo, pero no puede saber si realmente lo enviaste.</p>`
+   :`<p style="margin:8px 0">Listo: se abrieron los ${E.cola.length} mensajes.</p><button class="g" onclick="sueEnvCancelar()">Cerrar</button>`}</div>`:'';
+  const byK={};F.forEach(r=>{(byK[r.k.id]=byK[r.k.id]||[]).push(r)});
+  const filas=Object.values(byK).map(L=>{const k=L[0].k,hab=L.filter(r=>r.p&&r.d.ok),todos=hab.length&&hab.every(r=>E.sel.has(r.p.id));
+    return `<tr style="background:var(--bg2,#f4f6f8)"><td><input type="checkbox" ${hab.length?'':'disabled'} ${todos?'checked':''} onchange="sueEnvTogK('${k.id}',this.checked)"></td><td colspan="5"><b>${esc(k.razon_social)}</b>${k.solo_sueldos?' <span class="tag" style="background:var(--gry,#e5e7eb)">Solo Sueldos</span>':''}</td></tr>`+
+    L.map(r=>`<tr><td><input type="checkbox" ${r.p&&r.d.ok?'':'disabled'} ${r.p&&E.sel.has(r.p.id)?'checked':''} onchange="sueEnvTog('${r.p?r.p.id:''}',this.checked)"></td><td>${esc(r.e.nombre)}${sueTag(r.e.tipo)}</td><td>${r.p?esc(r.p.nombre_archivo):'<span class="tag" style="background:var(--amb);color:var(--ambt)">Falta</span>'}</td><td>${r.d.ok?esc(r.d.quien)+(r.d.aOtro?'<span class="s">según la ficha</span>':''):`<span class="s">${esc(r.d.motivo)}</span>`}</td><td>${r.p&&r.p.wa_preparado_at?`<span class="s">Preparado el ${new Date(r.p.wa_preparado_at).toLocaleDateString('es-AR')}</span>`:r.p&&r.d.ok?'<span class="s">Sin enviar</span>':''}</td></tr>`).join('')}).join('');
+  return `<h3>Enviar recibos por WhatsApp (varios)</h3>
+  <p class="s" style="margin-bottom:8px">Mostrando los empleadores del filtro de arriba, con los recibos de ${mesAnio(s.periodo+'-01')} (${esc(s.tipo)}). Solo se pueden elegir los que corresponde enviar: tienen recibo, la ficha no dice que no se envía y hay un WhatsApp válido.${faltan?` <b>Faltan ${faltan} recibo(s) por cargar.</b>`:''}</p>
+  <div class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:8px"><button class="g sm" onclick="sueEnvMarcar('nuevos')">Elegir los no enviados (${F.filter(r=>r.p&&r.d.ok&&!r.p.wa_preparado_at).length})</button><button class="g sm" onclick="sueEnvMarcar('todos')">Elegir todos los que corresponden (${corresp})</button><button class="g sm" onclick="sueEnvMarcar('ninguno')">Desmarcar</button>
+   <button class="b" onclick="sueEnvPreparar()" ${sel&&!E.busy?'':'disabled'}>${E.busy?'Preparando…':`Preparar envío de ${sel} recibo(s)`}</button></div>
+  ${cola}
+  <div class="tw" style="margin-bottom:14px"><table style="min-width:760px"><thead><tr><th></th><th>Empleado</th><th>Recibo</th><th>Se envía a</th><th>Estado</th></tr></thead><tbody>${filas}</tbody></table></div>`;
 }
 
 /* ===== Secciones del menú: Sueldos (todos los clientes) y Anticipos ===== */
@@ -1579,19 +1725,22 @@ function setSd(id){
   ui.sueCfg=ui.sueCfg||{periodo:workPeriod(),tipo:'Mensual',horas:24,msg:MSG_REC,editEmp:null};
   ui.sd=id?{id,emp:ui.sdAll.emp.filter(e=>e.client_id===id),pay:ui.sdAll.pay.filter(p=>p.client_id===id),prof:ui.sdAll.prof.filter(p=>p.client_id===id),sue:ui.sueCfg}:null;
 }
-function cambiarClienteSd(id){ui.cid=id;if(ui.sueCfg){ui.sueCfg.editEmp=null;ui.sueCfg.draft=null;ui.sueCfg.formErr=null}setSd(id);draw()}
+function cambiarClienteSd(id){if(ui.clients.some(c=>c.id===id))ui.cid=id;if(ui.sueCfg){ui.sueCfg.editEmp=null;ui.sueCfg.draft=null;ui.sueCfg.formErr=null}setSd(id);draw()}
 function vSueldosPage(){
-  const act=ui.clients.filter(c=>c.active!==false);
+  const act=sueClientes().filter(c=>c.active!==false);
   if(!act.length)return '<h2>Sueldos</h2><div class="card">No hay clientes disponibles.</div>';
   if(!ui.sd)setSd(act[0].id);
-  const s=ui.sueCfg,c=ui.clients.find(x=>x.id===ui.sd.id);
-  const R=act.map(k=>{const em=ui.sdAll.emp.filter(e=>e.client_id===k.id&&e.activo),ok=em.filter(e=>ui.sdAll.pay.some(p=>p.employee_id===e.id&&p.periodo.slice(0,7)===s.periodo&&p.tipo===s.tipo)).length;return {k,n:em.length,ok,f:aplica(k).includes('F931')?(filDe(k.id,'F931',s.periodo)?'ok':'pend'):null}}).filter(r=>r.n>0||r.f||sueTiposDe(r.k,ui.sdAll.emp).length);
+  const s=ui.sueCfg,c=sueCli(ui.sd.id);
+  const R=act.filter(sueFiltroOk).map(k=>{const em=ui.sdAll.emp.filter(e=>e.client_id===k.id&&e.activo),ok=em.filter(e=>ui.sdAll.pay.some(p=>p.employee_id===e.id&&p.periodo.slice(0,7)===s.periodo&&p.tipo===s.tipo)).length;return {k,n:em.length,ok,f:aplica(k).includes('F931')?(filDe(k.id,'F931',s.periodo)?'ok':'pend'):null}}).filter(r=>r.n>0||r.f||sueTiposDe(r.k,ui.sdAll.emp).length);
   return `<h2>Sueldos</h2>
   <p class="s" style="margin-bottom:12px">Recibos de sueldo de ${mesAnio(s.periodo+'-01')} (${esc(s.tipo)}). Cambiá el período y el tipo más abajo.</p>
-  ${R.length?`<div class="tw" style="margin-bottom:18px"><table><thead><tr><th>Cliente</th><th>CUIT termina en</th><th>Empleados</th><th>Recibos cargados</th><th>Faltan</th><th>Próximo vencimiento</th><th>F.931</th><th></th></tr></thead><tbody>${R.map(r=>`<tr><td>${esc(r.k.razon_social)}${sueResTipos(r.k)}</td><td>${r.k.cuit.slice(-1)}</td><td>${r.n}</td><td>${r.ok}</td><td ${r.n-r.ok?'style="color:var(--redt);font-weight:600"':''}>${r.n-r.ok}</td><td>${sueResVenc(r.k)}</td><td>${r.f==='ok'?'<span class="tag" style="background:var(--grn);color:var(--grnt)">Presentado</span>':r.f==='pend'?'<span class="tag" style="background:var(--amb);color:var(--ambt)">Pendiente</span>':'<span class="s">-</span>'}</td><td><button class="g sm" onclick="cambiarClienteSd('${r.k.id}')">Abrir</button></td></tr>`).join('')}</tbody></table></div>`:'<div class="card" style="margin-bottom:18px;color:var(--mut)">Todavía ningún cliente tiene empleados cargados. Elegí un cliente y agregá el primero.</div>'}
-  <div class="card row" style="margin-bottom:16px"><label>Cliente<br><select onchange="cambiarClienteSd(this.value)">${act.map(k=>`<option value="${k.id}" ${k.id===ui.sd.id?'selected':''}>${esc(k.razon_social)}</option>`).join('')}</select></label></div>
-  <div class="card" style="padding:20px"><h3 style="margin-top:0;font-size:20px">${esc(c.razon_social)}</h3>
-  ${aplica(c).includes('F931')?`<div class="card" style="margin-bottom:18px"><b>Cargas sociales (F.931) de ${mesAnio(s.periodo+'-01')}</b><div class="s" style="margin:4px 0 10px">Declaración jurada mensual de la empresa en ARCA, con el pago del VEP. Se arma con la liquidación de sueldos y es distinta de los recibos de cada empleado.</div>${cel(c,'F931',s.periodo)}</div>`:`<p class="s" style="margin-bottom:14px">Para controlar acá la presentación del F.931 de este cliente, marcá "Cargas sociales F.931" en la pestaña Datos de su ficha.</p>`}
+  ${sueAltaCard()}${sueFiltroBar()}
+  ${R.length?`<div class="tw" style="margin-bottom:18px"><table><thead><tr><th>Cliente</th><th>CUIT termina en</th><th>Empleados</th><th>Recibos cargados</th><th>Faltan</th><th>Próximo vencimiento</th><th>F.931</th><th></th></tr></thead><tbody>${R.map(r=>`<tr><td>${esc(r.k.razon_social)}${r.k.solo_sueldos?' <span class="tag" style="background:var(--gry,#e5e7eb)">Solo Sueldos</span>':''}${sueResTipos(r.k)}</td><td>${r.k.cuit.slice(-1)}</td><td>${r.n}</td><td>${r.ok}</td><td ${r.n-r.ok?'style="color:var(--redt);font-weight:600"':''}>${r.n-r.ok}</td><td>${sueResVenc(r.k)}</td><td>${r.f==='ok'?'<span class="tag" style="background:var(--grn);color:var(--grnt)">Presentado</span>':r.f==='pend'?'<span class="tag" style="background:var(--amb);color:var(--ambt)">Pendiente</span>':'<span class="s">-</span>'}</td><td><button class="g sm" onclick="cambiarClienteSd('${r.k.id}')">Abrir</button></td></tr>`).join('')}</tbody></table></div>`:'<div class="card" style="margin-bottom:18px;color:var(--mut)">No hay empleadores que coincidan con el filtro (o todavía ninguno tiene empleados cargados). Elegí un cliente o agregá un empleador y cargá el primer empleado.</div>'}
+  ${sueEnvioPanel()}
+  <div class="card row" style="margin-bottom:16px"><label>Cliente o empleador<br><select onchange="cambiarClienteSd(this.value)">${act.filter(k=>sueFiltroOk(k)||k.id===ui.sd.id).map(k=>`<option value="${k.id}" ${k.id===ui.sd.id?'selected':''}>${esc(k.razon_social)}</option>`).join('')}</select></label></div>
+  <div class="card" style="padding:20px"><h3 style="margin-top:0;font-size:20px">${esc(c.razon_social)}${c.solo_sueldos?' <span class="tag" style="background:var(--gry,#e5e7eb)">Solo Sueldos</span>':''}</h3>
+  <div class="row" style="gap:8px;margin-bottom:12px">${c.solo_sueldos?`<button class="g sm" onclick="sueSoloCambiar(false)">Pasar a Clientes</button><button class="dng sm" onclick="sueEliminarEmpleador()">Eliminar empleador</button>`:`<button class="g sm" onclick="sueSoloCambiar(true)">Dejar solo en Sueldos</button>`}</div>
+  ${aplica(c).includes('F931')?`<div class="card" style="margin-bottom:18px"><b>Cargas sociales (F.931) de ${mesAnio(s.periodo+'-01')}</b><div class="s" style="margin:4px 0 10px">Declaración jurada mensual de la empresa en ARCA, con el pago del VEP. Se arma con la liquidación de sueldos y es distinta de los recibos de cada empleado.</div>${cel(c,'F931',s.periodo)}</div>`:`<p class="s" style="margin-bottom:14px">Para controlar acá la presentación del F.931, tildá "Relación de dependencia" como tipo de personal de este empleador.</p>`}
   ${vSueldos(c,ui.sd)}</div>`;
 }
 function irAnticipos(per){ui.antPer=per;show('anticipos')}
