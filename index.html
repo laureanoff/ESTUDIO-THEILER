@@ -170,7 +170,7 @@ function planImport(parsed,meta,existing,ctx){
 
 
 /* ===== Supabase ===== */
-const APP_VERSION='26/10/2026, sueldos: empleadores solo de Sueldos, filtro por tipo de personal y envío de recibos por WhatsApp en tanda';
+const APP_VERSION='26/10/2026, sueldos: empleadores solo de Sueldos, filtro por tipo de personal y envío de recibos por WhatsApp a empleador, empleado o ambos';
 const SUPABASE_URL='https://tugdqcoxcpsiynlvnqdu.supabase.co';
 const SUPABASE_KEY='sb_publishable_2-96VeZrsNNftRXkzA1l_A_YG7ThJrL'; // clave pública: los permisos los da la base (RLS)
 const sb=(typeof supabase!=='undefined')?supabase.createClient(SUPABASE_URL,SUPABASE_KEY):null;
@@ -1412,7 +1412,9 @@ function sueFicha(c,f,tipo){
   ${sueVencHtml(c,tipo)}
   <form onsubmit="return saveProf(event,'${tipo}')"><div class="fgrid" style="margin-top:6px">
    <label class="full row" style="gap:8px;align-items:center"><input type="checkbox" name="no_envia" ${p.recibos_no_envia?'checked':''}> No se envían los recibos de sueldo (el cliente los retira o no los pide)</label>
-   <label>A quién se envían los recibos<input name="recibos_destino" placeholder="Nombre, mail o WhatsApp" value="${esc(p.recibos_destino)}"></label>
+   <label>Los recibos se envían a<select name="recibos_a">${Object.entries(SUE_A).map(([k,t])=>`<option value="${k}" ${(p.recibos_a||'empleador')===k?'selected':''}>${t}</option>`).join('')}</select></label>
+   <label>WhatsApp del empleador<select name="recibos_wa"><option value="">Automático (el principal de Clientes)</option>${sueOpcionesWa(c).map(o=>`<option value="${o.num}" ${p.recibos_wa&&waNum(p.recibos_wa)&&waNum(p.recibos_wa).num===o.num?'selected':''}>${esc(sueEtqWa(o))}</option>`).join('')}</select><span class="s">Los números salen de los contactos de Clientes y del teléfono de la ficha.</span></label>
+   <label>Nota sobre el envío de recibos<input name="recibos_destino" placeholder="Opcional, solo como recordatorio" value="${esc(p.recibos_destino)}"></label>
    <label>A quién se envía el VEP<input name="vep_destino" placeholder="Nombre, mail o WhatsApp" value="${esc(p.vep_destino)}"></label>
    <label>Medio de pago<select name="medio_pago"><option value="">Sin definir</option>${SUE_PAGO.map(m=>`<option ${p.medio_pago===m?'selected':''}>${m}</option>`).join('')}</select></label>
    <label>Banco<input name="banco" placeholder="Ej.: Banco Nación, Galicia" value="${esc(p.banco)}"></label>
@@ -1424,7 +1426,7 @@ function sueFicha(c,f,tipo){
 }
 async function saveProf(e,tipo){
   e.preventDefault();const fd=new FormData(e.target),f=ui.sd,t=k=>String(fd.get(k)||'').trim()||null;
-  const row={client_id:f.id,tipo,recibos_no_envia:fd.get('no_envia')==='on',recibos_destino:t('recibos_destino'),vep_destino:t('vep_destino'),medio_pago:t('medio_pago'),banco:t('banco'),observaciones:t('observaciones'),updated_by:me.id,updated_at:new Date().toISOString()};
+  const row={client_id:f.id,tipo,recibos_no_envia:fd.get('no_envia')==='on',recibos_destino:t('recibos_destino'),recibos_a:fd.get('recibos_a')||'empleador',recibos_wa:t('recibos_wa'),vep_destino:t('vep_destino'),medio_pago:t('medio_pago'),banco:t('banco'),observaciones:t('observaciones'),updated_by:me.id,updated_at:new Date().toISOString()};
   if(tipo==='dependencia'){row.cct=t('cct');row.boletas=fd.getAll('boletas');row.boletas_otras=t('boletas_otras')}
   const {error}=await sb.from('payroll_profiles').upsert(row,{onConflict:'client_id,tipo'});
   if(error)flash(errTxt(error),'err');else{try{await recargarSueldos();flash('Ficha guardada.')}catch(x){flash(errTxt(x),'err')}}
@@ -1437,7 +1439,7 @@ function sueSelector(c,f,tipos){
 function vSueldos(c,f){
   const s=sueState(f),tipos=sueTiposDe(c,f.emp),edit=f.emp.find(e=>e.id===s.editEmp),dr=s.draft||null,act=f.emp.filter(e=>e.activo),pays=f.pay.filter(p=>p.periodo.slice(0,7)===s.periodo&&p.tipo===s.tipo),puedeCompartir=typeof navigator.canShare==='function';
   const waTxt=e=>{if(!e.whatsapp)return '<span class="s">Sin WhatsApp</span>';const w=waNum(e.whatsapp);return esc(e.whatsapp)+(w&&!w.ok?'<span class="s" style="color:var(--redt)">Revisá el número</span>':'')};
-  const envio=e=>{const p=sueProf(f,e.tipo);if(!p)return '';return p.recibos_no_envia?'<span class="s">Ficha: no se envía recibo</span>':p.recibos_destino?`<span class="s">Ficha: enviar a ${esc(p.recibos_destino)}</span>`:''};
+  const envio=e=>{const p=sueProf(f,e.tipo);if(!p)return '';return p.recibos_no_envia?'<span class="s">Ficha: no se envía recibo</span>':`<span class="s">Ficha: enviar a ${SUE_A[p.recibos_a||'empleador'].toLowerCase()}</span>`};
   const tipoSel=dr?dr.tipo:edit?edit.tipo:(tipos.includes(s.tipoNuevo)?s.tipoNuevo:tipos[0]);const val=(k,alt)=>dr&&dr[k]!==undefined?dr[k]:alt;
   const form=`<form class="card" id="empform" style="margin-bottom:12px" onsubmit="return saveEmp(event)"><b>${edit?'Editar empleado':'Agregar empleado'}</b>${s.formErr?`<div class="msg err" style="margin-top:8px">${esc(s.formErr)}</div>`:''}<div class="fgrid" style="margin-top:8px">
   <label>Tipo de personal<select name="tipo" onchange="ui.sd.sue.tipoNuevo=this.value">${Object.entries(SUE_TIPOS).filter(([k])=>tipos.includes(k)||(edit&&edit.tipo===k)).map(([k,t])=>`<option value="${k}" ${tipoSel===k?'selected':''}>${t}</option>`).join('')}</select></label>
@@ -1450,23 +1452,22 @@ function vSueldos(c,f){
   <div class="full row"><button class="b">${edit?'Guardar cambios':'Agregar empleado'}</button>${edit?'<button type="button" class="g" onclick="ui.sd.sue.editEmp=null;ui.sd.sue.draft=null;ui.sd.sue.formErr=null;draw()">Cancelar</button>':''}</div></div></form>`;
   const empT=`<div class="tw" style="margin-bottom:22px"><table><thead><tr><th>Empleado</th><th>Tipo</th><th>Horas</th><th>CUIL</th><th>WhatsApp</th><th>Estado</th><th></th></tr></thead><tbody>${f.emp.length?f.emp.map(e=>`<tr style="${e.activo?'':'opacity:.55'}"><td>${esc(e.nombre)}<span class="s">${esc(e.cargo)}</span>${e.observaciones?`<span class="s">${esc(e.observaciones)}</span>`:''}</td><td>${sueTag(e.tipo)}</td><td>${e.tipo==='domestico'?(e.horas_semanales!==null&&e.horas_semanales!==undefined?esc(String(e.horas_semanales).replace('.',','))+' h/sem':'<span class="s">Sin cargar</span>'):'<span class="s">-</span>'}</td><td>${e.cuil?cuitF(e.cuil):''}</td><td>${waTxt(e)}</td><td>${e.activo?'Activo':'De baja'}</td><td style="white-space:nowrap"><button class="g sm" onclick="ui.sd.sue.editEmp='${e.id}';ui.sd.sue.draft=null;ui.sd.sue.formErr=null;draw()">Editar</button> <button class="g sm" onclick="bajaEmp('${e.id}')">${e.activo?'Dar de baja':'Reactivar'}</button> <button class="dng sm" onclick="quitarEmp('${e.id}')">Quitar</button></td></tr>`).join(''):'<tr><td colspan="7" style="color:var(--mut)">Todavía no hay empleados. Agregá el primero con su nombre y WhatsApp.</td></tr>'}</tbody></table></div>`;
   const filas=act.map(e=>{
-    const p=pays.find(x=>x.employee_id===e.id),w=waNum(e.whatsapp),ok=w&&w.ok;
+    const p=pays.find(x=>x.employee_id===e.id),T=sueTargets(c,e),ok=T.lista.some(t=>t.ok);
     const sub=lbl=>`<label class="g sm">${lbl}<input type="file" accept="application/pdf,.pdf" hidden onchange="subirRecibo('${e.id}',this)"></label>`;
     return `<tr><td>${esc(e.nombre)}<span class="s">${e.cuil?cuitF(e.cuil):''}</span>${sueTag(e.tipo)}${envio(e)}</td>
     <td>${p?`<span class="tag" style="background:var(--grn);color:var(--grnt)">Cargado</span><span class="s">${esc(p.nombre_archivo)}</span><div class="row" style="gap:4px;margin-top:4px"><button class="g sm" onclick="verArchivo('${p.path}')">Ver</button>${sub('Reemplazar')}<button class="g sm" onclick="quitarRecibo('${p.id}')">Quitar</button></div>`:`<span class="tag" style="background:var(--amb);color:var(--ambt)">Falta</span> ${sub('Subir PDF')}`}</td>
-    <td>${p?(ok?`<div class="row" style="gap:4px"><button class="b sm" onclick="enviarReciboWa('${p.id}')">WhatsApp con enlace</button>${puedeCompartir?`<button class="g sm" onclick="compartirRecibo('${p.id}')">Compartir archivo</button>`:''}<button class="g sm" onclick="descargarRecibo('${p.id}')">Descargar</button></div>${p.wa_preparado_at?`<span class="s">WhatsApp preparado el ${new Date(p.wa_preparado_at).toLocaleDateString('es-AR')}</span>`:''}`:`<span class="s">${e.whatsapp?'Revisá el WhatsApp del empleado':'Cargá el WhatsApp del empleado'}</span><button class="g sm" onclick="descargarRecibo('${p.id}')">Descargar</button>`):'<span class="s">Subí primero el recibo</span>'}</td></tr>`}).join('');
+    <td>${p?(ok?`<div class="row" style="gap:4px;flex-wrap:wrap">${T.lista.filter(t=>t.ok).map(t=>`<button class="b sm" onclick="enviarReciboWa('${p.id}','${t.rol}')">Enviar PDF al ${t.rol}</button>`).join('')}<button class="g sm" onclick="descargarRecibo('${p.id}')">Descargar</button></div><span class="s">Se envía a: ${T.lista.filter(t=>t.ok).map(t=>t.rol+' ('+esc(t.quien)+')').join(' y ')}</span>${p.wa_preparado_at?`<span class="s">WhatsApp preparado el ${new Date(p.wa_preparado_at).toLocaleDateString('es-AR')}</span>`:''}`:`<span class="s">${T.lista.map(t=>esc(t.motivo)).join('. ')}</span><button class="g sm" onclick="descargarRecibo('${p.id}')">Descargar</button>`):'<span class="s">Subí primero el recibo</span>'}</td></tr>`}).join('');
   return `<h3 style="margin-top:0">Fichas de liquidación</h3><p class="s" style="margin-bottom:8px">Datos de cómo se liquida y se envía cada tipo de personal de este cliente: a quién van los recibos y el VEP, medio de pago, boletas y vencimientos según la terminación del CUIT.</p>${sueSelector(c,f,tipos)}${tipos.map(t=>sueFicha(c,f,t)).join('')}
   <h3>Empleados</h3>${tipos.length||edit?form:'<div class="msg warn">Tildá arriba qué tipo de personal tiene este empleador para poder agregar empleados.</div>'}${empT}
   <h3>Recibos de ${mesAnio(s.periodo+'-01')}</h3>
   <div class="card row" style="margin-bottom:12px">
    <label>Período<br>${mesPick(s.periodo,`ui.sd.sue.periodo=this.value;draw()`)}</label>
    <label>Tipo de recibo<br><select onchange="ui.sd.sue.tipo=this.value;draw()">${TIPOS_REC.map(t=>`<option ${s.tipo===t?'selected':''}>${t}</option>`).join('')}</select></label>
-   <label>El enlace vence en<br><select onchange="ui.sd.sue.horas=Number(this.value)">${[[24,'24 horas'],[72,'3 días'],[168,'7 días']].map(([h,t])=>`<option value="${h}" ${s.horas===h?'selected':''}>${t}</option>`).join('')}</select></label>
    <label class="g">Subir varios PDF a la vez<input type="file" accept="application/pdf,.pdf" multiple hidden onchange="subirVarios(this)"></label></div>
   <p class="s" style="margin-bottom:10px">Para subir varios juntos, cada archivo tiene que llevar en su nombre el CUIL o el nombre y apellido del empleado.</p>
   <div class="tw" style="margin-bottom:14px"><table><thead><tr><th>Empleado</th><th>Recibo</th><th>Enviar por WhatsApp</th></tr></thead><tbody>${act.length?filas:'<tr><td colspan="3" style="color:var(--mut)">No hay empleados activos.</td></tr>'}</tbody></table></div>
-  <label>Mensaje con enlace (podés editarlo; {nombre}, {periodo}, {empresa}, {link} y {horas} se completan solos)<textarea rows="5" oninput="ui.sd.sue.msg=this.value">${esc(s.msg)}</textarea></label>
-  <p class="s" style="margin-top:8px">"WhatsApp con enlace" arma un enlace privado al recibo que funciona hasta que vence: quien lo tenga puede abrirlo. WhatsApp no deja adjuntar archivos desde un enlace; con "Compartir archivo" (celular) o "Descargar" lo adjuntás vos. La app no sabe si el mensaje se envió: solo anota que lo preparaste.</p>`;
+  ${sueMsgCard()}
+  <p class="s" style="margin-top:8px">El recibo se envía como archivo PDF, sin enlace. En el celular se abre el menú de compartir con el PDF y el texto ya cargados (elegís WhatsApp y el contacto). En la compu se descarga el PDF y se abre el chat con el número y el texto: arrastrás el archivo al chat. La app no sabe si el mensaje se envió: solo anota que lo preparaste.</p>`;
 }
 async function recargarSueldos(){await loadSueldosAll()}
 async function saveEmp(e){
@@ -1538,15 +1539,16 @@ async function marcarPrep(id){
   draw();
 }
 /** Abre WhatsApp con el mensaje y un enlace privado y temporal al recibo. */
-async function enviarReciboWa(id){
-  const f=ui.sd,s=sueState(f),p=f.pay.find(x=>x.id===id),e=f.emp.find(x=>x.id===p.employee_id),c=sueCli(f.id),w=waNum(e.whatsapp);
-  if(!w||!w.ok){flash(`Revisá el WhatsApp de ${e.nombre}: código de área + número, sin 0 ni 15.`,'err');return draw()}
-  const win=window.open('about:blank','_blank');
-  const {data,error}=await sb.storage.from('clientes').createSignedUrl(p.path,s.horas*3600,{download:p.nombre_archivo});
-  if(error||!data){if(win)win.close();flash('No se pudo generar el enlace: '+(error?errTxt(error):'sin respuesta'),'err');return draw()}
-  const url='https://wa.me/'+w.num+'?text='+encodeURIComponent(armarRec(s.msg,c,e,p.periodo.slice(0,7),data.signedUrl,s.horas));
-  if(!win){flash('El navegador bloqueó la ventana emergente. Permitila para esta página e intentá de nuevo.','warn');return draw()}
-  win.location.href=url;await marcarPrep(id);
+async function enviarReciboWa(id,rol){
+  const f=ui.sd,s=sueMsgs(),p=f.pay.find(x=>x.id===id),e=f.emp.find(x=>x.id===p.employee_id),c=sueCli(f.id),t=sueTargets(c,e).lista.find(x=>x.ok&&(!rol||x.rol===rol));
+  if(!t){flash('No hay un WhatsApp válido para ese destinatario. Revisá la ficha o el número cargado.','err');return draw()}
+  let file;try{file=await sueBajar(p)}catch(x){flash('No se pudo bajar el PDF: '+errTxt(x),'err');return draw()}
+  const texto=sueArmar(t.rol==='empleador'?s.pdfEmp:s.pdfAdo,{saludo:t.saludo,empleado:e.nombre,empleador:c.razon_social,periodo:mesAnio(p.periodo.slice(0,7)),horas:''});
+  const r=await sueEntregar({file,texto,url:'https://wa.me/'+t.num+'?text='+encodeURIComponent(texto)});
+  if(r==='cancel')return;
+  if(r==='bloqueado'){flash('El navegador bloqueó la ventana emergente. Permitila para esta página e intentá de nuevo.','warn');return draw()}
+  flash(r==='share'?'Elegí WhatsApp y el contacto: el PDF va adjunto.':'Se descargó el PDF y se abrió el chat: arrastrá el archivo al chat y enviá.','ok');
+  await marcarPrep(id);
 }
 async function descargarRecibo(id){
   const p=ui.sd.pay.find(x=>x.id===id),{data,error}=await sb.storage.from('clientes').createSignedUrl(p.path,120,{download:p.nombre_archivo});
@@ -1628,60 +1630,103 @@ function sueFiltroBar(){
    <label>Buscar<br><input value="${esc(F.q)}" placeholder="Nombre o CUIT" onchange="sueFil('q',this.value)"></label>
    <label class="row" style="gap:6px;align-items:center"><input type="checkbox" style="margin:0" ${F.faltan?'checked':''} onchange="sueFil('faltan',this.checked)"> Con recibos sin cargar</label></div>`;
 }
-/* --- envío de recibos por WhatsApp en tanda --- */
-const sueEnvSt=()=>ui.sueEnv||(ui.sueEnv={sel:new Set(),cola:null,idx:0,msg:'',busy:false});
-/** A quién corresponde enviar el recibo de un empleado según su ficha. */
-function sueDestino(k,e){
-  const pr=ui.sdAll.prof.find(p=>p.client_id===k.id&&p.tipo===e.tipo);
-  if(pr&&pr.recibos_no_envia)return {ok:false,motivo:'La ficha dice que no se envían los recibos'};
-  const d=pr&&pr.recibos_destino?String(pr.recibos_destino).trim():'';
-  if(d){const solo=/^[\d\s+()\-.]+$/.test(d),w=solo?waNum(d):null;
-    if(w&&w.ok)return {ok:true,num:w.num,quien:d,aOtro:true};
-    return {ok:false,motivo:solo?`La ficha indica un número que no sirve (${d})`:`La ficha indica enviar a "${d}" (no es un WhatsApp): enviarlo a mano`}}
-  if(!e.whatsapp)return {ok:false,motivo:'El empleado no tiene WhatsApp cargado'};
-  const w=waNum(e.whatsapp);if(!w||!w.ok)return {ok:false,motivo:'Revisá el WhatsApp del empleado'};
-  return {ok:true,num:w.num,quien:e.whatsapp,aOtro:false};
+/* --- a quién se envía el recibo: empleador, empleado o ambos --- */
+const SUE_A={empleador:'Empleador',empleado:'Empleado',ambos:'Ambos'};
+const MSG_PDF_EMP='Hola {nombre}, ¿cómo estás? Te enviamos el recibo de sueldo de {empleado} de {periodo}. Cualquier duda, avisanos. Estudio Theiler.';
+const MSG_PDF_ADO='Hola {nombre}, ¿cómo estás? Te enviamos tu recibo de sueldo de {periodo} de {empleador}. Cualquier duda, avisanos. Estudio Theiler.';
+const sueMsgs=()=>{const s=ui.sueCfg;if(!s.pdfAdo)s.pdfAdo=MSG_PDF_ADO;if(!s.pdfEmp)s.pdfEmp=MSG_PDF_EMP;return s};
+/** Primer nombre para saludar al empleador: del contacto elegido o, si no hay, de la razón social ("Apellido, Nombre"). */
+function sueSaludo(k,opt){
+  if(opt&&opt.nombre)return String(opt.nombre).trim().split(/\s+/)[0];
+  const rs=String(k.razon_social||'').trim();
+  if(/\b(s\.?r\.?l\.?|s\.?a\.?|s\.?a\.?s\.?|s\.?c\.?a\.?|coop)\b/i.test(rs))return '';
+  if(rs.includes(','))return rs.split(',')[1].trim().split(/\s+/)[0]||'';
+  return rs.split(/\s+/)[0];
 }
+/** Completa un mensaje con los datos reales (o de muestra) del recibo. */
+function sueArmar(tpl,d){
+  let m=String(tpl||'').replace(/\{nombre\}/g,d.saludo||'').replace(/\{empleado\}/g,d.empleado).replace(/\{empleador\}/g,d.empleador).replace(/\{empresa\}/g,d.empleador).replace(/\{periodo\}/g,d.periodo).replace(/\{horas\}/g,d.horas);
+  m=m.replace(/\{link\}/g,'');
+  return m.replace(/ +,/g,',').replace(/Hola ,/g,'Hola,').replace(/[ \t]{2,}/g,' ').trim();
+}
+/** Números de WhatsApp del empleador: contactos cargados en Clientes (varios) y el teléfono de su ficha. */
+function sueOpcionesWa(k){
+  const out=[],vistos=new Set(),add=(raw,nombre,cargo)=>{const w=waNum(raw);if(!w||!w.ok||vistos.has(w.num))return;vistos.add(w.num);out.push({num:w.num,raw:String(raw).trim(),nombre:nombre||'',cargo:cargo||''})};
+  (ui.sdAll.ct||[]).filter(c=>c.client_id===k.id&&c.whatsapp).sort((a,b)=>(b.is_entrega?1:0)-(a.is_entrega?1:0)||(b.is_reclamo_principal?1:0)-(a.is_reclamo_principal?1:0)).forEach(c=>add(c.whatsapp,c.nombre,c.cargo));
+  if(k.telefono)add(k.telefono,'', 'Teléfono de la ficha');
+  return out;
+}
+const sueEtqWa=o=>(o.nombre?o.nombre+' · ':'')+o.raw+(o.cargo?' ('+o.cargo+')':'');
+/** A quién se manda este recibo y por qué número. Devuelve la lista de destinos (empleador y/o empleado) con su estado. */
+function sueTargets(k,e,ov){
+  const pr=ui.sdAll.prof.find(p=>p.client_id===k.id&&p.tipo===e.tipo)||{};ov=ov||{};
+  if(pr.recibos_no_envia)return {a:'ninguno',lista:[{rol:'-',ok:false,motivo:'La ficha dice que no se envían los recibos'}],opts:[]};
+  const a=ov.a||pr.recibos_a||'empleador',lista=[],opts=sueOpcionesWa(k);
+  if(a!=='empleado'){
+    let sel=null;const pref=ov.num||pr.recibos_wa||'';
+    if(pref){const w=waNum(pref);if(w&&w.ok){sel=opts.find(o=>o.num===w.num)||{num:w.num,raw:String(pref).trim(),nombre:'',cargo:'otro número'}}}
+    if(!sel)sel=opts[0]||null;
+    if(!sel&&pr.recibos_destino&&/^[\d\s+()\-.]+$/.test(pr.recibos_destino)){const w=waNum(pr.recibos_destino);if(w&&w.ok)sel={num:w.num,raw:pr.recibos_destino,nombre:'',cargo:'según la ficha'}}
+    lista.push(sel?{rol:'empleador',ok:true,num:sel.num,quien:sueEtqWa(sel),saludo:sueSaludo(k,sel)}:{rol:'empleador',ok:false,motivo:'El empleador no tiene WhatsApp cargado (cargalo en Clientes o en su ficha de Sueldos)'})}
+  if(a!=='empleador'){
+    const w=waNum(e.whatsapp);
+    lista.push(!e.whatsapp?{rol:'empleado',ok:false,motivo:'El empleado no tiene WhatsApp cargado'}:(!w||!w.ok)?{rol:'empleado',ok:false,motivo:'Revisá el WhatsApp del empleado'}:{rol:'empleado',ok:true,num:w.num,quien:e.whatsapp,saludo:String(e.nombre).trim().split(/\s+/)[0]})}
+  return {a,lista,opts,pr};
+}
+/* --- envío de recibos por WhatsApp en tanda --- */
+const sueEnvSt=()=>ui.sueEnv||(ui.sueEnv={sel:new Set(),cola:null,idx:0,busy:false,ov:{}});
 function sueEnvFilas(){
-  const s=ui.sueCfg,out=[];
+  const s=ui.sueCfg,E=sueEnvSt(),rows=[],faltan=[];
   sueClientes().filter(k=>k.active!==false&&sueFiltroOk(k)).forEach(k=>{
     ui.sdAll.emp.filter(e=>e.client_id===k.id&&e.activo).forEach(e=>{
       const p=ui.sdAll.pay.find(x=>x.employee_id===e.id&&x.periodo.slice(0,7)===s.periodo&&x.tipo===s.tipo);
-      out.push({k,e,p,d:p?sueDestino(k,e):{ok:false,motivo:'Falta el recibo'}})})});
-  return out;
+      if(!p){faltan.push({k,e});return}
+      const T=sueTargets(k,e,E.ov[p.id]);rows.push({k,e,p,T,ok:T.lista.some(x=>x.ok)})})});
+  return {rows,faltan};
 }
 function sueEnvMarcar(modo){
-  const E=sueEnvSt(),F=sueEnvFilas();E.sel=new Set();
-  if(modo==='todos')F.filter(r=>r.p&&r.d.ok).forEach(r=>E.sel.add(r.p.id));
-  if(modo==='nuevos')F.filter(r=>r.p&&r.d.ok&&!r.p.wa_preparado_at).forEach(r=>E.sel.add(r.p.id));
+  const E=sueEnvSt(),R=sueEnvFilas().rows;E.sel=new Set();
+  if(modo==='todos')R.filter(r=>r.ok).forEach(r=>E.sel.add(r.p.id));
+  if(modo==='nuevos')R.filter(r=>r.ok&&!r.p.wa_preparado_at).forEach(r=>E.sel.add(r.p.id));
   E.cola=null;draw();
 }
 function sueEnvTog(id,on){const E=sueEnvSt();on?E.sel.add(id):E.sel.delete(id);E.cola=null;draw()}
-function sueEnvTogK(kid,on){const E=sueEnvSt();sueEnvFilas().filter(r=>r.k.id===kid&&r.p&&r.d.ok).forEach(r=>on?E.sel.add(r.p.id):E.sel.delete(r.p.id));E.cola=null;draw()}
-/** Arma la cola: genera los enlaces temporales de todos los recibos elegidos. Después cada WhatsApp se abre con un clic. */
+function sueEnvOv(pid,k,v){const E=sueEnvSt();E.ov[pid]=E.ov[pid]||{};if(v)E.ov[pid][k]=v;else delete E.ov[pid][k];if(k==='a')delete E.ov[pid].num;E.cola=null;draw()}
+/** Baja cada PDF elegido y arma la cola. Después cada WhatsApp se abre con un clic (con el archivo adjunto en celulares, o descargado en la compu). */
+const sueBajar=async p=>{const {data,error}=await sb.storage.from('clientes').createSignedUrl(p.path,300,{download:p.nombre_archivo});if(error||!data)throw error||new Error('sin respuesta');const r=await fetch(data.signedUrl);if(!r.ok)throw new Error('no se pudo bajar el PDF');return new File([await r.blob()],p.nombre_archivo,{type:'application/pdf'})};
+const sueCompartePdf=()=>{try{return typeof navigator.canShare==='function'&&navigator.canShare({files:[new File(['x'],'a.pdf',{type:'application/pdf'})]})}catch(x){return false}};
 async function sueEnvPreparar(){
-  const E=sueEnvSt(),s=ui.sueCfg,F=sueEnvFilas().filter(r=>r.p&&E.sel.has(r.p.id)&&r.d.ok);
-  if(!F.length){flash('No hay recibos elegidos para enviar.','warn');return draw()}
+  const E=sueEnvSt(),s=sueMsgs(),R=sueEnvFilas().rows.filter(r=>E.sel.has(r.p.id)&&r.ok);
+  if(!R.length){flash('No hay recibos elegidos para enviar.','warn');return draw()}
   E.busy=true;draw();
   try{
     const cola=[],fallan=[];
-    for(const r of F){
-      const {data,error}=await sb.storage.from('clientes').createSignedUrl(r.p.path,s.horas*3600,{download:r.p.nombre_archivo});
-      if(error||!data){fallan.push(r.e.nombre);continue}
-      const per=r.p.periodo.slice(0,7),tpl=r.d.aOtro?'Hola, ¿cómo estás? Te paso el recibo de sueldo de {empleado} de {periodo} de {empresa}. Podés descargarlo acá: {link}\n\nEl enlace vence en {horas} horas. Cualquier duda, avisanos. Estudio Theiler.':s.msg;
-      let texto=armarRec(tpl.replace(/\{empleado\}/g,r.e.nombre),r.k,r.e,per,data.signedUrl,s.horas);
-      cola.push({pid:r.p.id,url:'https://wa.me/'+r.d.num+'?text='+encodeURIComponent(texto),empleado:r.e.nombre,empleador:r.k.razon_social,quien:r.d.quien})}
+    for(const r of R){
+      let file;try{file=await sueBajar(r.p)}catch(x){fallan.push(r.e.nombre);continue}
+      const per=r.p.periodo.slice(0,7);
+      r.T.lista.filter(t=>t.ok).forEach(t=>{
+        const texto=sueArmar(t.rol==='empleador'?s.pdfEmp:s.pdfAdo,{saludo:t.saludo,empleado:r.e.nombre,empleador:r.k.razon_social,periodo:mesAnio(per),horas:''});
+        cola.push({pid:r.p.id,file,texto,num:t.num,url:'https://wa.me/'+t.num+'?text='+encodeURIComponent(texto),empleado:r.e.nombre,empleador:r.k.razon_social,rol:t.rol,quien:t.quien})})}
     E.cola=cola;E.idx=0;
-    if(fallan.length)flash(`No se pudo generar el enlace de: ${fallan.join(', ')}.`,'warn');
-    else flash(`Cola lista: ${cola.length} mensaje(s). Abrí cada WhatsApp con el botón.`,'ok');
+    if(fallan.length)flash(`No se pudo bajar el PDF de: ${fallan.join(', ')}.`,'warn');
+    else flash(`Cola lista: ${cola.length} mensaje(s) con su PDF.`,'ok');
   }catch(x){flash(errTxt(x),'err')}
   E.busy=false;draw();
 }
-/** Abre el WhatsApp del siguiente de la cola (el clic del usuario evita el bloqueo de ventanas) y anota que se preparó. */
-function sueEnvSiguiente(){
-  const E=sueEnvSt(),it=E.cola&&E.cola[E.idx];if(!it)return;
+/** Entrega un PDF: en celular abre el menú de compartir con el archivo y el texto; en la compu descarga el PDF y abre el chat con el número. */
+async function sueEntregar(it){
+  if(sueCompartePdf()){
+    try{await navigator.share({files:[it.file],text:it.texto,title:it.file.name});return 'share'}catch(x){if(x&&x.name==='AbortError')return 'cancel'}
+  }
+  const u=URL.createObjectURL(it.file),a=document.createElement('a');a.href=u;a.download=it.file.name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),30000);
   const w=window.open(it.url,'wa_envio');
-  if(!w){flash('El navegador bloqueó la ventana emergente. Permitila para esta página e intentá de nuevo.','warn');return draw()}
+  return w?'chat':'bloqueado';
+}
+async function sueEnvSiguiente(){
+  const E=sueEnvSt(),it=E.cola&&E.cola[E.idx];if(!it)return;
+  const r=await sueEntregar(it);
+  if(r==='cancel')return;
+  if(r==='bloqueado'){flash('El navegador bloqueó la ventana emergente. Permitila para esta página e intentá de nuevo.','warn');return draw()}
   const pid=it.pid;E.idx++;
   sb.from('payslips').update({wa_preparado_at:new Date().toISOString(),wa_preparado_by:me.id}).eq('id',pid).select('id').then(r=>{
     if(!r.error){const p=ui.sdAll.pay.find(x=>x.id===pid);if(p)p.wa_preparado_at=new Date().toISOString();if(ui.sd){const q=ui.sd.pay.find(x=>x.id===pid);if(q)q.wa_preparado_at=new Date().toISOString()}}
@@ -1690,30 +1735,58 @@ function sueEnvSiguiente(){
 }
 function sueEnvSaltar(){const E=sueEnvSt();if(E.cola&&E.idx<E.cola.length){E.idx++;draw()}}
 function sueEnvCancelar(){const E=sueEnvSt();E.cola=null;draw()}
+/* --- mensajes: se muestran ya completados con datos reales y se actualizan al escribir o al cambiar los datos --- */
+function sueMuestra(){
+  const E=sueEnvSt(),R=sueEnvFilas().rows,r=R.find(x=>E.sel.has(x.p.id)&&x.ok)||R.find(x=>x.ok)||R[0];
+  if(r){const t=r.T.lista.find(x=>x.ok&&x.rol==='empleador')||{saludo:sueSaludo(r.k)},te=r.T.lista.find(x=>x.ok&&x.rol==='empleado')||{saludo:String(r.e.nombre).trim().split(/\s+/)[0]};
+    return {empleado:r.e.nombre,empleador:r.k.razon_social,per:r.p.periodo.slice(0,7),sEmp:t.saludo,sEmpl:te.saludo,real:true}}
+  const k=ui.sd&&sueCli(ui.sd.id),e=ui.sd&&ui.sd.emp.find(x=>x.activo);
+  if(k&&e)return {empleado:e.nombre,empleador:k.razon_social,per:ui.sueCfg.periodo,sEmp:sueSaludo(k),sEmpl:String(e.nombre).trim().split(/\s+/)[0],real:true};
+  return {empleado:'Nombre del empleado',empleador:'Nombre del empleador',per:ui.sueCfg.periodo,sEmp:'Nombre',sEmpl:'Nombre',real:false};
+}
+function sueMsgPrev(){
+  const s=sueMsgs(),m=sueMuestra(),base={empleado:m.empleado,empleador:m.empleador,periodo:mesAnio(m.per+'-01')};
+  return {emp:sueArmar(s.pdfEmp,{...base,saludo:m.sEmp}),ado:sueArmar(s.pdfAdo,{...base,saludo:m.sEmpl}),m};
+}
+function sueMsgRefresh(){const P=sueMsgPrev(),a=document.getElementById('sue_pv_emp'),b=document.getElementById('sue_pv_ado');if(a)a.textContent=P.emp;if(b)b.textContent=P.ado}
+function sueMsgSet(k,v){sueMsgs()[k]=v;sueMsgRefresh()}
+function sueMsgReset(k){sueMsgs()[k]=k==='pdfAdo'?MSG_PDF_ADO:MSG_PDF_EMP;draw()}
+function sueMsgCard(){
+  const s=sueMsgs(),P=sueMsgPrev();
+  return `<div class="card" style="margin-bottom:14px"><b>Mensajes de WhatsApp</b>
+  <p class="s" style="margin:4px 0 10px">Se completan solos con los datos de cada recibo: {nombre} (a quien se le escribe), {empleado}, {empleador} y {periodo}. El PDF del recibo va adjunto (sin enlace). Abajo ves cómo queda con ${P.m.real?'un recibo real ('+esc(P.m.empleado)+')':'datos de ejemplo'}, y se actualiza mientras escribís.</p>
+  <div class="fgrid">
+   <div class="full"><label>Mensaje para el empleador<textarea rows="5" oninput="sueMsgSet('pdfEmp',this.value)">${esc(s.pdfEmp)}</textarea></label><div class="s" style="margin-top:4px">Vista previa:</div><pre id="sue_pv_emp" style="white-space:pre-wrap;margin:4px 0;padding:10px;border-radius:10px;background:var(--grn,#e8f5e9);font:inherit">${esc(P.emp)}</pre><button type="button" class="g sm" onclick="sueMsgReset('pdfEmp')">Volver al mensaje original</button></div>
+   <div class="full"><label>Mensaje para el empleado<textarea rows="5" oninput="sueMsgSet('pdfAdo',this.value)">${esc(s.pdfAdo)}</textarea></label><div class="s" style="margin-top:4px">Vista previa:</div><pre id="sue_pv_ado" style="white-space:pre-wrap;margin:4px 0;padding:10px;border-radius:10px;background:var(--grn,#e8f5e9);font:inherit">${esc(P.ado)}</pre><button type="button" class="g sm" onclick="sueMsgReset('pdfAdo')">Volver al mensaje original</button></div></div></div>`;
+}
 function sueEnvioPanel(){
-  const E=sueEnvSt(),s=ui.sueCfg,F=sueEnvFilas(),conRec=F.filter(r=>r.p),faltan=F.filter(r=>!r.p).length;
-  if(!F.length)return '';
-  const sel=F.filter(r=>r.p&&E.sel.has(r.p.id)).length,corresp=F.filter(r=>r.p&&r.d.ok).length;
+  const E=sueEnvSt(),s=ui.sueCfg,{rows,faltan}=sueEnvFilas();
+  if(!rows.length&&!faltan.length)return '';
+  const sel=rows.filter(r=>E.sel.has(r.p.id)).length,corresp=rows.filter(r=>r.ok).length,nuevos=rows.filter(r=>r.ok&&!r.p.wa_preparado_at).length;
   const cola=E.cola?`<div class="card" style="margin:10px 0;border:1px solid var(--blut)"><b>Cola de envío: ${Math.min(E.idx+1,E.cola.length)} de ${E.cola.length}</b>
-   ${E.idx<E.cola.length?`<p style="margin:8px 0">Sigue: <b>${esc(E.cola[E.idx].empleado)}</b> <span class="s">${esc(E.cola[E.idx].empleador)} · ${esc(E.cola[E.idx].quien)}</span></p><div class="row" style="gap:8px"><button class="b" onclick="sueEnvSiguiente()">Abrir WhatsApp de ${esc(E.cola[E.idx].empleado.split(/\s+/)[0])}</button><button class="g" onclick="sueEnvSaltar()">Saltear</button><button class="g" onclick="sueEnvCancelar()">Cancelar cola</button></div><p class="s" style="margin-top:6px">En WhatsApp tocá enviar, volvé a esta pestaña y abrí el siguiente. La app anota "preparado" al abrirlo, pero no puede saber si realmente lo enviaste.</p>`
+   ${E.idx<E.cola.length?`<p style="margin:8px 0">Sigue: <b>${esc(E.cola[E.idx].empleado)}</b> → ${E.cola[E.idx].rol==='empleador'?'empleador':'empleado'} <span class="s">${esc(E.cola[E.idx].empleador)} · ${esc(E.cola[E.idx].quien)}</span></p><div class="row" style="gap:8px"><button class="b" onclick="sueEnvSiguiente()">Abrir WhatsApp (${E.idx+1} de ${E.cola.length})</button><button class="g" onclick="sueEnvSaltar()">Saltear</button><button class="g" onclick="sueEnvCancelar()">Cancelar cola</button></div><p class="s" style="margin-top:6px">En WhatsApp tocá enviar, volvé a esta pestaña y abrí el siguiente. La app anota "preparado" al abrirlo, pero no puede saber si realmente lo enviaste.</p>`
    :`<p style="margin:8px 0">Listo: se abrieron los ${E.cola.length} mensajes.</p><button class="g" onclick="sueEnvCancelar()">Cerrar</button>`}</div>`:'';
-  const byK={};F.forEach(r=>{(byK[r.k.id]=byK[r.k.id]||[]).push(r)});
-  const filas=Object.values(byK).map(L=>{const k=L[0].k,hab=L.filter(r=>r.p&&r.d.ok),todos=hab.length&&hab.every(r=>E.sel.has(r.p.id));
-    return `<tr style="background:var(--bg2,#f4f6f8)"><td><input type="checkbox" ${hab.length?'':'disabled'} ${todos?'checked':''} onchange="sueEnvTogK('${k.id}',this.checked)"></td><td colspan="5"><b>${esc(k.razon_social)}</b>${k.solo_sueldos?' <span class="tag" style="background:var(--gry,#e5e7eb)">Solo Sueldos</span>':''}</td></tr>`+
-    L.map(r=>`<tr><td><input type="checkbox" ${r.p&&r.d.ok?'':'disabled'} ${r.p&&E.sel.has(r.p.id)?'checked':''} onchange="sueEnvTog('${r.p?r.p.id:''}',this.checked)"></td><td>${esc(r.e.nombre)}${sueTag(r.e.tipo)}</td><td>${r.p?esc(r.p.nombre_archivo):'<span class="tag" style="background:var(--amb);color:var(--ambt)">Falta</span>'}</td><td>${r.d.ok?esc(r.d.quien)+(r.d.aOtro?'<span class="s">según la ficha</span>':''):`<span class="s">${esc(r.d.motivo)}</span>`}</td><td>${r.p&&r.p.wa_preparado_at?`<span class="s">Preparado el ${new Date(r.p.wa_preparado_at).toLocaleDateString('es-AR')}</span>`:r.p&&r.d.ok?'<span class="s">Sin enviar</span>':''}</td></tr>`).join('')}).join('');
+  const tabla=rows.length?`<div class="tw" style="margin-bottom:10px"><table style="min-width:900px"><thead><tr><th style="width:34px"></th><th>Empleador</th><th>Empleado</th><th>Recibo</th><th>Enviar a</th><th>WhatsApp</th><th>Estado</th></tr></thead><tbody>${rows.map(r=>{
+    const T=r.T,id=r.p.id,a=T.a,emp=T.lista.find(x=>x.rol==='empleador'),ado=T.lista.find(x=>x.rol==='empleado');
+    const selA=T.a==='ninguno'?'<span class="s">-</span>':`<select onchange="sueEnvOv('${id}','a',this.value)">${Object.entries(SUE_A).map(([k,t])=>`<option value="${k}" ${a===k?'selected':''}>${t}</option>`).join('')}</select>`;
+    const numEmp=emp?(emp.ok?(T.opts.length>1?`<select onchange="sueEnvOv('${id}','num',this.value)">${T.opts.map(o=>`<option value="${o.num}" ${o.num===emp.num?'selected':''}>${esc(sueEtqWa(o))}</option>`).join('')}</select>`:`<span>${esc(emp.quien)}</span>`):`<span class="s" style="color:var(--redt)">${esc(emp.motivo)}</span>`):'';
+    const numAdo=ado?(ado.ok?`<span>${esc(ado.quien)}</span><span class="s">empleado</span>`:`<span class="s" style="color:var(--redt)">${esc(ado.motivo)}</span>`):'';
+    const nin=T.a==='ninguno'?`<span class="s">${esc(T.lista[0].motivo)}</span>`:'';
+    return `<tr><td><input type="checkbox" ${r.ok?'':'disabled'} ${E.sel.has(id)?'checked':''} onchange="sueEnvTog('${id}',this.checked)"></td><td>${esc(r.k.razon_social)}${r.k.solo_sueldos?'<span class="s">Solo Sueldos</span>':''}</td><td>${esc(r.e.nombre)}${sueTag(r.e.tipo)}</td><td>${esc(r.p.nombre_archivo)}</td><td>${selA}</td><td>${nin||numEmp+(emp&&ado?'<br>':'')+numAdo}</td><td>${r.p.wa_preparado_at?`<span class="s">Preparado el ${new Date(r.p.wa_preparado_at).toLocaleDateString('es-AR')}</span>`:r.ok?'<span class="s">Sin enviar</span>':'<span class="tag" style="background:var(--amb);color:var(--ambt)">No corresponde</span>'}</td></tr>`}).join('')}</tbody></table></div>`
+    :'<div class="card" style="margin-bottom:10px;color:var(--mut)">Todavía no hay recibos cargados de este período para los empleadores del filtro.</div>';
+  const falt=faltan.length?`<details style="margin-bottom:12px"><summary class="s" style="cursor:pointer"><b>Faltan cargar ${faltan.length} recibo(s)</b> (no se pueden enviar todavía)</summary><div class="s" style="margin-top:6px">${faltan.map(f=>esc(f.k.razon_social)+': '+esc(f.e.nombre)).join('<br>')}</div></details>`:'';
   return `<h3>Enviar recibos por WhatsApp (varios)</h3>
-  <p class="s" style="margin-bottom:8px">Mostrando los empleadores del filtro de arriba, con los recibos de ${mesAnio(s.periodo+'-01')} (${esc(s.tipo)}). Solo se pueden elegir los que corresponde enviar: tienen recibo, la ficha no dice que no se envía y hay un WhatsApp válido.${faltan?` <b>Faltan ${faltan} recibo(s) por cargar.</b>`:''}</p>
-  <div class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:8px"><button class="g sm" onclick="sueEnvMarcar('nuevos')">Elegir los no enviados (${F.filter(r=>r.p&&r.d.ok&&!r.p.wa_preparado_at).length})</button><button class="g sm" onclick="sueEnvMarcar('todos')">Elegir todos los que corresponden (${corresp})</button><button class="g sm" onclick="sueEnvMarcar('ninguno')">Desmarcar</button>
+  <p class="s" style="margin-bottom:8px">Recibos de ${mesAnio(s.periodo+'-01')} (${esc(s.tipo)}) de los empleadores del filtro de arriba. Por defecto van al empleador, al número cargado en Clientes (si hay más de uno, elegís cuál); podés cambiar a "Empleado" o "Ambos" en cada fila, o fijarlo en la ficha de liquidación. Solo se pueden elegir los que corresponde enviar.</p>
+  <div class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:8px"><button class="g sm" onclick="sueEnvMarcar('nuevos')">Elegir los no enviados (${nuevos})</button><button class="g sm" onclick="sueEnvMarcar('todos')">Elegir todos los que corresponden (${corresp})</button><button class="g sm" onclick="sueEnvMarcar('ninguno')">Desmarcar</button>
    <button class="b" onclick="sueEnvPreparar()" ${sel&&!E.busy?'':'disabled'}>${E.busy?'Preparando…':`Preparar envío de ${sel} recibo(s)`}</button></div>
-  ${cola}
-  <div class="tw" style="margin-bottom:14px"><table style="min-width:760px"><thead><tr><th></th><th>Empleado</th><th>Recibo</th><th>Se envía a</th><th>Estado</th></tr></thead><tbody>${filas}</tbody></table></div>`;
+  ${cola}${tabla}${falt}${sueMsgCard()}`;
 }
 
 /* ===== Secciones del menú: Sueldos (todos los clientes) y Anticipos ===== */
 ui.sdAll={emp:[],pay:[],prof:[]};
 async function loadSueldosAll(){
-  const [em,ps,pp]=await Promise.all([sb.from('employees').select('*').order('nombre'),sb.from('payslips').select('*'),sb.from('payroll_profiles').select('*')]);
-  if(em.error)throw em.error;if(ps.error)throw ps.error;if(pp.error)throw pp.error;ui.sdAll={emp:em.data,pay:ps.data,prof:pp.data};if(ui.sd)setSd(ui.sd.id);
+  const [em,ps,pp,ct]=await Promise.all([sb.from('employees').select('*').order('nombre'),sb.from('payslips').select('*'),sb.from('payroll_profiles').select('*'),sb.from('client_contacts').select('*')]);
+  if(em.error)throw em.error;if(ps.error)throw ps.error;if(pp.error)throw pp.error;ui.sdAll={emp:em.data,pay:ps.data,prof:pp.data,ct:(ct&&!ct.error&&ct.data)||[]};if(ui.sd)setSd(ui.sd.id);
 }
 function sueResTipos(k){const ts=sueTiposDe(k,ui.sdAll.emp);return ts.length?'<span class="s">'+ts.map(t=>SUE_TIPOS[t]).join(' · ')+'</span>':''}
 function sueResVenc(k){
