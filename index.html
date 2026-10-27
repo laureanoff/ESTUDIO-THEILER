@@ -170,7 +170,7 @@ function planImport(parsed,meta,existing,ctx){
 
 
 /* ===== Supabase ===== */
-const APP_VERSION='26/10/2026, sueldos: empleadores solo de Sueldos, filtro por tipo de personal y envío de recibos por WhatsApp a empleador, empleado o ambos, con estado enviado/pendiente';
+const APP_VERSION='26/10/2026, perfil de carga de sueldos (recibos, VEP y sindicatos) y envío de recibos con estado enviado/pendiente';
 const SUPABASE_URL='https://tugdqcoxcpsiynlvnqdu.supabase.co';
 const SUPABASE_KEY='sb_publishable_2-96VeZrsNNftRXkzA1l_A_YG7ThJrL'; // clave pública: los permisos los da la base (RLS)
 const sb=(typeof supabase!=='undefined')?supabase.createClient(SUPABASE_URL,SUPABASE_KEY):null;
@@ -213,14 +213,15 @@ async function boot(user){
   if(error||!data||!data.active){await sb.auth.signOut();return drawLogin(error?errTxt(error):'Tu usuario no está habilitado. Pedile acceso a un administrador.')}
   prof=data;$('nav').style.display='';
   try{await loadClients()}catch(e){flash(errTxt(e),'err')}
-  await show('inicio');
+  await show(prof.role==='liquidador'?'carga':'inicio');
 }
 async function loadClients(){const {data,error}=await sb.from('clients').select('*').order('razon_social');if(error)throw error;ui.clientsAll=data;ui.clients=data.filter(c=>!c.solo_sueldos);if(!ui.cid||!ui.clients.find(c=>c.id===ui.cid))ui.cid=ui.clients[0]?ui.clients[0].id:null}
 async function logout(){await sb.auth.signOut()}
 
 /* ===== Navegación y carga de datos ===== */
-const TABS=[['inicio','Inicio'],['avisos','Avisos'],['cumplimiento','Cumplimiento'],['vencimientos','Vencimientos'],['clientes','Clientes'],['balances','Preparación de balances'],['bancos','Resúmenes bancarios'],['importar','Importar compras'],['escanear','Escanear QR'],['comprobantes','Comprobantes de compra'],['ventas','Ventas'],['iva','IVA aproximado'],['reclamos','Reclamos'],['anticipos','Anticipos'],['sueldos','Sueldos']];
+const TABS=[['inicio','Inicio'],['avisos','Avisos'],['cumplimiento','Cumplimiento'],['vencimientos','Vencimientos'],['clientes','Clientes'],['balances','Preparación de balances'],['bancos','Resúmenes bancarios'],['importar','Importar compras'],['escanear','Escanear QR'],['comprobantes','Comprobantes de compra'],['ventas','Ventas'],['iva','IVA aproximado'],['reclamos','Reclamos'],['anticipos','Anticipos'],['sueldos','Sueldos'],['carga','Carga de sueldos']];
 async function show(t){
+  if(isLiq()&&t!=='carga')t='carga';
   if(t==='admin'&&!isAdmin()){flash('Esa sección es solo para administradores.','err');t='inicio'}
   stopCam();ui.tab=t;ui.hist=null;ui.scan=null;
   try{
@@ -233,6 +234,7 @@ async function show(t){
     if(t==='reclamos'){await loadDash();await loadSched()}
     if(t==='anticipos'||t==='vencimientos'){await loadDeadlines();await loadFil()}
     if(t==='sueldos'){await loadSueldosAll();setSd(sueClientes().find(c=>c.id===(ui.sd&&ui.sd.id||ui.cid)&&c.active!==false)?(ui.sd&&ui.sd.id||ui.cid):(sueClientes().find(c=>c.active!==false)||{}).id)}
+    if(t==='carga'){await loadSueldosAll();setSd(sueClientes().find(c=>c.id===(ui.sd&&ui.sd.id)&&c.active!==false)?ui.sd.id:(sueClientes().find(c=>c.active!==false)||{}).id)}
     if(t==='inicio')await loadDash();
     if(t==='importar'){const {data,error}=await sb.from('import_batches').select('*, clients(razon_social)').order('imported_at',{ascending:false}).limit(50);if(error)throw error;ui.batches=data}
     if(t==='comprobantes')await loadVouchers();
@@ -248,10 +250,10 @@ async function loadVouchers(){
   ui.vs=await fetchAll((a,b)=>sb.from('vouchers').select('*').eq('period_id',p.id).order('fecha').order('numero').range(a,b));
 }
 function draw(){
-  $('nav').innerHTML='<h1>Estudio Theiler</h1>'+TABS.concat(isAdmin()?[['admin','Administración']]:[]).map(([k,t])=>`<button class="${ui.tab===k?'on':''}" onclick="show('${k}')">${t}${navBadge(k)}</button>`).join('')+
+  $('nav').innerHTML='<h1>Estudio Theiler</h1>'+(isLiq()?TABS.filter(x=>x[0]==='carga'):TABS).concat(isAdmin()&&!isLiq()?[['admin','Administración']]:[]).map(([k,t])=>`<button class="${ui.tab===k?'on':''}" onclick="show('${k}')">${t}${navBadge(k)}</button>`).join('')+
    `<div class="me">${esc(prof.username||prof.full_name||me.email)}<br>${esc(prof.role)}<br><button class="g" onclick="logout()">Cerrar sesión</button><br><span style="display:block;margin-top:10px;font-size:11px;opacity:.7">Versión: ${APP_VERSION}</span></div>`;
   const m=ui.msg?`<div class="msg ${ui.msg.k}">${esc(ui.msg.t)}</div>`:'';ui.msg=null;window._fm=m;
-  $('main').innerHTML=(ui.ficha?'':m)+({inicio:vInicio,clientes:vClientes,importar:vImportar,escanear:vEscanear,comprobantes:vComp,vencimientos:vVenc,anticipos:vAnticipos,sueldos:vSueldosPage,ventas:vVentas,iva:vIva,admin:vAdmin,balances:vBalances,bancos:vBancos,cumplimiento:vCumplimiento,avisos:vAvisos,reclamos:vReclamos})[ui.tab]()+vFicha();
+  $('main').innerHTML=(ui.ficha?'':m)+({inicio:vInicio,clientes:vClientes,importar:vImportar,escanear:vEscanear,comprobantes:vComp,vencimientos:vVenc,anticipos:vAnticipos,sueldos:vSueldosPage,carga:vCarga,ventas:vVentas,iva:vIva,admin:vAdmin,balances:vBalances,bancos:vBancos,cumplimiento:vCumplimiento,avisos:vAvisos,reclamos:vReclamos})[ui.tab]()+vFicha();
   document.body.style.overflow=ui.ficha?'hidden':'';
 }
 function vInicio(){
@@ -1507,7 +1509,7 @@ async function guardarRecibo(e,file){
   const err=await esPdf(file);if(err)return err;
   const s=sueState(ui.sd),path=`${ui.sd.id}/recibos/${e.id}/${s.periodo}-${TIPO_SLUG[s.tipo]}.pdf`;
   const up=await sb.storage.from('clientes').upload(path,file,{contentType:'application/pdf',upsert:true});if(up.error)return 'No se pudo subir: '+errTxt(up.error);
-  const {error}=await sb.from('payslips').upsert({employee_id:e.id,client_id:ui.sd.id,periodo:s.periodo+'-01',tipo:s.tipo,nombre_archivo:file.name,path,size_bytes:file.size,subido_by:me.id,subido_at:new Date().toISOString(),wa_preparado_at:null,wa_preparado_by:null},{onConflict:'employee_id,periodo,tipo'});
+  const {error}=await sb.from('payslips').upsert({employee_id:e.id,client_id:ui.sd.id,periodo:s.periodo+'-01',tipo:s.tipo,nombre_archivo:file.name,path,size_bytes:file.size,subido_by:me.id,subido_at:new Date().toISOString(),wa_preparado_at:null,wa_preparado_by:null,enviado_at:null,enviado_by:null},{onConflict:'employee_id,periodo,tipo'});
   return error?errTxt(error):null;
 }
 async function subirRecibo(empId,inp){
@@ -1581,7 +1583,7 @@ function sueFiltroOk(k){
 function sueFil(k,v){const F=sueFilSt();F[k]=v;draw()}
 /** Alta de un empleador que solo se gestiona en Sueldos (no aparece en Clientes). */
 async function sueAltaEmpleador(e){
-  e.preventDefault();const fd=new FormData(e.target),rs=String(fd.get('rs')||'').trim(),cuit=String(fd.get('cuit')||'').replace(/\D/g,''),wa=String(fd.get('wa')||'').trim()||null,tipos=fd.getAll('tp'),solo=fd.get('solo')==='on';
+  e.preventDefault();const fd=new FormData(e.target),rs=String(fd.get('rs')||'').trim(),cuit=String(fd.get('cuit')||'').replace(/\D/g,''),wa=String(fd.get('wa')||'').trim()||null,tipos=fd.getAll('tp'),solo=fd.get('solo')==='on'||(typeof isLiq==='function'&&isLiq());
   if(!rs){flash('Falta el nombre o razón social del empleador.','err');return draw(),false}
   if(cuit.length!==11){flash('El CUIT/CUIL del empleador debe tener 11 dígitos.','err');return draw(),false}
   if(!tipos.length){flash('Elegí al menos un tipo de personal (servicio doméstico o relación de dependencia).','err');return draw(),false}
@@ -1591,7 +1593,7 @@ async function sueAltaEmpleador(e){
   try{
     const {data,error}=await sb.from('clients').insert({razon_social:rs,cuit,telefono:wa,impuestos,solo_sueldos:solo}).select('id').single();if(error)throw error;
     await loadClients();await loadSueldosAll();setSd(data.id);flash(solo?'Empleador agregado solo en Sueldos.':'Empleador agregado como cliente.');
-  }catch(x){flash(errTxt(x),'err')}
+  }catch(x){flash((x&&x.code==='23505')?'Ya existe un cliente con ese CUIT que no podés ver desde este perfil. Pedile al estudio que lo habilite en Sueldos.':errTxt(x),'err')}
   draw();return false;
 }
 async function sueSoloCambiar(solo){
@@ -1619,7 +1621,7 @@ function sueAltaCard(){
    <label>CUIT / CUIL del empleador<input name="cuit" inputmode="numeric" required placeholder="20-12345678-9"></label>
    <label>WhatsApp del empleador (opcional)<input name="wa" inputmode="tel" placeholder="3537 412345"></label>
    <div class="full"><div class="s" style="margin-bottom:6px">Tipo de personal que tiene</div><div class="row" style="gap:18px">${Object.entries(SUE_TIPOS).map(([k,t])=>`<label class="row" style="gap:6px;align-items:center"><input type="checkbox" name="tp" value="${k}" style="margin:0"> ${t}</label>`).join('')}</div></div>
-   <label class="full row" style="gap:8px;align-items:center"><input type="checkbox" name="solo" checked style="margin:0"> Solo para Sueldos (no mostrarlo en Clientes)</label>
+   ${typeof isLiq==='function'&&isLiq()?'':`<label class="full row" style="gap:8px;align-items:center"><input type="checkbox" name="solo" checked style="margin:0"> Solo para Sueldos (no mostrarlo en Clientes)</label>`}
    <div class="full row"><button class="b">Agregar empleador</button></div></div></form></details>`;
 }
 function sueFiltroBar(){
@@ -1807,11 +1809,147 @@ function sueEnvioPanel(){
   ${cola}${tabla}${falt}${sueMsgCard()}`;
 }
 
+/* ===== Carga de sueldos: perfil "liquidador" (recibos, VEP y boletas de sindicatos) ===== */
+const isLiq=()=>prof&&prof.role==='liquidador';
+const CG_SIND=['UATRE','OSECAC','FAECYS','IERIC','AMMA','ACTF','UOCRA','OSPRERA','SEC'];
+const CG_VEP={dependencia:['F931','VEP F.931 (cargas sociales)'],domestico:['SERV_DOM','VEP servicio doméstico']};
+const cgSt=()=>ui.cg||(ui.cg={tipo:'',q:'',est:'',arch:'',extra:{},tab:{}});
+const cgSlug=s=>String(s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
+const cgPf=(cid,cat,conc,per)=>(ui.sdAll.pf||[]).find(x=>x.client_id===cid&&x.categoria===cat&&x.concepto===conc&&x.periodo.slice(0,7)===(per||ui.sueCfg.periodo))||null;
+/** Qué VEP y qué boletas de sindicato le corresponden a este empleador en el período. */
+function cgReq(k){
+  const per=ui.sueCfg.periodo,tipos=sueTiposDe(k,ui.sdAll.emp),pr=(ui.sdAll.prof||[]).find(p=>p.client_id===k.id&&p.tipo==='dependencia')||{};
+  const vep=tipos.map(t=>CG_VEP[t]);
+  const decl=[...(pr.boletas||[]),...String(pr.boletas_otras||'').split(',').map(x=>x.trim().toUpperCase()).filter(Boolean)];
+  const subidas=(ui.sdAll.pf||[]).filter(x=>x.client_id===k.id&&x.categoria==='sindicato'&&x.periodo.slice(0,7)===per).map(x=>x.concepto);
+  const extra=(cgSt().extra[k.id]||[]);
+  const sind=[...new Set([...decl.filter(b=>b!=='F.931'&&b!=='F931'),...subidas,...extra])];
+  return {tipos,vep,sind,decl};
+}
+function cgProg(k){
+  const per=ui.sueCfg.periodo,s=ui.sueCfg,R=cgReq(k),em=ui.sdAll.emp.filter(e=>e.client_id===k.id&&e.activo);
+  const rec=em.filter(e=>ui.sdAll.pay.some(p=>p.employee_id===e.id&&p.periodo.slice(0,7)===per&&p.tipo===s.tipo)).length;
+  const vep=R.vep.filter(([c])=>cgPf(k.id,'vep',c)).length,sind=R.sind.filter(c=>cgPf(k.id,'sindicato',c)).length;
+  const fR=em.length-rec,fV=R.vep.length-vep,fS=R.sind.filter(c=>(R.decl.includes(c))).filter(c=>!cgPf(k.id,'sindicato',c)).length;
+  return {em:em.length,rec,vepN:R.vep.length,vep,sindN:R.sind.length,sind,fR,fV,fS,completo:fR===0&&fV===0&&fS===0&&(em.length>0||R.vep.length>0),R};
+}
+function cgOk(k){
+  const F=cgSt(),ts=sueTiposDe(k,ui.sdAll.emp);
+  if(F.tipo&&!ts.includes(F.tipo))return false;
+  if(F.q){const q=normN(F.q),dq=F.q.replace(/\D/g,'');if(!(normN(k.razon_social).includes(q)||(dq&&String(k.cuit).includes(dq))))return false}
+  const g=cgProg(k);
+  if(F.est==='pend'&&g.completo)return false;
+  if(F.est==='ok'&&!g.completo)return false;
+  if(F.arch==='rec'&&g.fR<=0)return false;
+  if(F.arch==='vep'&&g.fV<=0)return false;
+  if(F.arch==='sind'&&g.fS<=0)return false;
+  return true;
+}
+function cgFil(k,v){cgSt()[k]=v;draw()}
+async function cgSubir(cat,conc,inp){
+  const f=inp.files[0];inp.value='';const err=await esPdf(f);if(err){flash(err,'err');return draw()}
+  const cid=ui.sd.id,per=ui.sueCfg.periodo,path=`${cid}/sueldos/${per}/${cat}-${cgSlug(conc)}.pdf`;
+  const up=await sb.storage.from('clientes').upload(path,f,{contentType:'application/pdf',upsert:true});
+  if(up.error){flash('No se pudo subir: '+errTxt(up.error),'err');return draw()}
+  const {error}=await sb.from('payroll_files').upsert({client_id:cid,periodo:per+'-01',categoria:cat,concepto:conc,nombre_archivo:f.name,path,size_bytes:f.size,subido_by:me.id,subido_at:new Date().toISOString(),enviado_at:null,enviado_by:null},{onConflict:'client_id,periodo,categoria,concepto'});
+  if(error)flash(errTxt(error),'err');else{try{await recargarSueldos();flash('Archivo cargado: '+conc+'.')}catch(x){flash(errTxt(x),'err')}}
+  draw();
+}
+async function cgQuitar(id){
+  const x=(ui.sdAll.pf||[]).find(p=>p.id===id);if(!x||!confirm('¿Quitar este archivo? Se elimina del sistema.'))return;
+  const r=await sb.storage.from('clientes').remove([x.path]);if(r.error){flash(errTxt(r.error),'err');return draw()}
+  const {error}=await sb.from('payroll_files').delete().eq('id',id);
+  if(error)flash(errTxt(error),'err');else{try{await recargarSueldos();flash('Archivo quitado.')}catch(e){flash(errTxt(e),'err')}}
+  draw();
+}
+async function cgEnviado(id,on){
+  const val=on?new Date().toISOString():null;
+  const {data,error}=await sb.from('payroll_files').update({enviado_at:val,enviado_by:on?me.id:null}).eq('id',id).select('id');
+  if(error||!data||!data.length){flash(error?errTxt(error):'No se pudo actualizar.','err');return draw()}
+  const x=(ui.sdAll.pf||[]).find(p=>p.id===id);if(x){x.enviado_at=val}
+  draw();
+}
+function cgAgregarSind(sel){const v=sel.value;if(!v)return;const E=cgSt().extra;(E[ui.sd.id]=E[ui.sd.id]||[]).push(v);draw()}
+function cgEleg(cid){setSd(cid);draw()}
+const cgBar=(a,b)=>b?`<span class="tag" style="background:var(--${a>=b?'grn':'amb'});color:var(--${a>=b?'grnt':'ambt'})">${a} de ${b}</span>`:'<span class="s">-</span>';
+function cgSlot(k,cat,conc,etq,req){
+  const x=cgPf(k.id,cat,conc);
+  const sub=lbl=>`<label class="g sm">${lbl}<input type="file" accept="application/pdf,.pdf" hidden onchange="cgSubir('${cat}','${esc(conc)}',this)"></label>`;
+  return `<tr><td>${esc(etq)}${req?'':'<span class="s">Agregada a mano, no figura en la ficha</span>'}</td>
+   <td>${x?`<span class="tag" style="background:var(--grn);color:var(--grnt)">Cargado</span><span class="s">${esc(x.nombre_archivo)}</span>`:`<span class="tag" style="background:var(--amb);color:var(--ambt)">Falta</span>`}</td>
+   <td><div class="row" style="gap:4px;flex-wrap:wrap">${x?`<button class="g sm" onclick="verArchivo('${x.path}')">Ver</button>${sub('Reemplazar')}<button class="g sm" onclick="cgQuitar('${x.id}')">Quitar</button>${isLiq()?'':x.enviado_at?`<button class="g sm" onclick="cgEnviado('${x.id}',false)">Enviado: deshacer</button>`:`<button class="g sm" onclick="cgEnviado('${x.id}',true)">Marcar enviado</button>`}`:sub('Subir PDF')}</div></td></tr>`;
+}
+function cgDetalle(k){
+  const s=ui.sueCfg,f=ui.sd,g=cgProg(k),R=g.R,per=s.periodo,ct=(ui.sdAll.ct||[]).filter(c=>c.client_id===k.id);
+  const pdep=(ui.sdAll.prof||[]).find(p=>p.client_id===k.id&&p.tipo==='dependencia')||{},pdom=(ui.sdAll.prof||[]).find(p=>p.client_id===k.id&&p.tipo==='domestico')||{};
+  const datos=`<div class="card" style="margin-bottom:12px"><div class="row" style="gap:20px;flex-wrap:wrap;align-items:flex-start">
+   <div><b style="font-size:18px">${esc(k.razon_social)}</b>${k.solo_sueldos?' <span class="tag" style="background:var(--gry,#e5e7eb)">Solo Sueldos</span>':''}<span class="s">CUIT ${cuitF(k.cuit)} · termina en ${k.cuit.slice(-1)}</span>${k.telefono?`<span class="s">Teléfono: ${esc(k.telefono)}</span>`:''}<span class="s">${R.tipos.map(t=>SUE_TIPOS[t]).join(' · ')||'Sin tipo de personal cargado'}</span></div>
+   <div style="min-width:220px"><div class="s"><b>Contactos</b></div>${ct.length?ct.map(c=>`<div class="s">${esc(c.nombre)}${c.cargo?' ('+esc(c.cargo)+')':''}${c.whatsapp?' · '+esc(c.whatsapp):''}</div>`).join(''):'<div class="s">Sin contactos cargados</div>'}</div>
+   <div style="min-width:220px"><div class="s"><b>Ficha de liquidación</b></div>${[pdep,pdom].filter(p=>p.id).map(p=>`<div class="s">${SUE_TIPOS[p.tipo]}: ${p.medio_pago?esc(p.medio_pago):'medio de pago sin definir'}${p.banco?' · '+esc(p.banco):''}${p.cct?' · '+esc(p.cct):''}</div>`).join('')||'<div class="s">Sin ficha cargada</div>'}${R.decl.length?`<div class="s">Boletas: ${R.decl.map(esc).join(', ')}</div>`:''}</div></div></div>`;
+  const filas=tipo=>{
+    const em=f.emp.filter(e=>e.tipo===tipo&&e.activo);if(!em.length)return '';
+    return `<h3>${SUE_TIPOS[tipo]}: recibos de sueldo</h3><div class="tw" style="margin-bottom:14px"><table><thead><tr><th>Empleado</th><th>Recibo</th><th></th></tr></thead><tbody>${em.map(e=>{
+      const p=f.pay.find(x=>x.employee_id===e.id&&x.periodo.slice(0,7)===per&&x.tipo===s.tipo),sub=lbl=>`<label class="g sm">${lbl}<input type="file" accept="application/pdf,.pdf" hidden onchange="subirRecibo('${e.id}',this)"></label>`;
+      return `<tr><td>${esc(e.nombre)}<span class="s">${e.cuil?cuitF(e.cuil):'Sin CUIL'}${e.cargo?' · '+esc(e.cargo):''}${e.tipo==='domestico'&&e.horas_semanales!=null?' · '+String(e.horas_semanales).replace('.',',')+' h/sem':''}</span></td>
+       <td>${p?`<span class="tag" style="background:var(--grn);color:var(--grnt)">Cargado</span><span class="s">${esc(p.nombre_archivo)}</span>`:'<span class="tag" style="background:var(--amb);color:var(--ambt)">Falta</span>'}</td>
+       <td><div class="row" style="gap:4px;flex-wrap:wrap">${p?`<button class="g sm" onclick="verArchivo('${p.path}')">Ver</button>${sub('Reemplazar')}<button class="g sm" onclick="quitarRecibo('${p.id}')">Quitar</button>`:sub('Subir PDF')}<button class="g sm" onclick="cgEditarEmp('${e.id}')">Editar</button><button class="g sm" onclick="bajaEmp('${e.id}')">Dar de baja</button></div></td></tr>`}).join('')}</tbody></table></div>`};
+  const vep=R.vep.length?`<h3>VEP</h3><div class="tw" style="margin-bottom:14px"><table><thead><tr><th>Concepto</th><th>Estado</th><th></th></tr></thead><tbody>${R.vep.map(([c,t])=>cgSlot(k,'vep',c,t,true)).join('')}</tbody></table></div>`:'';
+  const disp=CG_SIND.filter(b=>!R.sind.includes(b));
+  const sind=R.tipos.includes('dependencia')||R.sind.length?`<h3>Sindicatos y obras sociales</h3>${R.sind.length?`<div class="tw" style="margin-bottom:8px"><table><thead><tr><th>Boleta</th><th>Estado</th><th></th></tr></thead><tbody>${R.sind.map(b=>cgSlot(k,'sindicato',b,b,R.decl.includes(b))).join('')}</tbody></table></div>`:'<p class="s">Este empleador no tiene boletas de sindicato cargadas en su ficha.</p>'}
+   <label class="s">Agregar otra boleta<br><select onchange="cgAgregarSind(this)"><option value="">Elegir…</option>${disp.map(b=>`<option>${b}</option>`).join('')}</select></label>`:'';
+  return `${datos}${cgEmpForm(k)}${filas('dependencia')}${filas('domestico')}${vep}${sind}
+   <p class="s" style="margin-top:10px">Para cargar varios recibos juntos, cada PDF debe llevar en el nombre el CUIL o el nombre y apellido del empleado. <label class="g sm" style="margin-left:6px">Subir varios recibos<input type="file" accept="application/pdf,.pdf" multiple hidden onchange="subirVarios(this)"></label></p>`;
+}
+function vCarga(){
+  const act=sueClientes().filter(c=>c.active!==false),s=ui.sueCfg,F=cgSt();
+  if(!act.length)return '<h2>Carga de sueldos</h2><div class="card">No hay empleadores cargados.</div>';
+  if(!ui.sd)setSd(act[0].id);
+  const lista=act.filter(cgOk),all=act.map(k=>({k,g:cgProg(k)})),compl=all.filter(x=>x.g.completo).length;
+  const c=sueCli(ui.sd.id);
+  return `<h2>Carga de sueldos</h2>
+  ${sueAltaCard()}
+  <p class="s" style="margin-bottom:12px">Cargá los recibos de sueldo, el VEP y las boletas de sindicatos de cada empleador. Lo que cargues aparece en el perfil del estudio para enviarlo.</p>
+  <div class="card row" style="margin-bottom:12px;gap:14px;flex-wrap:wrap;align-items:flex-end"><label>Período<br>${mesPick(s.periodo,`ui.sueCfg.periodo=this.value;draw()`)}</label>
+   <label>Tipo de recibo<br><select onchange="ui.sueCfg.tipo=this.value;draw()">${TIPOS_REC.map(t=>`<option ${s.tipo===t?'selected':''}>${t}</option>`).join('')}</select></label>
+   <div class="card kpi"><b>${act.length}</b><span>Empleadores</span></div><div class="card kpi"><b>${compl}</b><span>Completos</span></div><div class="card kpi"><b>${act.length-compl}</b><span>Con pendientes</span></div></div>
+  <div class="card row" style="margin-bottom:12px;gap:12px;flex-wrap:wrap;align-items:flex-end">
+   <label>Tipo de personal<br><select onchange="cgFil('tipo',this.value)"><option value="">Todos</option>${Object.entries(SUE_TIPOS).map(([k,t])=>`<option value="${k}" ${F.tipo===k?'selected':''}>${t}</option>`).join('')}</select></label>
+   <label>Estado<br><select onchange="cgFil('est',this.value)"><option value="">Todos</option><option value="pend" ${F.est==='pend'?'selected':''}>Con pendientes</option><option value="ok" ${F.est==='ok'?'selected':''}>Completos</option></select></label>
+   <label>Falta cargar<br><select onchange="cgFil('arch',this.value)"><option value="">Cualquier archivo</option><option value="rec" ${F.arch==='rec'?'selected':''}>Recibos de sueldo</option><option value="vep" ${F.arch==='vep'?'selected':''}>VEP</option><option value="sind" ${F.arch==='sind'?'selected':''}>Boletas de sindicatos</option></select></label>
+   <label>Buscar<br><input value="${esc(F.q)}" placeholder="Nombre o CUIT" onchange="cgFil('q',this.value)"></label></div>
+  ${lista.length?`<div class="tw" style="margin-bottom:18px"><table><thead><tr><th>Empleador</th><th>Personal</th><th>Recibos</th><th>VEP</th><th>Sindicatos</th><th></th></tr></thead><tbody>${lista.map(k=>{const g=cgProg(k);return `<tr style="${k.id===ui.sd.id?'background:rgba(120,160,255,.14)':''}"><td>${esc(k.razon_social)}<span class="s">CUIT ${cuitF(k.cuit)}</span></td><td>${g.R.tipos.map(t=>sueTag(t)).join(' ')||'<span class="s">-</span>'}</td><td>${cgBar(g.rec,g.em)}</td><td>${cgBar(g.vep,g.vepN)}</td><td>${g.R.sind.length?cgBar(g.sind,g.sindN):'<span class="s">-</span>'}</td><td><button class="g sm" onclick="cgEleg('${k.id}')">Abrir</button></td></tr>`}).join('')}</tbody></table></div>`:'<div class="card" style="margin-bottom:18px;color:var(--mut)">Ningún empleador coincide con los filtros.</div>'}
+  <div class="card" style="padding:20px">${c?cgDetalle(c):''}</div>`;
+}
+/** En el perfil del estudio: VEP y boletas de sindicatos cargados para el período, para verlos y marcarlos como enviados. */
+function cgArchivosCard(c){
+  const per=ui.sueCfg.periodo,L=(ui.sdAll.pf||[]).filter(x=>x.client_id===c.id&&x.periodo.slice(0,7)===per);
+  return `<div class="card" style="margin-top:18px"><b>VEP y boletas de sindicatos de ${mesAnio(per+'-01')}</b>
+   ${L.length?`<div class="tw" style="margin-top:8px"><table><thead><tr><th>Archivo</th><th>Concepto</th><th>Estado</th><th></th></tr></thead><tbody>${L.map(x=>`<tr><td>${esc(x.nombre_archivo)}</td><td>${x.categoria==='vep'?'VEP ':'Sindicato '}${esc(x.concepto)}</td><td>${x.enviado_at?`<span class="tag" style="background:var(--grn);color:var(--grnt)">Enviado</span><span class="s">${new Date(x.enviado_at).toLocaleDateString('es-AR')}</span>`:'<span class="tag" style="background:var(--amb);color:var(--ambt)">Pendiente</span>'}</td><td><div class="row" style="gap:4px"><button class="g sm" onclick="verArchivo('${x.path}')">Ver</button>${x.enviado_at?`<button class="g sm" onclick="cgEnviado('${x.id}',false)">Deshacer</button>`:`<button class="g sm" onclick="cgEnviado('${x.id}',true)">Marcar enviado</button>`}</div></td></tr>`).join('')}</tbody></table></div>`:'<p class="s" style="margin:6px 0 0">Todavía no se cargó ningún VEP ni boleta de este período. Se cargan desde "Carga de sueldos".</p>'}</div>`;
+}
+
+function cgEditarEmp(id){ui.sueCfg.editEmp=id;ui.sueCfg.draft=null;ui.sueCfg.formErr=null;ui.sueCfg.formAb=true;draw();const el=document.getElementById('empform');if(el)el.scrollIntoView({behavior:'smooth',block:'center'})}
+/** Alta y edición de empleados desde el perfil de carga (usa saveEmp, igual que en Sueldos). */
+function cgEmpForm(k){
+  const s=ui.sueCfg,f=ui.sd,tipos=sueTiposDe(k,f.emp),edit=f.emp.find(e=>e.id===s.editEmp),dr=s.draft||null;
+  const val=(n,alt)=>dr&&dr[n]!==undefined?dr[n]:alt,tipoSel=dr?dr.tipo:edit?edit.tipo:(tipos.includes(s.tipoNuevo)?s.tipoNuevo:tipos[0]);
+  if(!tipos.length&&!edit)return '<div class="msg warn" style="margin-bottom:12px">Este empleador no tiene tipo de personal cargado. Cargalo al darlo de alta para poder agregar empleados.</div>';
+  return `<details class="card" style="margin-bottom:14px" ${edit||s.formErr||s.formAb?'open':''} ontoggle="ui.sueCfg.formAb=this.open"><summary style="cursor:pointer;font-weight:700">${edit?'Editar empleado':'Agregar empleado'}</summary>
+  <form id="empform" onsubmit="return saveEmp(event)">${s.formErr?`<div class="msg err" style="margin-top:8px">${esc(s.formErr)}</div>`:''}<div class="fgrid" style="margin-top:8px">
+  <label>Tipo de personal<select name="tipo" onchange="ui.sueCfg.tipoNuevo=this.value">${Object.entries(SUE_TIPOS).filter(([t])=>tipos.includes(t)||(edit&&edit.tipo===t)).map(([t,n])=>`<option value="${t}" ${tipoSel===t?'selected':''}>${n}</option>`).join('')}</select></label>
+  <label>Nombre y apellido<input name="nombre" required value="${esc(val('nombre',edit&&edit.nombre))}"></label>
+  <label>CUIL (opcional)<input name="cuil" inputmode="numeric" placeholder="20-12345678-9" value="${esc(val('cuil',edit&&edit.cuil?cuitF(edit.cuil):''))}"></label>
+  <label>Celular de WhatsApp del empleado (opcional)<input name="whatsapp" inputmode="tel" placeholder="3537 412345" value="${esc(val('whatsapp',edit&&edit.whatsapp))}"></label>
+  <label>Cargo o categoría (opcional)<input name="cargo" value="${esc(val('cargo',edit&&edit.cargo))}"></label>
+  <label>Horas semanales (servicio doméstico)<input name="horas" inputmode="decimal" placeholder="Ej.: 16" value="${esc(val('horas',edit&&edit.horas_semanales!=null?String(edit.horas_semanales).replace('.',','):''))}"></label>
+  <label class="full">Observaciones<textarea name="observaciones" rows="2">${esc(val('observaciones',edit&&edit.observaciones))}</textarea></label>
+  <div class="full row"><button class="b">${edit?'Guardar cambios':'Agregar empleado'}</button>${edit?'<button type="button" class="g" onclick="ui.sueCfg.editEmp=null;ui.sueCfg.draft=null;ui.sueCfg.formErr=null;draw()">Cancelar</button>':''}</div></div></form></details>`;
+}
+
 /* ===== Secciones del menú: Sueldos (todos los clientes) y Anticipos ===== */
 ui.sdAll={emp:[],pay:[],prof:[]};
 async function loadSueldosAll(){
-  const [em,ps,pp,ct]=await Promise.all([sb.from('employees').select('*').order('nombre'),sb.from('payslips').select('*'),sb.from('payroll_profiles').select('*'),sb.from('client_contacts').select('*')]);
-  if(em.error)throw em.error;if(ps.error)throw ps.error;if(pp.error)throw pp.error;ui.sdAll={emp:em.data,pay:ps.data,prof:pp.data,ct:(ct&&!ct.error&&ct.data)||[]};if(ui.sd)setSd(ui.sd.id);
+  const [em,ps,pp,ct,pf]=await Promise.all([sb.from('employees').select('*').order('nombre'),sb.from('payslips').select('*'),sb.from('payroll_profiles').select('*'),sb.from('client_contacts').select('*'),sb.from('payroll_files').select('*')]);
+  if(em.error)throw em.error;if(ps.error)throw ps.error;if(pp.error)throw pp.error;ui.sdAll={emp:em.data,pay:ps.data,prof:pp.data,ct:(ct&&!ct.error&&ct.data)||[],pf:(pf&&!pf.error&&pf.data)||[]};if(ui.sd)setSd(ui.sd.id);
 }
 function sueResTipos(k){const ts=sueTiposDe(k,ui.sdAll.emp);return ts.length?'<span class="s">'+ts.map(t=>SUE_TIPOS[t]).join(' · ')+'</span>':''}
 function sueResVenc(k){
@@ -1839,7 +1977,7 @@ function vSueldosPage(){
   <div class="card" style="padding:20px"><h3 style="margin-top:0;font-size:20px">${esc(c.razon_social)}${c.solo_sueldos?' <span class="tag" style="background:var(--gry,#e5e7eb)">Solo Sueldos</span>':''}</h3>
   <div class="row" style="gap:8px;margin-bottom:12px">${c.solo_sueldos?`<button class="g sm" onclick="sueSoloCambiar(false)">Pasar a Clientes</button><button class="dng sm" onclick="sueEliminarEmpleador()">Eliminar empleador</button>`:`<button class="g sm" onclick="sueSoloCambiar(true)">Dejar solo en Sueldos</button>`}</div>
   ${aplica(c).includes('F931')?`<div class="card" style="margin-bottom:18px"><b>Cargas sociales (F.931) de ${mesAnio(s.periodo+'-01')}</b><div class="s" style="margin:4px 0 10px">Declaración jurada mensual de la empresa en ARCA, con el pago del VEP. Se arma con la liquidación de sueldos y es distinta de los recibos de cada empleado.</div>${cel(c,'F931',s.periodo)}</div>`:`<p class="s" style="margin-bottom:14px">Para controlar acá la presentación del F.931, tildá "Relación de dependencia" como tipo de personal de este empleador.</p>`}
-  ${vSueldos(c,ui.sd)}</div>`;
+  ${vSueldos(c,ui.sd)}${cgArchivosCard(c)}</div>`;
 }
 function irAnticipos(per){ui.antPer=per;show('anticipos')}
 function vAnticipos(){
