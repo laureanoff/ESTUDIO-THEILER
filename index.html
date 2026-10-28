@@ -389,7 +389,7 @@ function vComp(){
   <label>Período<br>${mesPick(ui.periodo,`ui.periodo=this.value;show('comprobantes')`)}</label>
   <label>Buscar<br><input value="${esc(ui.q)}" placeholder="CUIT, proveedor o número" oninput="ui.q=this.value;redrawTable()"></label>
   <label>Filtro<br><select onchange="ui.filtro=this.value;ui.sel.clear();draw()">${F.map(([k,t])=>`<option value="${k}" ${ui.filtro===k?'selected':''}>${t}</option>`).join('')}</select></label>
-  <button class="g" onclick="copiarFaltantes()">Copiar lista de faltantes</button><button class="b" onclick="abrirFicha(ui.cid,'pedir',ui.periodo)">Pedir faltantes por WhatsApp</button><button class="g" onclick="comprasExportarExcel()">Exportar Excel para importar al sistema</button></div>${(ui.cmpAvisos||[]).length?`<div class="card" style="margin-bottom:12px"><b>Avisos de la última exportación</b>${ui.cmpAvisos.slice(0,30).map(a=>`<div class="msg warn">${esc(a)}</div>`).join('')}${ui.cmpAvisos.length>30?`<div class="s">y ${ui.cmpAvisos.length-30} más</div>`:''}</div>`:''}${resumenIvaCompras()}<div id="tabla">${tabla(filtered())}</div>`;
+  <button class="g" onclick="copiarFaltantes()">Copiar lista de faltantes</button><button class="b" onclick="abrirFicha(ui.cid,'pedir',ui.periodo)">Pedir faltantes por WhatsApp</button><button class="g" onclick="comprasExportarExcel()">Exportar Excel para importar al sistema</button><button class="g" onclick="caratulaAbrir()">Carátula libro IVA</button></div>${(ui.cmpAvisos||[]).length?`<div class="card" style="margin-bottom:12px"><b>Avisos de la última exportación</b>${ui.cmpAvisos.slice(0,30).map(a=>`<div class="msg warn">${esc(a)}</div>`).join('')}${ui.cmpAvisos.length>30?`<div class="s">y ${ui.cmpAvisos.length-30} más</div>`:''}</div>`:''}${resumenIvaCompras()}<div id="tabla">${tabla(filtered())}</div>${caratulaModal()}`;
 }
 function redrawTable(){$('tabla').innerHTML=tabla(filtered())}
 function tabla(vs){
@@ -1968,6 +1968,41 @@ function cgEmpForm(k){
   <label>Horas semanales (servicio doméstico)<input name="horas" inputmode="decimal" placeholder="Ej.: 16" value="${esc(val('horas',edit&&edit.horas_semanales!=null?String(edit.horas_semanales).replace('.',','):''))}"></label>
   <label class="full">Observaciones<textarea name="observaciones" rows="2">${esc(val('observaciones',edit&&edit.observaciones))}</textarea></label>
   <div class="full row"><button class="b">${edit?'Guardar cambios':'Agregar empleado'}</button>${edit?'<button type="button" class="g" onclick="ui.sueCfg.editEmp=null;ui.sueCfg.draft=null;ui.sueCfg.formErr=null;draw()">Cancelar</button>':''}</div></div></form></details>`;
+}
+
+/* ===== Carátulas del libro IVA (para imprimir, por cliente y período) ===== */
+const caraSt=()=>ui.cara||(ui.cara={open:false,compras:true,ventas:true});
+const caraNombre=c=>String(c.razon_social||'').trim().toUpperCase();
+/** Tamaño del nombre: 46 pt como en el modelo y menos si el nombre es largo, para que entre en 1 o 2 renglones. */
+const caraPt=n=>n.length<=22?46:n.length<=34?36:n.length<=50?28:22;
+function caratulaHoja(c,per,o){
+  const nom=caraNombre(c),mes=(MESES[Number(per.slice(5,7))-1]+' '+per.slice(0,4)).toUpperCase();
+  const t=[o.compras?'Libro IVA compras':'',o.ventas?'IVA ventas':''].filter(Boolean);
+  return `<div id="cara_hoja" class="cara-hoja"><div class="cara-nom" style="font-size:${caraPt(nom)}pt">${esc(nom)}</div>
+   <div class="cara-sp"></div><div class="cara-tit">${t.map(esc).join('<br>')||'&nbsp;'}</div><div class="cara-sp"></div><div class="cara-mes">${esc(mes)}</div></div>`;
+}
+function caratulaAbrir(){caraSt().open=true;draw()}
+function caratulaCerrar(){caraSt().open=false;draw()}
+function caratulaSet(k,v){caraSt()[k]=v;draw()}
+function caratulaImprimir(){window.print()}
+function caratulaModal(){
+  const o=caraSt();if(!o.open)return '';
+  const c=ui.clients.find(x=>x.id===ui.cid);if(!c)return '';
+  return `<style>
+  .cara-hoja{width:210mm;height:297mm;box-sizing:border-box;padding:25mm 30mm;background:#fff;color:#000;font-family:Calibri,Carlito,Arial,sans-serif;font-weight:700;text-align:center;display:flex;flex-direction:column}
+  .cara-nom{line-height:1.25;word-break:break-word}.cara-sp{height:158pt}.cara-tit{font-size:48pt;line-height:1.5}.cara-mes{font-size:48pt;line-height:1.25}
+  .cara-back{position:fixed;inset:0;z-index:300;background:rgba(0,0,0,.72);overflow:auto;padding:16px}
+  .cara-bar{position:sticky;top:0;z-index:2;display:flex;gap:12px;flex-wrap:wrap;align-items:center;justify-content:center;margin:0 auto 14px;padding:10px 14px;border-radius:12px;background:#111c;backdrop-filter:blur(6px);max-width:760px;color:#fff}
+  .cara-prev{width:210mm;margin:0 auto;transform-origin:top center;box-shadow:0 8px 40px #0008}
+  @media (max-width:900px){.cara-prev{zoom:.45}}
+  @page{size:A4 portrait;margin:0}
+  @media print{body>*:not(#cara_modal){display:none!important}html,body{background:#fff!important;overflow:visible!important}.cara-back{position:static;background:none;padding:0;overflow:visible}.cara-bar{display:none!important}.cara-prev{box-shadow:none;margin:0;zoom:1!important}.cara-hoja{page-break-after:avoid}}
+  </style>
+  <div id="cara_modal" class="cara-back"><div class="cara-bar"><b>Carátula del libro IVA</b>
+   <label class="row" style="gap:6px;align-items:center"><input type="checkbox" style="margin:0" ${o.compras?'checked':''} onchange="caratulaSet('compras',this.checked)"> Libro IVA compras</label>
+   <label class="row" style="gap:6px;align-items:center"><input type="checkbox" style="margin:0" ${o.ventas?'checked':''} onchange="caratulaSet('ventas',this.checked)"> IVA ventas</label>
+   <button class="b" onclick="caratulaImprimir()">Imprimir</button><button class="g" onclick="caratulaCerrar()">Cerrar</button></div>
+   <div class="cara-prev">${caratulaHoja(c,ui.periodo,o)}</div></div>`;
 }
 
 /* ===== Secciones del menú: Sueldos (todos los clientes) y Anticipos ===== */
