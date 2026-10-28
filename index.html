@@ -1984,7 +1984,16 @@ function caratulaHoja(c,per,o){
 function caratulaAbrir(){caraSt().open=true;draw()}
 function caratulaCerrar(){caraSt().open=false;draw()}
 function caratulaSet(k,v){caraSt()[k]=v;draw()}
-function caratulaImprimir(){window.print()}
+/** Imprime la hoja desde un contenedor propio colgado directo del body (si no, al ocultar el resto de la página sale en blanco). */
+function caratulaImprimir(){
+  const c=ui.clients.find(x=>x.id===ui.cid);if(!c)return;
+  let d=document.getElementById('cara_print');if(d)d.remove();
+  d=document.createElement('div');d.id='cara_print';d.innerHTML=caratulaHoja(c,ui.periodo,caraSt()).replace('id="cara_hoja"','');
+  document.body.appendChild(d);document.documentElement.classList.add('cara-printing');
+  const fin=()=>{document.documentElement.classList.remove('cara-printing');const e=document.getElementById('cara_print');if(e)e.remove();window.removeEventListener('afterprint',fin)};
+  window.addEventListener('afterprint',fin);
+  setTimeout(()=>{try{window.print()}catch(e){fin()}},50);
+}
 /** PDF A4 de la carátula (para imprimir desde el celular o guardar). Misma disposición que la vista previa. */
 function caratulaPdf(c,per,o){
   if(!window.jspdf||!window.jspdf.jsPDF)throw new Error('No se pudo cargar el generador de PDF (¿sin internet?).');
@@ -2025,7 +2034,8 @@ function caratulaModal(){
   .cara-prev{width:210mm;margin:0 auto;transform-origin:top center;box-shadow:0 8px 40px #0008}
   @media (max-width:900px){.cara-prev{zoom:.45}}
   @page{size:A4 portrait;margin:0}
-  @media print{body>*:not(#cara_modal){display:none!important}html,body{background:#fff!important;overflow:visible!important}.cara-back{position:static;background:none;padding:0;overflow:visible}.cara-bar{display:none!important}.cara-prev{box-shadow:none;margin:0;zoom:1!important}.cara-hoja{page-break-after:avoid}}
+  #cara_print{display:none}
+  @media print{html.cara-printing body>*:not(#cara_print){display:none!important}html.cara-printing,html.cara-printing body{background:#fff!important;overflow:visible!important;margin:0!important;padding:0!important}html.cara-printing #cara_print{display:block!important}#cara_print .cara-hoja{height:296mm;page-break-after:avoid;break-after:avoid}}
   </style>
   <div id="cara_modal" class="cara-back"><div class="cara-bar"><b>Carátula del libro IVA</b>
    <label class="row" style="gap:6px;align-items:center"><input type="checkbox" style="margin:0" ${o.compras?'checked':''} onchange="caratulaSet('compras',this.checked)"> Libro IVA compras</label>
