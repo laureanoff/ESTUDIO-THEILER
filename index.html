@@ -1985,6 +1985,35 @@ function caratulaAbrir(){caraSt().open=true;draw()}
 function caratulaCerrar(){caraSt().open=false;draw()}
 function caratulaSet(k,v){caraSt()[k]=v;draw()}
 function caratulaImprimir(){window.print()}
+/** PDF A4 de la carátula (para imprimir desde el celular o guardar). Misma disposición que la vista previa. */
+function caratulaPdf(c,per,o){
+  if(!window.jspdf||!window.jspdf.jsPDF)throw new Error('No se pudo cargar el generador de PDF (¿sin internet?).');
+  const doc=new window.jspdf.jsPDF({unit:'pt',format:'a4',orientation:'portrait'}),W=595.28,mx=85,maxW=W-2*mx;
+  const nom=caraNombre(c),mes=(MESES[Number(per.slice(5,7))-1]+' '+per.slice(0,4)).toUpperCase(),tit=[o.compras?'Libro IVA compras':'',o.ventas?'IVA ventas':''].filter(Boolean);
+  doc.setFont('helvetica','bold');
+  const linea=(txt,pt,y)=>{let f=pt;doc.setFontSize(f);while(doc.getTextWidth(txt)>maxW&&f>14){f-=1;doc.setFontSize(f)}doc.text(txt,W/2,y,{align:'center'})};
+  let y=71+40;
+  let pn=44;doc.setFontSize(pn);while(doc.getTextWidth(nom)>maxW&&pn>30){pn-=1;doc.setFontSize(pn)}
+  const partes=doc.getTextWidth(nom)>maxW?doc.splitTextToSize(nom,maxW):[nom];
+  partes.forEach(t=>{linea(t,pn,y);y+=pn*1.25});
+  y+=158;
+  tit.forEach(t=>{linea(t,44,y);y+=44*1.5});
+  y+=158-(tit.length?0:0);
+  linea(mes,44,y);
+  return doc;
+}
+async function caratulaPdfAccion(){
+  try{
+    const c=ui.clients.find(x=>x.id===ui.cid),o=caraSt(),doc=caratulaPdf(c,ui.periodo,o);
+    const nombre=`Caratula libro IVA - ${caraNombre(c)} - ${ui.periodo}.pdf`;
+    const blob=doc.output('blob'),file=new File([blob],nombre,{type:'application/pdf'});
+    if(navigator.canShare&&navigator.canShare({files:[file]})){
+      try{await navigator.share({files:[file],title:nombre});return}catch(e){if(e&&e.name==='AbortError')return}
+    }
+    const u=URL.createObjectURL(blob),a=document.createElement('a');a.href=u;a.download=nombre;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),30000);
+    flash('Se descargó el PDF de la carátula. Abrilo e imprimilo.','ok');draw();
+  }catch(e){flash(errTxt(e),'err');draw()}
+}
 function caratulaModal(){
   const o=caraSt();if(!o.open)return '';
   const c=ui.clients.find(x=>x.id===ui.cid);if(!c)return '';
@@ -2001,7 +2030,7 @@ function caratulaModal(){
   <div id="cara_modal" class="cara-back"><div class="cara-bar"><b>Carátula del libro IVA</b>
    <label class="row" style="gap:6px;align-items:center"><input type="checkbox" style="margin:0" ${o.compras?'checked':''} onchange="caratulaSet('compras',this.checked)"> Libro IVA compras</label>
    <label class="row" style="gap:6px;align-items:center"><input type="checkbox" style="margin:0" ${o.ventas?'checked':''} onchange="caratulaSet('ventas',this.checked)"> IVA ventas</label>
-   <button class="b" onclick="caratulaImprimir()">Imprimir</button><button class="g" onclick="caratulaCerrar()">Cerrar</button></div>
+   <button class="b" onclick="caratulaPdfAccion()">PDF (celular: compartir / descargar)</button><button class="g" onclick="caratulaImprimir()">Imprimir</button><button class="g" onclick="caratulaCerrar()">Cerrar</button></div>
    <div class="cara-prev">${caratulaHoja(c,ui.periodo,o)}</div></div>`;
 }
 
