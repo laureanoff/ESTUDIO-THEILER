@@ -6863,8 +6863,8 @@ async function tk2Dup(t){
   const d=t.datos||{},cuit=String(d.cuit||'').replace(/\D/g,''),pv=pNum(d.pv||'0'),num=pNum(d.num),tipo=Number(d.tipo),total=pNum(d.total),fecha=pDate(d.fecha);
   const tok=t.dupTok=(t.dupTok||0)+1;let res=null;
   try{
-    const cols='id,fecha,tipo_cmp,punto_venta,numero,emisor_cuit,emisor_nombre,importe_total,doc_status,created_at,raw',filas=new Map();
-    const add=q=>{if(q&&!q.error)(q.data||[]).forEach(v=>filas.set(v.id,v))};
+    const cols='id,fecha,tipo_cmp,punto_venta,numero,emisor_cuit,emisor_nombre,importe_total,doc_status,raw',filas=new Map();
+    t.dupErr=null;const add=q=>{if(q&&q.error)t.dupErr=q.error.message||'error';else if(q)(q.data||[]).forEach(v=>filas.set(v.id,v))};
     if(cuit.length===11)add(await sb.from('vouchers').select(cols).eq('client_id',t.cid).eq('emisor_cuit',cuit).limit(3000));
     if(fecha)add(await sb.from('vouchers').select(cols).eq('client_id',t.cid).eq('fecha',fecha).limit(3000));
     if(num!==null&&Number.isInteger(num)&&num>0)add(await sb.from('vouchers').select(cols).eq('client_id',t.cid).eq('numero',num).limit(1000));
@@ -6872,15 +6872,15 @@ async function tk2Dup(t){
     for(const v of filas.values()){const s=tk2Puntaje(v,{cuit,pv,num,tipo,total,fecha});if(s&&(!mejor||s.p>mejor.p))mejor={...s,v}}
     if(mejor)res=mejor.nivel==='igual'?{nivel:'igual',v:mejor.v}:{nivel:'posible',v:mejor.v,motivo:mejor.motivo};
     if(!res&&t.hash){
-      const q=await sb.from('import_batches').select('id,file_name,created_at').eq('client_id',t.cid).eq('file_sha256',t.hash);
+      const q=await sb.from('import_batches').select('id,file_name,imported_at').eq('client_id',t.cid).eq('file_sha256',t.hash);
       if(!q.error&&(q.data||[]).length)res={nivel:'foto',b:q.data[0]};
     }
-  }catch(e){res=null}
+  }catch(e){res=null;t.dupErr=e.message||'error'}
   if(t.dupTok!==tok)return t.dup;
   t.dup=res;return res;
 }
 function tkDupHtml(t){
-  const r=t&&t.dup;if(!r)return '';
+  const r=t&&t.dup;if(!r)return t&&t.dupErr?`<div class="msg warn">No pude verificar si este ticket ya estaba cargado (${esc(t.dupErr)}). Revisalo a mano antes de guardar.</div>`:'';
   const nom=x=>(TK_TIPOS.find(y=>y[0]===x)||[0,'Comprobante'])[1];
   if(r.nivel==='foto')return `<div class="msg warn">Esta misma foto ya se cargó antes (${esc(r.b.file_name||'ticket')}). Revisá que no sea el mismo ticket antes de guardarlo.</div>`;
   const v=r.v,desc=`${esc(nom(v.tipo_cmp))} ${esc(nroF(v.punto_venta,v.numero))} de ${esc(v.emisor_nombre||'')} del ${tk2Fecha(v.fecha)} por ${money(v.importe_total)}`,rec=v.doc_status==='recibida_fisica';
