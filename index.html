@@ -6805,12 +6805,12 @@ async function tk2Dup(t){
   const tok=t.dupTok=(t.dupTok||0)+1;let res=null;
   try{
     if(cuit.length===11&&num!==null&&num>0&&pv!==null&&Number.isInteger(pv)){
-      const q=await sb.from('vouchers').select('id,fecha,tipo_cmp,punto_venta,numero,emisor_nombre,importe_total,doc_status,created_at').eq('client_id',t.cid).eq('emisor_cuit',cuit).eq('punto_venta',pv).eq('numero',num);if(q.error)throw q.error;
+      const q=await sb.from('vouchers').select('id,fecha,tipo_cmp,punto_venta,numero,emisor_nombre,importe_total,doc_status,created_at,raw').eq('client_id',t.cid).eq('emisor_cuit',cuit).eq('punto_venta',pv).eq('numero',num);if(q.error)throw q.error;
       const ig=(q.data||[]).find(v=>v.tipo_cmp===tipo);
       if(ig)res={nivel:'igual',v:ig};else if((q.data||[]).length)res={nivel:'posible',v:q.data[0],motivo:'tiene el mismo proveedor, punto de venta y número pero otro tipo de comprobante'};
     }
     if(!res&&cuit.length===11&&fecha&&total!==null&&total>0){
-      const q=await sb.from('vouchers').select('id,fecha,tipo_cmp,punto_venta,numero,emisor_nombre,importe_total,doc_status,created_at').eq('client_id',t.cid).eq('emisor_cuit',cuit).eq('fecha',fecha).eq('importe_total',total);
+      const q=await sb.from('vouchers').select('id,fecha,tipo_cmp,punto_venta,numero,emisor_nombre,importe_total,doc_status,created_at,raw').eq('client_id',t.cid).eq('emisor_cuit',cuit).eq('fecha',fecha).eq('importe_total',total);
       if(!q.error&&(q.data||[]).length)res={nivel:'posible',v:q.data[0],motivo:'es del mismo proveedor, de la misma fecha y por el mismo importe'};
     }
     if(!res&&t.hash){
@@ -6826,7 +6826,9 @@ function tkDupHtml(t){
   const nom=x=>(TK_TIPOS.find(y=>y[0]===x)||[0,'Comprobante'])[1];
   if(r.nivel==='foto')return `<div class="msg warn">Esta misma foto ya se cargó antes (${esc(r.b.file_name||'ticket')}). Revisá que no sea el mismo ticket antes de guardarlo.</div>`;
   const v=r.v,desc=`${esc(nom(v.tipo_cmp))} ${esc(nroF(v.punto_venta,v.numero))} de ${esc(v.emisor_nombre||'')} del ${tk2Fecha(v.fecha)} por ${money(v.importe_total)}`;
-  if(r.nivel==='igual')return `<div class="msg err"><b>Este ticket ya está cargado:</b> ${desc}. No se puede cargar dos veces.</div>`;
+  if(r.nivel==='igual'){
+    if(v.doc_status==='recibida_fisica')return `<div class="msg ok"><b>Este ticket ya estaba cargado y marcado como recibido:</b> ${desc}. No hace falta hacer nada.</div>`;
+    return `<div class="msg warn"><b>Este comprobante ya está cargado (viene de ARCA) y figura sin recibir:</b> ${desc}.<div class="row" style="margin-top:8px"><button class="b" id="tkmarcar" onclick="tkMarcar()">Marcar como recibido</button></div></div>`}
   return `<div class="msg warn"><b>Ojo, puede ser un duplicado:</b> ya hay cargado ${desc}; ${esc(r.motivo)}. Confirmá que sea otro ticket antes de guardar.</div>`;
 }
 function tkDupRender(){
@@ -6917,6 +6919,23 @@ function tkHtml(){
   <div id="tksum" style="margin-top:8px">${tkSumaHtml(t)}</div>
   <div class="row" style="margin-top:10px"><button id="tkbtn" class="b" onclick="tkGuardar()" ${t.dup&&t.dup.nivel==='igual'?'disabled':''}>Guardar ticket y marcarlo como recibido</button><button class="g" onclick="tkCancelar()">Descartar</button></div>
   ${t.texto?`<details style="margin-top:8px"><summary class="s" style="cursor:pointer">Ver el texto que se leyó de la foto</summary><pre style="white-space:pre-wrap;font-size:12px;color:var(--mut)">${esc(t.texto)}</pre></details>`:''}</div>`;
+}
+
+/** El ticket ya figura en el sistema (por ejemplo, importado de ARCA) y todavía no se recibió: se lo marca como recibido y se guarda la foto. */
+async function tkMarcar(){
+  const t=TK();if(!t||!t.dup||t.dup.nivel!=='igual'||t.marcando)return;const v=t.dup.v;t.marcando=true;let path=null;
+  try{
+    const {data,error}=await sb.from('vouchers').update({doc_status:'recibida_fisica',received_at:new Date().toISOString(),updated_by:me.id}).eq('id',v.id).neq('doc_status','recibida_fisica').select('id');if(error)throw error;
+    if(!data.length){t.marcando=false;return flash('Otra persona ya lo marcó como recibido. No se cambió nada.')}
+    const {error:e2}=await sb.from('document_receipts').insert({voucher_id:v.id,method:'manual',received_by:me.id,match_result:'ticket_foto'});if(e2)throw e2;
+    try{ // la foto queda asociada al comprobante (botón Foto)
+      if(t.blob&&!(v.raw&&v.raw.archivo_path)){path=`${t.cid}/tickets/${crypto.randomUUID()}.jpg`;const up=await sb.storage.from('clientes').upload(path,t.blob,{contentType:'image/jpeg',upsert:false});if(up.error)throw up.error;
+        const r=await sb.from('vouchers').update({raw:{...(v.raw||{}),archivo_path:path,archivo_nombre:t.nombre,foto_ticket:true}}).eq('id',v.id);if(r.error)throw r.error}
+    }catch(e){if(path)await sb.storage.from('clientes').remove([path])}
+    const cli=ui.clients.find(c=>c.id===t.cid);QRS.list.unshift(`${new Date().toLocaleTimeString('es-AR')}, ${cli?cli.razon_social+', ':''}${v.emisor_nombre||''}, ticket ${nroF(v.punto_venta,v.numero)}`);
+    clearTimeout(t.dupTimer);if(t.url)URL.revokeObjectURL(t.url);ui.tk=null;flash(`Listo: ${v.emisor_nombre||'el comprobante'} ${nroF(v.punto_venta,v.numero)} quedó marcado como recibido.`);
+  }catch(e){t.marcando=false;flash(errTxt(e),'err')}
+  draw();
 }
 async function tkGuardar(){
   const t=TK();if(!t||t.estado!=='form'||t.guardando)return;const d=t.datos,bad=m=>{flash(m,'err');draw()};
