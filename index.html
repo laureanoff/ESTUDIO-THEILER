@@ -170,7 +170,7 @@ function planImport(parsed,meta,existing,ctx){
 
 
 /* ===== Supabase ===== */
-const APP_VERSION='26/10/2026, perfil de carga de sueldos (recibos, VEP y sindicatos) y envío de recibos con estado enviado/pendiente';
+const APP_VERSION='29/10/2026, lector de tickets mejorado: foto enderezada, doble lectura de números, validación por suma y CUIT, QR de ARCA y aviso de ticket ya cargado';
 const SUPABASE_URL='https://tugdqcoxcpsiynlvnqdu.supabase.co';
 const SUPABASE_KEY='sb_publishable_2-96VeZrsNNftRXkzA1l_A_YG7ThJrL'; // clave pública: los permisos los da la base (RLS)
 const sb=(typeof supabase!=='undefined')?supabase.createClient(SUPABASE_URL,SUPABASE_KEY):null;
@@ -6449,47 +6449,309 @@ async function recProgramarDesde(cid,per){
 
 /* ===== Ticket por foto: la foto se lee con OCR (texto de la imagen) y la persona confirma los datos antes de guardar =====
    El OCR puede equivocarse: por eso nunca se guarda sin que se revisen los campos contra la foto. */
+/* ===== Lector de tickets v2: lectura, validaciones cruzadas y control de duplicados ===== */
 const TK_TIPOS=[[83,'Tique'],[81,'Tique factura A'],[82,'Tique factura B'],[1,'Factura A'],[6,'Factura B'],[11,'Factura C'],[51,'Factura M']];
 const tkN=s=>String(s).normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();
 function cuitValido(c){if(!/^\d{11}$/.test(c))return false;const w=[5,4,3,2,7,6,5,4,3,2];let s=0;for(let i=0;i<10;i++)s+=w[i]*Number(c[i]);let d=11-s%11;if(d===11)d=0;else if(d===10)d=9;return d===Number(c[10])}
+/** Si el CUIT leído no cierra con su dígito verificador, prueba cambiar de a un dígito. Solo lo corrige si hay UNA única opción. */
+function tk2CuitRepara(c){
+  if(!/^\d{11}$/.test(c)||cuitValido(c))return null;
+  const ops=[];for(let i=0;i<11;i++)for(let d=0;d<10;d++){if(String(d)===c[i])continue;const x=c.slice(0,i)+d+c.slice(i+1);if(cuitValido(x)&&/^(20|23|24|25|26|27|30|33|34)/.test(x))ops.push(x)}
+  return ops.length===1?ops[0]:null;
+}
 /** El OCR confunde letras con números dentro de un número de documento (O por 0, I o l por 1, S por 5, B por 8). */
 const tkDig=s=>s.replace(/[0-9OoIl|SB][0-9OoIl|SB\-.\s]{8,}[0-9OoIl|SB]/g,m=>m.replace(/[Oo]/g,'0').replace(/[Il|]/g,'1').replace(/S/g,'5').replace(/B/g,'8'));
-function tkParse(texto,cuitCli){
-  const raw=String(texto||'').split(/\r?\n/).map(l=>l.replace(/\s+/g,' ').trim()).filter(Boolean),L=raw.map(tkDig),N=L.map(tkN),r={avisos:[]};
-  // CUIT del emisor: válido por dígito verificador y distinto al del cliente (en un tique A también figura el del cliente)
-  const cands=[];L.forEach((l,i)=>{const re=/(?<!\d)(\d{2})\s*[-.]?\s*(\d{8})\s*[-.]?\s*(\d)(?!\d)/g;let m;while((m=re.exec(l))){const c=m[1]+m[2]+m[3];if(c!==cuitCli&&!cands.some(x=>x.c===c))cands.push({c,i,ok:cuitValido(c),cu:/c\.?\s?u\.?\s?i\.?\s?t/i.test(l)})}});
-  const buen=cands.find(x=>x.ok&&x.cu)||cands.find(x=>x.ok)||cands.find(x=>x.cu)||cands[0];
-  if(buen){r.cuit=buen.c;if(!buen.ok)r.avisos.push('El CUIT leído no tiene un dígito verificador válido: revisalo contra la foto.')}
-  // Razón social: primera línea con letras antes del CUIT
-  const lim=buen?buen.i:Math.min(6,L.length);
-  for(let i=0;i<lim;i++){const l=L[i].replace(/^(raz[oó]n social|nombre|denominaci[oó]n)\s*[:.]?\s*/i,'');if((l.match(/[A-Za-zÁÉÍÓÚÑáéíóúñ]/g)||[]).length>=4&&!/ticket|tique|factura|original|duplicado|documento|no v[aá]lido|fecha|cuit|c\.u\.i\.t|iva|ing\.? ?brutos|domicilio|tel[eé]fono|inicio de act/i.test(l)&&l.length<=60){r.nombre=l;break}}
-  // Tipo de comprobante
+/** Último importe de un renglón como cadena de dígitos en centavos ("4488835"). Un carácter que no es dígito dentro del número queda como "?" (comodín). */
+function tk2Monto(l){
+  const t=String(l).replace(/\d{1,3}(?:[.,]\d{1,3})?\s*%/g,' ').replace(/[$]/g,' ').trim();
+  const m=t.match(/([\d€?][\d€?.,\s]*?)[,.]\s?([\d€?]{2})\s*$/);if(!m)return null;
+  const ent=m[1].replace(/[.,\s]/g,'').replace(/[^\d]/g,'?');if(!ent||ent.length>11)return null;
+  return ent+m[2].replace(/[^\d]/g,'?');
+}
+const tk2Cent=s=>/^\d+$/.test(s)?Number(s):null;
+const tk2Pesos=c=>Math.round(c)/100;
+/** Variantes de una cadena de dígitos con UN error de lectura: un dígito cambiado, uno de más o uno de menos. */
+function tk2Variantes(s){
+  const out=new Set();const D='0123456789';
+  for(let i=0;i<s.length;i++){for(const d of D)if(d!==s[i])out.add(s.slice(0,i)+d+s.slice(i+1));if(s.length>3)out.add(s.slice(0,i)+s.slice(i+1))}
+  for(let i=0;i<=s.length;i++)for(const d of D)out.add(s.slice(0,i)+d+s.slice(i));
+  return [...out].filter(x=>x.length>=3&&x.length<=12).map(Number);
+}
+function tk2Llena(s){ // reemplaza los comodines por todos los dígitos posibles (hasta 2)
+  const q=(s.match(/\?/g)||[]).length;if(!q)return [s];if(q>2)return [];
+  let a=[s];for(let k=0;k<q;k++){const b=[];for(const x of a)for(const d of '0123456789')b.push(x.replace('?',d));a=b}return a;
+}
+/**
+ * Resuelve los importes con la cuenta: neto + IVA + no gravado + exento + otros tributos = total.
+ * obs: {neto,iva,nog,exe,otros,total} con listas de lecturas (cadenas en centavos). Una lista vacía = el campo no figura.
+ * Busca la combinación que cierra la suma con la menor cantidad de dígitos tocados (hasta 3). Si hay más de una, no toca nada.
+ */
+function tk2Resolver(obs,opts){
+  opts=opts||{};const K=['neto','iva','nog','exe','otros','total'],base={},vars={},topv={};
+  const libres=[];
+  for(const k of K){
+    const o=(obs[k]||[]).filter(Boolean);
+    if(!o.length){if(k==='nog'||k==='exe'||k==='otros'){vars[k]=new Map([[0,0]]);base[k]=0}else{vars[k]=null;libres.push(k);base[k]=null}continue}
+    const m=new Map(),cnt=new Map();o.forEach(x=>cnt.set(x,(cnt.get(x)||0)+1));
+    // si varias lecturas coinciden en un valor, ese es el que vale; los valores que salieron una sola vez cuentan como un dígito dudoso
+    const mx=Math.max(...cnt.values()),tops=[...cnt].filter(([,q])=>q===mx).map(([x])=>x),cons=mx>=2&&tops.length===1;
+    for(const [x,q] of cnt){const c=cons&&x!==tops[0]?1:0;for(const f of tk2Llena(x)){const v=Number(f);if(!m.has(v)||m.get(v)>c)m.set(v,c)}}
+    if(!(opts.fijos||[]).includes(k))for(const x of (cons?[tops[0]]:[...cnt.keys()])){for(const f of tk2Llena(x))for(const v of tk2Variantes(f)){if(!m.has(v))m.set(v,1)}}
+    topv[k]=cons?Number(tk2Llena(tops[0])[0]??NaN):null;vars[k]=m;base[k]=Number(tk2Llena(cons?tops[0]:o[0])[0]??NaN);
+  }
+  const res={estado:'sin',val:{},corr:[]};
+  const presentes=K.filter(k=>vars[k]);
+  if(libres.length>1||(vars.total==null&&vars.neto==null)||(vars.iva==null&&vars.neto==null)){ // faltan datos para cruzar
+    for(const k of K)res.val[k]=vars[k]?(base[k]):null;return res;
+  }
+  const claves=K.filter(k=>vars[k]);
+  const SG={neto:1,iva:1,nog:1,exe:1,otros:1,total:-1};
+  const sols=new Map();let mejor=99;
+  const libre=libres[0]||null;
+  const guardar=(cur,cc)=>{if(cc<mejor)mejor=cc;const o={};for(const k of K)o[k]=cur[k];const key=K.map(k=>o[k]).join('|'),ya=sols.get(key);if(!ya||ya._c>cc)sols.set(key,{...o,_c:cc})};
+  if(libre){
+    // un campo no figura: se deduce de los demás (cuenta como una corrección más)
+    const MAX=2,fijos=claves.filter(k=>k!==libre),arr=fijos.map(k=>[...vars[k]].sort((a,b)=>a[1]-b[1])),cur={};
+    const rec=(i,costo)=>{
+      if(i===fijos.length){let sum=0;for(const k of fijos)if(k!=='total')sum+=cur[k];
+        const v=libre==='total'?sum:(cur.total||0)-sum+(libre==='total'?0:0)-0;
+        let val=libre==='total'?sum:null;
+        if(libre!=='total'){let o=0;for(const k of fijos)if(k!=='total')o+=cur[k];val=(cur.total||0)-o}
+        if(val<0)return;cur[libre]=Math.round(val);guardar(cur,costo+1);delete cur[libre];return}
+      const k=fijos[i];for(const [v,c] of arr[i]){if(costo+c>MAX)continue;cur[k]=v;rec(i+1,costo+c)}delete cur[k]};
+    rec(0,0);
+  }else{
+    // todo figura: busco qué dígitos tocar para que neto+IVA+no gravado+exento+otros = total. Se divide en dos mitades para no probar todas las combinaciones.
+    const MAX=3,activos=claves.filter(k=>vars[k].size>1).sort((a,b)=>vars[b].size-vars[a].size),fijosK=claves.filter(k=>vars[k].size<=1),g1=[],g2=[];let p1=1,p2=1;
+    for(const k of activos){if(p1<=p2){g1.push(k);p1*=vars[k].size}else{g2.push(k);p2*=vars[k].size}}
+    const cte={};let sc=0;for(const k of fijosK){const v=[...vars[k].keys()][0];cte[k]=v;sc+=SG[k]*v}
+    const comb=(g,tope,fn)=>{const arr=g.map(k=>[...vars[k]]),cur={};const r=(i,sum,costo)=>{if(i===g.length){fn(cur,sum,costo);return}
+      const k=g[i];for(const [v,c] of arr[i]){if(costo+c>tope)continue;cur[k]=v;r(i+1,sum+SG[k]*v,costo+c)}};r(0,0,0)};
+    const m1=new Map();
+    comb(g1,MAX,(cur,sum,costo)=>{let a=m1.get(sum);if(!a)m1.set(sum,a=[]);a.push({c:costo,v:{...cur}})});
+    comb(g2,MAX,(cur,sum,costo)=>{const a=m1.get(-sum-sc);if(!a)return;for(const e of a){const cc=costo+e.c;if(cc>MAX)continue;guardar({...cte,...e.v,...cur},cc)}});
+  }
+  if(!sols.size){for(const k of K)res.val[k]=vars[k]?base[k]:null;res.estado='no_cierra';return res}
+  const tasas=[10.5,21,27,5,2.5,0],dev=x=>x.neto>0?Math.min(...tasas.map(t=>Math.abs(x.iva-x.neto*t/100)/100)):(x.iva===0?0:9e9);
+  const todas=[...sols.values()];let lista;
+  if(mejor===0&&!libre)lista=todas.filter(x=>x._c===0);
+  else{
+    // el IVA tiene que ser neto x alícuota vigente (al centavo): si alguna solución lo cumple, solo valen esas
+    const okTasa=todas.filter(x=>dev(x)<=0.011),pool=okTasa.length?okTasa:todas,mn=Math.min(...pool.map(x=>x._c));
+    lista=pool.filter(x=>x._c===mn);
+    if(lista.length>1){const dv=lista.map(x=>({x,d:dev(x)})).sort((p,q)=>p.d-q.d);if(dv[0].d<=0.011&&(dv[1].d>0.011||dv[1].d>=2*dv[0].d))lista=[dv[0].x]}
+    mejor=mn;
+  }
+  if(lista.length>1){if(opts.debug)console.log(lista);for(const k of K)res.val[k]=vars[k]?base[k]:null;res.estado='ambiguo';return res}
+  if(opts.debug)console.log(lista);const s=lista[0];
+  for(const k of K){res.val[k]=s[k];
+    const o=(obs[k]||[]).filter(Boolean);
+    if(o.length&&topv[k]!=null&&topv[k]!==s[k])res.corr.push(k);
+    else if(o.length&&topv[k]==null&&!o.some(x=>tk2Llena(x).some(y=>Number(y)===s[k])))res.corr.push(k);
+    else if(!o.length&&libre===k&&s[k])res.corr.push(k)}
+  res.estado=mejor===0&&!libre?'ok':'corregido';res.costo=mejor;
+  return res;
+}
+/** Qué dice el texto: importes por concepto (lecturas en centavos), CUIT, fecha, tipo, número… */
+function tk2Extraer(texto){
+  const raw=String(texto||'').split(/\r?\n/).map(l=>l.replace(/\s+/g,' ').trim()).filter(Boolean),L=raw.map(tkDig),N=L.map(l=>tkN(l).replace(/\./g,''));
+  const obs={neto:[],iva:[],nog:[],exe:[],otros:[],total:[]},acum={iva:[],otrosDet:[]};let ultImp=-1,otrosTot=null;
+  L.forEach((l,i)=>{
+    const n=N[i];if(/contenido|transparencia|ley 27|cae\b|vto|vencim|cuit|ingresos brutos|inicio/.test(n))return;
+    const m=tk2Monto(l);if(!m)return;
+    if(/otros tributos|total otros/.test(n)){otrosTot=m;ultImp=i;return}
+    if(/impuesto interno|percepcion|perc\b|iibb|imp int/.test(n)&&!/total/.test(n)){acum.otrosDet.push(m);ultImp=i;return}
+    if(/\bno gravad|no alcanzad/.test(n)){obs.nog.push(m);ultImp=i;return}
+    if(/\bexent/.test(n)&&!/responsable|inscripto|condicion/.test(n)){obs.exe.push(m);ultImp=i;return}
+    if(/sub ?total(?!.*neto)(?!.*gravad)/.test(n)&&!/neto|gravado/.test(n))return;
+    if(/gravado|\bneto\b|nero/.test(n)&&!/\bno gravad/.test(n)){obs.neto.push(m);ultImp=i;return}
+    if((/\biva\b|alicuota/.test(n))&&!/responsable|inscripto|condicion|consumidor|monotrib|exento/.test(n)){acum.iva.push(m);ultImp=i;return}
+    if(/suma de (sus )?pagos|total pagado/.test(n)){obs.total.push(m);return}
+    if(/^\W*(importe )?total\b/.test(n)&&!/sub ?total|iva|tributos/.test(n)){obs.total.push(m);ultImp=i;return}
+  });
+  if(otrosTot)obs.otros.push(otrosTot);else if(acum.otrosDet.length)obs.otros.push(String(acum.otrosDet.reduce((a,x)=>a+(tk2Cent(x)||0),0)));
+  if(acum.iva.length){const ok=acum.iva.filter(x=>/^\d+$/.test(x));obs.iva.push(ok.length===acum.iva.length?String(ok.reduce((a,x)=>a+Number(x),0)):acum.iva[acum.iva.length-1])}
+  // el total puede venir sin rótulo (renglón con solo el importe, pegado a los impuestos)
+  if(!obs.total.some(x=>true)||!L.some((l,i)=>/^\W*(importe )?total\b/.test(N[i])&&!/sub ?total|iva|tributos/.test(N[i]))){
+    for(let i=ultImp+1;i<Math.min(L.length,ultImp+4)&&ultImp>=0;i++){const t=L[i].replace(/^[^\d€?]{0,3}(?=[\d€?])/,'');if(/^[\d€?][\d€?.,\s]*[,.]\s?[\d€?]{2}$/.test(t)){const m=tk2Monto(t);if(m){obs.total.unshift(m);break}}}
+  }
+  return {raw,L,N,obs};
+}
+/** Datos de identificación de UNA lectura del texto: CUIT, nombre, tipo, punto de venta, número, fecha. */
+function tk2Ident(A,cuitCli){
+  const L=A.L,N=A.N,r={dud:[],avisos:[]};
+  const cands=[];L.forEach((l,i)=>{const re=/(?<!\d)(\d{2})\s*[-.]?\s*(\d{8})\s*[-.]?\s*(\d)(?!\d)/g;let m;while((m=re.exec(l))){const c=m[1]+m[2]+m[3];if(c!==cuitCli&&!cands.some(x=>x.c===c))cands.push({c,i,ok:cuitValido(c),rep:null,cli:/cliente|se[nñ]or|\bsr\b|comprador|adquirente/.test(N[i])})}});
+  cands.forEach(x=>{if(!x.ok)x.rep=tk2CuitRepara(x.c)});
+  const buen=cands.find(x=>x.ok&&!x.cli)||cands.find(x=>x.rep&&!x.cli)||cands.find(x=>x.ok)||cands[0];
+  if(buen){r.cuitLeido=buen.c;if(buen.ok)r.cuit=buen.c;else if(buen.rep){r.cuit=buen.rep;r.cuitRep=true}else{r.cuit=buen.c;r.cuitMal=true}}
+  const lim=buen?Math.max(1,buen.i):Math.min(6,L.length);
+  for(let i=0;i<lim;i++){
+    let l=L[i].replace(/^(raz[oó]n social|nombre|denominaci[oó]n)\s*[:.]?\s*/i,'');
+    if(/ticket|tique|factura|original|duplicado|documento|no v[aá]lido|fecha|cuit|c\.u\.i\.t|iva|ing\.? ?brutos|domicilio|tel[eé]fono|inicio de act|responsable/i.test(l))continue;
+    const toks=l.split(/\s+/);let best=[],cur=[];
+    for(const t of toks){if(/^[A-ZÁÉÍÓÚÑ0-9][A-ZÁÉÍÓÚÑ0-9.&\-]*$/.test(t)&&/[A-ZÁÉÍÓÚÑ]/.test(t)){cur.push(t);if(cur.length>best.length)best=[...cur]}else cur=[]}
+    let nom=best.join(' ');if(nom.replace(/[^A-ZÁÉÍÓÚÑ]/g,'').length<4)nom=(l.match(/[A-Za-zÁÉÍÓÚÑáéíóúñ]/g)||[]).length>=4&&l.length<=60?l.replace(/^[^A-Za-zÁÉÍÓÚÑ0-9]+|[^A-Za-zÁÉÍÓÚÑ0-9.]+$/g,''):'';
+    if(nom){r.nombre=nom;r.nomRuido=nom!==l.trim();break}
+  }
   const T=N.join(' ');
-  r.tipo=/(tique|ticket)\s*factura\s*a\b|tique\s*fact\.?\s*a\b/.test(T)?81:/(tique|ticket)\s*factura\s*b\b|tique\s*fact\.?\s*b\b/.test(T)?82:/factura\s*a\b|\bfc\s*a\b/.test(T)?1:/factura\s*b\b|\bfc\s*b\b/.test(T)?6:/factura\s*c\b/.test(T)?11:83;
-  // Punto de venta y número
+  const cod=T.match(/c[oó]d\.?\s*[=:]?\s*0*(\d{1,3})\b/),par=T.match(/\(\s*0*(1|6|11|51|81|82|83)\s*\)/);
+  const porTexto=/(tique|ticket)\s*fact\w*\s*a\b|tique\s*fact\.?\s*a\b/.test(T)?81:/(tique|ticket)\s*fact\w*\s*b\b|tique\s*fact\.?\s*b\b/.test(T)?82:/\bc?tura\s*a\b|\bfc\s*a\b/.test(T)?1:/\bc?tura\s*b\b|\bfc\s*b\b/.test(T)?6:/\bc?tura\s*c\b/.test(T)?11:null;
+  const porCod=par?Number(par[1]):(cod&&[1,6,11,51,81,82,83].includes(Number(cod[1]))?Number(cod[1]):null);
+  r.tipo=porTexto||porCod||83;r.tipoConflicto=!!(porTexto&&porCod&&porTexto!==porCod&&!(porCod%80===porTexto%80));
   let m=L.join('\n').match(/(?<!\d)(\d{4,5})\s*[-–]\s*(\d{6,8})(?!\d)/);
   if(m&&!(buen&&m[0].replace(/\D/g,'')===buen.c)){r.pv=Number(m[1]);r.num=Number(m[2])}
   else{
     const pv=T.match(/(?:p\.?\s?v\.?|pto\.?\s?(?:de\s)?v(?:ta|enta)\.?|punto\s+de\s+venta)\s*[:.nro°º]*\s*(\d{1,5})/),nu=T.match(/(?:\bn[ro°º.]*\s*(?:de\s)?(?:ticket|tique|comp(?:robante)?)?|comp(?:robante)?\.?\s*n[ro°º.]*|ticket\s*n[ro°º.]*|nro\.?)\s*[:.]?\s*(\d{1,8})(?!\d)/);
     if(pv)r.pv=Number(pv[1]);if(nu)r.num=Number(nu[1]);
   }
-  // Fecha
-  for(const l of L){const f=l.match(/(?<!\d)(\d{1,2})\s*[\/\-.]\s*(\d{1,2})\s*[\/\-.]\s*(\d{4}|\d{2})(?!\d)/);if(f){const y=f[3].length===2?2000+Number(f[3]):Number(f[3]),d=vDate(y,Number(f[2]),Number(f[1]));if(d){r.fecha=d;break}}}
-  // Importes
-  const mon=l=>liqMontos(l.replace(/(\d)\s+(\d{2})(?!\d)/g,'$1,$2'));
-  const totales=[];L.forEach((l,i)=>{if(/\btotal\b/.test(N[i])&&!/sub\s?total|total iva|total impuestos|iva/.test(N[i]))totales.push(...mon(l))});
-  const todos=[];L.forEach(l=>todos.push(...mon(l)));
-  r.total=totales.length?Math.max(...totales):(todos.length?Math.max(...todos):null);
-  const ivas=[];let netoL=null;
-  L.forEach((l,i)=>{const n=N[i];if(/contenido|transparencia|ley 27/.test(n))return;
-    if(/\biva\b/.test(n)&&/(10[.,]5|21|27|5|2[.,]5)\s*%/.test(n)&&!/responsable|inscripto|exento|consumidor|monotrib/.test(n)){const v=mon(l).filter(x=>r.total===null||x<r.total);if(v.length)ivas.push(v[v.length-1])}
-    if(/\b(neto|importe neto|base imponible|subtotal)\b/.test(n)&&!/iva\s*\d/.test(n)){const v=mon(l).filter(x=>r.total===null||x<=r.total);if(v.length&&netoL===null)netoL=v[v.length-1]}});
-  if(ivas.length){r.iva=liqPlata(ivas.reduce((a,x)=>a+x,0));r.neto=netoL!==null?netoL:(r.total!==null?liqPlata(r.total-r.iva):null)}
-  else if(r.tipo===81||r.tipo===1){r.avisos.push('No se encontró el IVA discriminado: cargalo a mano si la factura lo trae.')}
-  if(r.iva!==undefined&&r.neto!==null&&r.neto!==undefined&&r.total!==null&&Math.abs(r.neto+r.iva-r.total)>1.5)r.avisos.push('El neto más el IVA no coincide con el total: revisá los importes contra la foto.');
-  const ok=!!(r.cuit&&cuitValido(r.cuit)&&r.fecha&&r.total&&r.num!==undefined);
-  r.confianza=ok&&!r.avisos.length?'alta':(r.cuit&&r.fecha&&r.total)?'media':'baja';
+  const fechaDe=l=>{const f=l.match(/(?<!\d)(\d{1,2})\s*[\/\-.]\s*(\d{1,2})\s*[\/\-.]\s*(\d{4}|\d{2})(?!\d)/);if(!f)return null;const y=f[3].length===2?2000+Number(f[3]):Number(f[3]);return vDate(y,Number(f[2]),Number(f[1]))};
+  for(let i=0;i<L.length&&!r.fecha;i++)if(/fecha|emision/.test(N[i])&&!/inicio|actividad|vto|vencim/.test(N[i])){const d=fechaDe(L[i]);if(d)r.fecha=d}
+  for(let i=0;i<L.length&&!r.fecha;i++)if(!/inicio|actividad|vto|vencim|cae\b/.test(N[i])){const d=fechaDe(L[i]);if(d)r.fecha=d}
+  const cae=T.match(/vto\.?\s*(?:de\s*)?cae\D{0,6}(\d{8})/);
+  if(cae){const c=cae[1];r.vto=vDate(Number(c.slice(0,4)),Number(c.slice(4,6)),Number(c.slice(6,8)))}
   return r;
+}
+/** Elige el valor que más lecturas repiten. Devuelve {v, ok}: ok = hay al menos dos lecturas y ninguna lo contradice. */
+function tk2Voto(vals,n){
+  const def=vals.filter(x=>x!==undefined&&x!==null&&x!=='');if(!def.length)return {v:undefined,ok:false};
+  const cnt=new Map();def.forEach(x=>cnt.set(x,(cnt.get(x)||0)+1));
+  let v=def[0],c=0;for(const [k,q] of cnt)if(q>c){v=k;c=q}
+  const empate=[...cnt.values()].filter(q=>q===c).length>1;
+  return {v,ok:n<2?true:(c>=2&&c>n/2&&!empate)};
+}
+/**
+ * texto: lectura principal. alt: la misma lectura con los números releídos renglón por renglón. mas: otras lecturas completas de la misma foto
+ * (con otro tamaño). fijo: datos exactos del QR de ARCA.
+ */
+function tk2Parse(texto,cuitCli,alt,fijo,mas){
+  const A=tk2Extraer(texto),B=alt?tk2Extraer(alt):null,reads=[A,...(mas||[]).map(tk2Extraer)],n=reads.length,r={avisos:[],info:[],dud:[],lecturas:n};
+  const obs={};for(const k of Object.keys(A.obs)){obs[k]=[];for(const X of [...reads,...(B?[B]:[])])for(const x of new Set(X.obs[k]))obs[k].push(x)}
+  if(fijo&&fijo.total!=null)obs.total=[String(Math.round(fijo.total*100))];
+  const ids=reads.map(x=>tk2Ident(x,cuitCli)),F=fijo||{};
+  // CUIT: gana el que cierra con su dígito verificador; si hay varios, el más repetido
+  if(F.cuit)r.cuit=F.cuit;
+  else{
+    const val=ids.filter(x=>x.cuit&&!x.cuitMal),vv=tk2Voto(val.map(x=>x.cuit),val.length);
+    if(vv.v){r.cuit=vv.v;const rr=val.filter(x=>x.cuit===vv.v),rep=rr.length>0&&rr.every(x=>x.cuitRep);
+      if(rep){r.dud.push('cuit');r.avisos.push('El CUIT se leyó con un dígito dudoso y se corrigió con el dígito verificador ('+val.find(x=>x.cuitRep).cuitLeido+' → '+vv.v+'). Confirmalo contra la foto.')}
+      else if(val.length>=2&&!vv.ok){r.dud.push('cuit');r.avisos.push('Las lecturas de la foto no coinciden en el CUIT: confirmalo.')}}
+    else{const x=ids.find(y=>y.cuit);if(x){r.cuit=x.cuit;r.dud.push('cuit');r.avisos.push('El CUIT leído no tiene un dígito verificador válido: revisalo contra la foto.')}}
+  }
+  const nm=ids.map(x=>x.nombre).filter(Boolean);if(nm.length){r.nombre=nm[0];if(ids.find(x=>x.nombre)&&ids.find(x=>x.nombre).nomRuido||new Set(nm).size>1)r.dud.push('nombre')}
+  const tv=tk2Voto(ids.map(x=>x.tipo),n);r.tipo=F.tipo||tv.v||83;
+  if(!F.tipo&&(ids.some(x=>x.tipoConflicto)||!tv.ok&&n>=2)){r.dud.push('tipo');r.avisos.push('El tipo de comprobante no se lee igual en todas las lecturas: revisalo.')}
+  if(F.num){r.pv=F.pv;r.num=F.num}
+  else{
+    const pn=tk2Voto(ids.map(x=>x.num!==undefined&&x.pv!==undefined?x.pv+'-'+x.num:undefined),n);
+    if(pn.v){const [pv,nu]=pn.v.split('-').map(Number);r.pv=pv;r.num=nu;if(!pn.ok){r.dud.push('pv','num');r.avisos.push('Las lecturas de la foto no coinciden en el punto de venta y número ('+[...new Set(ids.filter(x=>x.num!==undefined).map(x=>nroF(x.pv,x.num)))].join(' / ')+'): confirmalos contra la foto.')}}
+    else{const x=ids.find(y=>y.pv!==undefined),y=ids.find(z=>z.num!==undefined);if(x)r.pv=x.pv;if(y)r.num=y.num;if(r.pv===undefined)r.dud.push('pv');if(r.num===undefined)r.dud.push('num')}
+  }
+  if(F.fecha)r.fecha=F.fecha;
+  else{
+    const fv=tk2Voto(ids.map(x=>x.fecha),n);r.fecha=fv.v;if(r.fecha&&!fv.ok){r.dud.push('fecha');r.avisos.push('Las lecturas de la foto no coinciden en la fecha: confirmala.')}
+    const vto=ids.map(x=>x.vto).find(Boolean);
+    if(vto&&r.fecha){const dd=Math.round((Date.parse(vto)-Date.parse(r.fecha))/864e5);if(dd!==10){r.dud.push('fecha');r.avisos.push('La fecha no coincide con el vencimiento del CAE (tendría que ser 10 días antes): revisala.')}}
+    else if(vto&&!r.fecha){r.fecha=new Date(Date.parse(vto)-10*864e5).toISOString().slice(0,10);r.dud.push('fecha');r.avisos.push('La fecha se calculó desde el vencimiento del CAE: confirmala.')}
+  }
+  const L=A.L;
+  // Importes
+  const sol=tk2Resolver(obs,{fijos:fijo&&fijo.total!=null?['total']:[]});
+  const v=sol.val,P=k=>v[k]==null||!isFinite(v[k])?null:tk2Pesos(v[k]);
+  r.neto=P('neto');r.iva=P('iva');r.nog=P('nog')||0;r.exe=P('exe')||0;r.otros=P('otros')||0;r.total=P('total');
+  r.suma=sol.estado;
+  const NOM={neto:'neto',iva:'IVA',nog:'no gravado',exe:'exento',otros:'otros tributos',total:'total'};let corrOk=[];
+  if(sol.estado==='corregido'){sol.corr.forEach(k=>r.dud.push(k));const txt='Se corrigieron dígitos mal leídos ('+sol.corr.map(k=>NOM[k]).join(', ')+') porque con esos valores la suma neto + IVA + otros conceptos da exactamente el total.';
+    if(sol.costo<=2){corrOk=sol.corr;r.info.push(txt)}else r.avisos.push(txt+' Son varios cambios: confirmalos contra la foto.')}
+  else if(sol.estado==='ambiguo'||sol.estado==='no_cierra'){['neto','iva','total'].forEach(k=>r.dud.push(k));r.avisos.push(sol.estado==='ambiguo'?'Los importes leídos no cierran y hay más de una forma de corregirlos: revisalos contra la foto.':'El neto, el IVA y los demás conceptos no suman el total: revisá los importes contra la foto.')}
+  else if(sol.estado==='sin'){
+    if(r.total===null){const t=[];L.forEach(l=>{const m=tk2Monto(l);if(m&&/^\d+$/.test(m))t.push(Number(m))});if(t.length){r.total=tk2Pesos(Math.max(...t));r.dud.push('total');r.avisos.push('No se encontró el rótulo del total: se tomó el importe más alto del ticket. Confirmalo.')}}
+    if(r.total!==null&&r.iva===null&&(r.tipo===81||r.tipo===1))r.avisos.push('No se encontró el IVA discriminado: cargalo a mano si la factura lo trae.')}
+  // Confianza: alta solo si todo cierra sin tocar nada
+  const tieneNro=r.num!==undefined&&r.pv!==undefined,claveOk=!!(r.cuit&&cuitValido(r.cuit)&&r.fecha&&r.total&&tieneNro);
+  const sinTocar=!r.avisos.length&&r.dud.every(k=>k==='nombre'||corrOk.includes(k));
+  const cruzaImportes=sol.estado==='ok'||(sol.estado==='corregido'&&corrOk.length>0)||((r.tipo!==81&&r.tipo!==1)&&r.neto===null);
+  r.confianza=claveOk&&sinTocar&&cruzaImportes&&r.nombre?'alta':(r.cuit&&r.fecha&&r.total)?'media':'baja';
+  return r;
+}
+const tkParse=(texto,cuitCli,alt,fijo,mas)=>tk2Parse(texto,cuitCli,alt,fijo,mas);
+/** Combina la lectura completa con la lectura de solo números de cada renglón con importe: devuelve el texto alternativo. */
+function tk2Mezcla(lineas,numeros){
+  return lineas.map((l,i)=>{const nu=numeros[i];if(!nu)return l;const t=String(nu).match(/\d[\d.,]*[,.]\d\d(?!\d)(?!.*\d[,.]\d\d)/);if(!t||!tk2Monto(l))return l;
+    const k=l.search(/[\d€?][\d€?.,\s]*[,.]\s?[\d€?]{2}\s*$/);if(k<0)return l;return l.slice(0,k)+t[0]}).join('\n');
+}
+/* ===== Lector de tickets v2: preparación de la foto (recorte del papel, enderezado y limpieza) ===== */
+/** Pasa la foto a gris y busca el papel (la zona clara más grande). Devuelve el ángulo que hay que girar para dejarlo derecho. */
+function tk2Gris(bmp,maxLado){
+  const k=Math.min(1,maxLado/Math.max(bmp.width,bmp.height)),w=Math.max(1,Math.round(bmp.width*k)),h=Math.max(1,Math.round(bmp.height*k));
+  const c=document.createElement('canvas');c.width=w;c.height=h;const x=c.getContext('2d',{willReadFrequently:true});x.drawImage(bmp,0,0,w,h);
+  const d=x.getImageData(0,0,w,h).data,g=new Uint8Array(w*h);for(let i=0,j=0;i<d.length;i+=4,j++)g[j]=(d[i]*299+d[i+1]*587+d[i+2]*114)/1000|0;
+  return {g,w,h};
+}
+function tk2Otsu(g){
+  const hist=new Float64Array(256);for(let i=0;i<g.length;i++)hist[g[i]]++;
+  let tot=g.length,sum=0;for(let i=0;i<256;i++)sum+=i*hist[i];let sb=0,wb=0,best=0,th=127;
+  for(let i=0;i<256;i++){wb+=hist[i];if(!wb)continue;const wf=tot-wb;if(!wf)break;sb+=i*hist[i];const mb=sb/wb,mf=(sum-sb)/wf,v=wb*wf*(mb-mf)*(mb-mf);if(v>best){best=v;th=i}}
+  return th;
+}
+/** Desenfoque de caja rápido (para suavizar antes de umbralizar y para el umbral local). */
+function tk2Caja(src,w,h,r){
+  const out=new Float32Array(w*h),tmp=new Float32Array(w*h),n=2*r+1;
+  for(let y=0;y<h;y++){let s=0;const o=y*w;for(let x=-r;x<=r;x++)s+=src[o+Math.min(w-1,Math.max(0,x))];for(let x=0;x<w;x++){tmp[o+x]=s/n;s+=src[o+Math.min(w-1,x+r+1)]-src[o+Math.max(0,x-r)]}}
+  for(let x=0;x<w;x++){let s=0;for(let y=-r;y<=r;y++)s+=tmp[Math.min(h-1,Math.max(0,y))*w+x];for(let y=0;y<h;y++){out[y*w+x]=s/n;s+=tmp[Math.min(h-1,y+r+1)*w+x]-tmp[Math.max(0,y-r)*w+x]}}
+  return out;
+}
+/** Máscara del papel: zona clara conexa más grande. */
+function tk2Papel(g,w,h){
+  const b=tk2Caja(g,w,h,2),t=tk2Otsu(Uint8Array.from(b,v=>Math.round(v))),m=new Uint8Array(w*h);for(let i=0;i<m.length;i++)m[i]=b[i]>t?1:0;
+  // cierre morfológico simple (rellena letras y sellos): dilatar y erosionar con ventana 9
+  const cerrar=(a,r)=>{const f=tk2Caja(Float32Array.from(a),w,h,r),dil=new Uint8Array(w*h);for(let i=0;i<dil.length;i++)dil[i]=f[i]>0.001?1:0;const g2=tk2Caja(Float32Array.from(dil),w,h,r),er=new Uint8Array(w*h);for(let i=0;i<er.length;i++)er[i]=g2[i]>0.999?1:0;return er};
+  const mc=cerrar(m,4),lab=new Int32Array(w*h),cnt=[0];let nl=0,best=0,bestN=0;const st=new Int32Array(w*h);
+  for(let i=0;i<mc.length;i++){if(!mc[i]||lab[i])continue;nl++;let sp=0,n=0;st[sp++]=i;lab[i]=nl;while(sp){const p=st[--sp];n++;const x=p%w,y=(p/w)|0;
+    if(x>0&&mc[p-1]&&!lab[p-1]){lab[p-1]=nl;st[sp++]=p-1}if(x<w-1&&mc[p+1]&&!lab[p+1]){lab[p+1]=nl;st[sp++]=p+1}if(y>0&&mc[p-w]&&!lab[p-w]){lab[p-w]=nl;st[sp++]=p-w}if(y<h-1&&mc[p+w]&&!lab[p+w]){lab[p+w]=nl;st[sp++]=p+w}}
+    if(n>bestN){bestN=n;best=nl}}
+  const r=new Uint8Array(w*h);for(let i=0;i<r.length;i++)r[i]=lab[i]===best?1:0;return r;
+}
+function tk2Orienta(mk,w,h){
+  let n=0,sx=0,sy=0;for(let i=0;i<mk.length;i++)if(mk[i]){n++;sx+=i%w;sy+=(i/w)|0}
+  if(!n)return 0;const cx=sx/n,cy=sy/n;let a=0,b=0,c=0;for(let i=0;i<mk.length;i++)if(mk[i]){const dx=(i%w)-cx,dy=((i/w)|0)-cy;a+=dx*dx;b+=dy*dy;c+=dx*dy}
+  const ang=0.5*Math.atan2(2*c/n,a/n-b/n)*180/Math.PI; // eje mayor respecto de x
+  let rot=ang>0?ang-90:ang+90;if(Math.abs(rot)>45)rot=0;return rot;
+}
+function tk2Gira(bmp,deg,maxLado){
+  const k=Math.min(1,maxLado/Math.max(bmp.width,bmp.height)),w=Math.round(bmp.width*k),h=Math.round(bmp.height*k),c=document.createElement('canvas');c.width=w;c.height=h;
+  const x=c.getContext('2d',{willReadFrequently:true});x.fillStyle='#000';x.fillRect(0,0,w,h);x.translate(w/2,h/2);x.rotate(deg*Math.PI/180);x.drawImage(bmp,-w/2,-h/2,w,h);return c;
+}
+/** Recorta el papel, lo endereza y lo limpia (umbral local). Devuelve {canvas, giro, papel}. */
+async function tk2Preparar(bmp,escala){
+  const G=tk2Gris(bmp,500),mk=tk2Papel(G.g,G.w,G.h),rot=tk2Orienta(mk,G.w,G.h);
+  let mejor=null;
+  for(const sg of (Math.abs(rot)<0.2?[0]:[1,-1])){
+    const c=tk2Gira(bmp,sg*rot,2800),g2=tk2Gris(c,500),m2=tk2Papel(g2.g,g2.w,g2.h);let x0=1e9,x1=-1,y0=1e9,y1=-1,n=0;
+    for(let i=0;i<m2.length;i++)if(m2[i]){n++;const x=i%g2.w,y=(i/g2.w)|0;if(x<x0)x0=x;if(x>x1)x1=x;if(y<y0)y0=y;if(y>y1)y1=y}
+    const fill=n/Math.max(1,(x1-x0+1)*(y1-y0+1));if(!mejor||fill>mejor.fill)mejor={fill,c,m2,g2,giro:sg*rot};
+  }
+  const {c,m2,g2}=mejor,w2=g2.w,h2=g2.h,cols=new Float32Array(w2),rows=new Float32Array(h2);
+  for(let i=0;i<m2.length;i++)if(m2[i]){cols[i%w2]++;rows[(i/w2)|0]++}
+  for(let x=0;x<w2;x++)cols[x]/=h2;for(let y=0;y<h2;y++)rows[y]/=w2;
+  // caja del papel: columnas y filas con algo de papel (el borde puede estar inclinado por la perspectiva)
+  const maxCol=Math.max(...cols),maxRow=Math.max(...rows);
+  let cx0=0;while(cx0<w2&&cols[cx0]<maxCol*0.25)cx0++;let cx1=w2-1;while(cx1>0&&cols[cx1]<maxCol*0.25)cx1--;
+  let ry0=0;while(ry0<h2&&rows[ry0]<maxRow*0.25)ry0++;let ry1=h2-1;while(ry1>0&&rows[ry1]<maxRow*0.25)ry1--;
+  const s=c.width/w2,x0=Math.round(cx0*s),x1=Math.round((cx1+1)*s),y0=Math.round(ry0*s),y1=Math.round((ry1+1)*s);
+  const cw=Math.max(50,x1-x0),ch=Math.max(50,y1-y0),k=escala||1.3,PAD=24,out=document.createElement('canvas');out.width=Math.round(cw*k)+2*PAD;out.height=Math.round(ch*k)+2*PAD;
+  const ox=out.getContext('2d',{willReadFrequently:true});ox.fillStyle='#fff';ox.fillRect(0,0,out.width,out.height);ox.imageSmoothingQuality='high';ox.drawImage(c,x0,y0,cw,ch,PAD,PAD,Math.round(cw*k),Math.round(ch*k));
+  // gris + umbral local (cada punto se compara con el promedio de su vecindad)
+  const im=ox.getImageData(0,0,out.width,out.height),d=im.data,W=out.width,H=out.height,g=new Float32Array(W*H);
+  for(let i=0,j=0;i<d.length;i+=4,j++)g[j]=(d[i]*299+d[i+1]*587+d[i+2]*114)/1000;
+  const r=Math.max(8,Math.round(W*0.006)),mean=tk2Caja(g,W,H,r);
+  // lo que está fuera del papel (teclado, mesa) queda en blanco: máscara del papel, agrandada un poco
+  const dil=tk2Caja(Float32Array.from(m2),w2,h2,3);
+  for(let i=0,j=0;i<d.length;i+=4,j++){
+    const px=j%W,py=(j/W)|0,fx=Math.floor(((px-PAD)/k+x0)/s),fy=Math.floor(((py-PAD)/k+y0)/s);
+    const dentro=fx>=0&&fy>=0&&fx<w2&&fy<h2&&dil[fy*w2+fx]>0.02;
+    const v=(!dentro)||px<PAD||py<PAD||px>=W-PAD||py>=H-PAD||g[j]>mean[j]*0.92-3?255:0;d[i]=d[i+1]=d[i+2]=v;d[i+3]=255}
+  ox.putImageData(im,0,0);
+  return {canvas:out,giro:mejor.giro,relleno:mejor.fill};
 }
 const TK=()=>ui.tk||null;
 let _tkW=null,_tkWP=null;
@@ -6497,20 +6759,89 @@ async function tkMotor(){
   if(_tkW)return _tkW;
   if(typeof Tesseract==='undefined')await cargarScript('https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.1.1/tesseract.min.js');
   if(typeof Tesseract==='undefined')throw new Error('sin lector');
-  _tkWP=_tkWP||Tesseract.createWorker('spa',1,{langPath:'https://tessdata.projectnaptha.com/4.0.0_fast',logger:m=>{const t=TK();if(t&&t.estado==='leyendo'){t.msg=m.status==='recognizing text'?'Leyendo el texto de la foto…':'Preparando el lector de texto (la primera vez tarda un poco)…';t.pct=Math.round((m.progress||0)*100);tkRender()}}}).then(async w=>{await w.setParameters({tessedit_pageseg_mode:'4',preserve_interword_spaces:'1'});return w});
+  _tkWP=_tkWP||Tesseract.createWorker('spa',1,{logger:m=>{const t=TK();if(t&&t.estado==='leyendo'&&m.status==='recognizing text'){t.msg='Leyendo el texto de la foto…';t.pct=Math.round((m.progress||0)*100);tkRender()}else if(t&&t.estado==='leyendo'&&/load|init/.test(m.status||'')){t.msg='Preparando el lector de texto (la primera vez tarda un poco)…';t.pct=Math.round((m.progress||0)*100);tkRender()}}}).then(async w=>{await w.setParameters({tessedit_pageseg_mode:'4',preserve_interword_spaces:'1'});return w});
   try{_tkW=await _tkWP}catch(e){_tkWP=null;throw e}
   return _tkW;
 }
-/** Prepara la foto: una versión liviana a color para guardar y otra en grises con contraste para el OCR. */
+/** Prepara la foto: una versión liviana a color para guardar y otra recortada, enderezada y limpia para el lector de texto. */
 async function tkImagenes(file){
   const bmp=await createImageBitmap(file),M=1800,k=Math.min(1,M/Math.max(bmp.width,bmp.height)),w=Math.round(bmp.width*k),h=Math.round(bmp.height*k);
   const c=document.createElement('canvas');c.width=w;c.height=h;const x=c.getContext('2d',{willReadFrequently:true});x.drawImage(bmp,0,0,w,h);
   const blob=await new Promise(ok=>c.toBlob(ok,'image/jpeg',.82));
-  const up=Math.min(2,1600/Math.max(1,Math.min(w,h))),ow=Math.round(w*Math.max(1,up)),oh=Math.round(h*Math.max(1,up)),o=document.createElement('canvas');o.width=ow;o.height=oh;const y=o.getContext('2d',{willReadFrequently:true});y.drawImage(c,0,0,ow,oh);
-  const im=y.getImageData(0,0,ow,oh),d=im.data;let lo=255,hi=0;const g=new Uint8Array(ow*oh);
-  for(let i=0,j=0;i<d.length;i+=4,j++){const v=Math.round(.299*d[i]+.587*d[i+1]+.114*d[i+2]);g[j]=v;if(v<lo)lo=v;if(v>hi)hi=v}
-  const rg=Math.max(1,hi-lo);for(let i=0,j=0;i<d.length;i+=4,j++){const v=Math.round((g[j]-lo)*255/rg);d[i]=d[i+1]=d[i+2]=v}
-  y.putImageData(im,0,0);return {blob,ocr:o};
+  let ocr=null;try{ocr=(await tk2Preparar(bmp,1.3)).canvas}catch(e){ocr=null}
+  if(!ocr){ // si no se pudo encontrar el papel: grises con contraste, como antes
+    const up=Math.min(2,1600/Math.max(1,Math.min(w,h))),ow=Math.round(w*Math.max(1,up)),oh=Math.round(h*Math.max(1,up)),o=document.createElement('canvas');o.width=ow;o.height=oh;const y=o.getContext('2d',{willReadFrequently:true});y.drawImage(c,0,0,ow,oh);
+    const im=y.getImageData(0,0,ow,oh),d=im.data;let lo=255,hi=0;const g=new Uint8Array(ow*oh);
+    for(let i=0,j=0;i<d.length;i+=4,j++){const v=Math.round(.299*d[i]+.587*d[i+1]+.114*d[i+2]);g[j]=v;if(v<lo)lo=v;if(v>hi)hi=v}
+    const rg=Math.max(1,hi-lo);for(let i=0,j=0;i<d.length;i+=4,j++){const v=Math.round((g[j]-lo)*255/rg);d[i]=d[i+1]=d[i+2]=v}
+    y.putImageData(im,0,0);ocr=o}
+  return {blob,ocr,bmp};
+}
+async function tk2Hash(blob){return [...new Uint8Array(await crypto.subtle.digest('SHA-256',await blob.arrayBuffer()))].map(x=>x.toString(16).padStart(2,'0')).join('')}
+/** Segunda lectura, solo de números: cada renglón con un importe se vuelve a leer recortado y con una lista de caracteres permitidos (dígitos, coma y punto). */
+async function tk2Numeros(w,img,data){
+  const lines=[];(data.blocks||[]).forEach(b=>(b.paragraphs||[]).forEach(p=>(p.lines||[]).forEach(l=>lines.push(l))));
+  if(!lines.length)return null;
+  const textos=lines.map(l=>String(l.text||'').replace(/\s+/g,' ').trim()),nums=new Array(lines.length).fill(null);let n=0;
+  await w.setParameters({tessedit_char_whitelist:'0123456789,.-',tessedit_pageseg_mode:'7'});
+  try{
+    for(let i=0;i<lines.length&&n<16;i++){
+      const tx=textos[i];if(!tk2Monto(tx))continue;
+      const b=lines[i].bbox,wd=b.x1-b.x0,ht=b.y1-b.y0;if(wd<20||ht<8)continue;
+      const rect={left:Math.max(0,Math.round(b.x0+wd*0.45)),top:Math.max(0,b.y0-4),width:Math.round(wd*0.55)+10,height:ht+8};
+      const q=await w.recognize(img,{rectangle:rect});nums[i]=q.data.text||'';n++}
+  }finally{await w.setParameters({tessedit_char_whitelist:'',tessedit_pageseg_mode:'4'})}
+  return tk2Mezcla(textos,nums);
+}
+/** Si el ticket trae el QR de ARCA (los tiques factura A lo traen), sus datos son exactos y mandan sobre la lectura del texto. */
+async function tk2Qr(bmp){
+  if(!bmp||typeof qrDeImagen!=='function')return null;
+  try{const txt=await Promise.race([qrDeImagen(bmp,()=>{}),new Promise(r=>setTimeout(()=>r(null),9000))]);if(!txt)return null;const q=parseAfipQr(txt);return q.ok?q.data:null}catch(e){return null}
+}
+const tk2Fecha=f=>String(f||'').split('-').reverse().join('/');
+/** ¿Ya está cargado? Mismo proveedor + tipo + punto de venta + número (bloquea), otro tipo o mismo día e importe (avisa), o la misma foto (avisa). */
+async function tk2Dup(t){
+  const d=t.datos||{},cuit=String(d.cuit||'').replace(/\D/g,''),pv=pNum(d.pv||'0'),num=pNum(d.num),tipo=Number(d.tipo),total=pNum(d.total),fecha=pDate(d.fecha);
+  const tok=t.dupTok=(t.dupTok||0)+1;let res=null;
+  try{
+    if(cuit.length===11&&num!==null&&num>0&&pv!==null&&Number.isInteger(pv)){
+      const q=await sb.from('vouchers').select('id,fecha,tipo_cmp,punto_venta,numero,emisor_nombre,importe_total,doc_status,created_at').eq('client_id',t.cid).eq('emisor_cuit',cuit).eq('punto_venta',pv).eq('numero',num);if(q.error)throw q.error;
+      const ig=(q.data||[]).find(v=>v.tipo_cmp===tipo);
+      if(ig)res={nivel:'igual',v:ig};else if((q.data||[]).length)res={nivel:'posible',v:q.data[0],motivo:'tiene el mismo proveedor, punto de venta y número pero otro tipo de comprobante'};
+    }
+    if(!res&&cuit.length===11&&fecha&&total!==null&&total>0){
+      const q=await sb.from('vouchers').select('id,fecha,tipo_cmp,punto_venta,numero,emisor_nombre,importe_total,doc_status,created_at').eq('client_id',t.cid).eq('emisor_cuit',cuit).eq('fecha',fecha).eq('importe_total',total);
+      if(!q.error&&(q.data||[]).length)res={nivel:'posible',v:q.data[0],motivo:'es del mismo proveedor, de la misma fecha y por el mismo importe'};
+    }
+    if(!res&&t.hash){
+      const q=await sb.from('import_batches').select('id,file_name,created_at').eq('client_id',t.cid).eq('file_sha256',t.hash);
+      if(!q.error&&(q.data||[]).length)res={nivel:'foto',b:q.data[0]};
+    }
+  }catch(e){res=null}
+  if(t.dupTok!==tok)return t.dup;
+  t.dup=res;return res;
+}
+function tkDupHtml(t){
+  const r=t&&t.dup;if(!r)return '';
+  const nom=x=>(TK_TIPOS.find(y=>y[0]===x)||[0,'Comprobante'])[1];
+  if(r.nivel==='foto')return `<div class="msg warn">Esta misma foto ya se cargó antes (${esc(r.b.file_name||'ticket')}). Revisá que no sea el mismo ticket antes de guardarlo.</div>`;
+  const v=r.v,desc=`${esc(nom(v.tipo_cmp))} ${esc(nroF(v.punto_venta,v.numero))} de ${esc(v.emisor_nombre||'')} del ${tk2Fecha(v.fecha)} por ${money(v.importe_total)}`;
+  if(r.nivel==='igual')return `<div class="msg err"><b>Este ticket ya está cargado:</b> ${desc}. No se puede cargar dos veces.</div>`;
+  return `<div class="msg warn"><b>Ojo, puede ser un duplicado:</b> ya hay cargado ${desc}; ${esc(r.motivo)}. Confirmá que sea otro ticket antes de guardar.</div>`;
+}
+function tkDupRender(){
+  const t=TK(),e=document.getElementById('tkdup');if(e&&t)e.innerHTML=tkDupHtml(t);
+  const b=document.getElementById('tkbtn');if(b&&t)b.disabled=!!(t.dup&&t.dup.nivel==='igual');
+}
+function tk2DupPronto(){
+  const t=TK();if(!t)return;clearTimeout(t.dupTimer);
+  t.dupTimer=setTimeout(async()=>{await tk2Dup(t);if(ui.tk===t)tkDupRender()},450);
+}
+function tkSumaHtml(t){
+  const d=t&&t.datos;if(!d)return '';const n=k=>d[k]===''?0:pNum(d[k]);
+  const neto=d.neto===''?null:pNum(d.neto),iva=d.iva===''?null:pNum(d.iva),tot=pNum(d.total);if(neto===null||iva===null||tot===null)return '';
+  const s=Math.round((neto+iva+(n('nog')||0)+(n('exe')||0)+(n('otros')||0))*100)/100,ok=Math.abs(s-tot)<0.06;
+  return `<div class="msg ${ok?'ok':'err'}" style="font-size:13px">${ok?'La suma cierra':'La suma no cierra'}: neto + IVA + otros conceptos = <b>${money(s)}</b> · total del ticket = <b>${money(tot)}</b>${ok?'':` (diferencia ${money(Math.abs(s-tot))})`}</div>`;
 }
 async function tkFoto(inp){
   const f=inp.files[0];inp.value='';if(!f)return;
@@ -6521,66 +6852,106 @@ async function tkFoto(inp){
   const t=ui.tk={cid,estado:'leyendo',msg:'Preparando la foto…',pct:0,nombre:f.name,datos:null,texto:''};tkRender();
   let im;try{im=await tkImagenes(f)}catch(e){t.estado='err';t.msg='No se pudo abrir la imagen ('+(e.message||e)+'). Probá sacando la foto de nuevo o elegí otra imagen.';return tkRender()}
   t.blob=im.blob;t.url=URL.createObjectURL(im.blob);tkRender();
-  const cli=ui.clients.find(c=>c.id===cid);let txt='',aviso=null;
-  try{const w=await tkMotor();t.msg='Leyendo el texto de la foto…';tkRender();const r=await w.recognize(im.ocr);txt=r.data.text||''}
+  try{t.hash=await tk2Hash(im.blob)}catch(e){t.hash=null}
+  const cli=ui.clients.find(c=>c.id===cid),cuitCli=cli?cli.cuit:'';
+  // 1) ¿trae el QR de ARCA? (tiques factura A)
+  let qr=null;if(im.bmp){t.msg='Buscando el código QR de ARCA…';tkRender();qr=await tk2Qr(im.bmp);if(ui.tk!==t)return}
+  // 2) lectura del texto, y segunda lectura solo de números
+  let txt='',alt=null,aviso=null;
+  try{const w=await tkMotor();t.msg='Leyendo el texto de la foto…';tkRender();const r=await w.recognize(im.ocr,{},{blocks:true});txt=r.data.text||'';
+    try{t.msg='Verificando los números…';tkRender();alt=await tk2Numeros(w,im.ocr,r.data)}catch(e){alt=null}}
   catch(e){aviso='No se pudo usar el lector de texto automático (¿sin internet?). La foto quedó cargada: completá los datos a mano.'}
   if(ui.tk!==t)return;
-  const p=tkParse(txt,cli?cli.cuit:'');t.texto=txt;t.avisos=[...(aviso?[aviso]:[]),...p.avisos];
-  if(!aviso&&txt.trim().length<15)t.avisos.unshift('Casi no se pudo leer texto en la foto. Sacala de nuevo con buena luz, de frente y sin reflejos, o completá los datos a mano.');
-  const s=x=>x===null||x===undefined?'':String(x);
-  t.datos={fecha:p.fecha||'',tipo:String(p.tipo||83),cuit:p.cuit||'',nombre:p.nombre||'',pv:s(p.pv),num:s(p.num),neto:s(p.neto),iva:s(p.iva),total:s(p.total)};t.confianza=aviso?'baja':p.confianza;
+  let fijo=null;
+  if(qr){fijo={cuit:qr.cuit,fecha:qr.fecha,pv:qr.ptoVta,num:qr.nroCmp,total:(qr.ctz&&qr.ctz!==1)?null:qr.importe};if(TK_TIPOS.some(x=>x[0]===qr.tipoCmp))fijo.tipo=qr.tipoCmp}
+  // 3) segunda (y, si hace falta, tercera) lectura completa con otro tamaño: si dos lecturas distintas coinciden en cada dato, ese dato está verificado
+  const mas=[];let p=tkParse(txt,cuitCli,alt,fijo,mas);
+  if(im.bmp&&!aviso&&txt.trim().length>=15){
+    const w=await tkMotor();
+    for(const k of [1.15,1.5]){
+      const quedan=['cuit','pv','num','fecha','tipo'].some(x=>p.dud.includes(x));
+      if(mas.length>=1&&!quedan)break;if(mas.length>=1&&mas.length>=2)break;
+      if(fijo&&p.suma==='ok'&&!mas.length)break;
+      try{t.msg=mas.length?'Tercera lectura para desempatar…':'Verificando con una segunda lectura…';tkRender();const c2=(await tk2Preparar(im.bmp,k)).canvas,r2=await w.recognize(c2,{},{blocks:true});if(r2.data.text&&r2.data.text.trim().length>=15)mas.push(r2.data.text)}catch(e){break}
+      if(ui.tk!==t)return;p=tkParse(txt,cuitCli,alt,fijo,mas)}
+  }
+  if(qr&&txt.trim().length>=15){ // el QR manda, pero se avisa si el texto dice otra cosa
+    const q0=tkParse(txt,cuitCli,alt),dif=[];if(q0.cuit&&q0.cuit!==qr.cuit)dif.push('el CUIT');if(q0.num!==undefined&&q0.num!==qr.nroCmp)dif.push('el número');if(q0.total&&Math.abs(q0.total-qr.importe)>0.01)dif.push('el importe');
+    if(dif.length)p.avisos.push('El QR y el texto del ticket no coinciden en '+dif.join(', ')+': se usaron los datos del QR.')}
+  // proveedor ya conocido por su CUIT: el nombre sale de lo que ya está cargado
+  let conocido=false;
+  if(p.cuit&&cuitValido(p.cuit)){try{const q=await sb.from('vouchers').select('emisor_nombre').eq('emisor_cuit',p.cuit).limit(20);const nm=(q.data||[]).map(x=>x.emisor_nombre).find(Boolean);if(nm){conocido=true;p.nombre=nm;p.dud=p.dud.filter(k=>k!=='nombre')}}catch(e){}}
+  if(ui.tk!==t)return;
+  t.texto=txt;t.qr=!!qr;t.conocido=conocido;t.avisos=[...(aviso?[aviso]:[]),...p.avisos];t.info=[...(qr?['Los datos de identificación (CUIT, fecha, tipo, punto de venta, número e importe) salen del código QR de ARCA, así que son exactos.']:[]),...(conocido?['El nombre del proveedor es el que ya tenés cargado para ese CUIT.']:[]),...(p.info||[])];
+  t.corr=(p.dud||[]).filter(k=>['neto','iva','nog','exe','otros','total'].includes(k));
+  if(!aviso&&!qr&&txt.trim().length<15)t.avisos.unshift('Casi no se pudo leer texto en la foto. Sacala de nuevo con buena luz, de frente y sin reflejos, o completá los datos a mano.');
+  const s=x=>x===null||x===undefined||x===0?'':String(x);
+  t.datos={fecha:p.fecha||'',tipo:String(p.tipo||83),cuit:p.cuit||'',nombre:p.nombre||'',pv:p.pv===undefined?'':String(p.pv),num:s(p.num),neto:s(p.neto),iva:p.iva===null||p.iva===undefined?'':String(p.iva),nog:s(p.nog),exe:s(p.exe),otros:s(p.otros),total:s(p.total)};
+  t.dud=new Set(p.dud||[]);t.confianza=aviso&&!qr?'baja':p.confianza;
+  await tk2Dup(t);if(ui.tk!==t)return;
   t.estado='form';tkRender();
 }
-function tkCampo(k,v){const t=TK();if(t&&t.datos)t.datos[k]=String(v).trim()}
+function tkCampo(k,v){const t=TK();if(!t||!t.datos)return;t.datos[k]=String(v).trim();if(t.dud)t.dud.delete(k);
+  const e=document.getElementById('tksum');if(e)e.innerHTML=tkSumaHtml(t);
+  if(['cuit','tipo','pv','num','fecha','total'].includes(k))tk2DupPronto()}
 function tkCliente(v){const t=TK();if(t)t.cid=v}
-function tkCancelar(){const t=TK();if(t&&t.url)URL.revokeObjectURL(t.url);ui.tk=null;tkRender()}
+function tkCancelar(){const t=TK();if(t){clearTimeout(t.dupTimer);if(t.url)URL.revokeObjectURL(t.url)}ui.tk=null;tkRender()}
 function tkRender(){const e=document.getElementById('tkres');if(e)e.innerHTML=tkHtml()}
 function tkHtml(){
   const t=TK();if(!t)return '';
   if(t.estado==='err')return `<div class="msg err" style="margin-top:10px">${esc(t.msg)}</div>`;
   const prev=t.url?`<img src="${t.url}" alt="Foto del ticket" style="width:100%;max-width:240px;border-radius:10px;border:1px solid var(--bd)">`:'';
   if(t.estado==='leyendo')return `<div class="row" style="margin-top:10px;align-items:flex-start">${prev}<div class="msg info" style="flex:1;min-width:200px">${esc(t.msg||'Leyendo…')}${t.pct?` ${t.pct}%`:''}</div></div>`;
-  const d=t.datos,col={alta:'ok',media:'warn',baja:'err'},inp=(k,n,ph,ex)=>`<label>${n}<input value="${esc(d[k])}" placeholder="${ph||''}" ${ex||''} onchange="tkCampo('${k}',this.value)"></label>`;
-  return `<div style="margin-top:12px"><div class="msg ${col[t.confianza]||'warn'}">Lectura del ticket: confianza <b>${t.confianza}</b>. Revisá cada dato contra la foto: la lectura automática puede equivocarse.</div>${(t.avisos||[]).map(a=>`<div class="msg warn">${esc(a)}</div>`).join('')}
+  const d=t.datos,col={alta:'ok',media:'warn',baja:'err'},dud=t.dud||new Set(),
+    inp=(k,n,ph,ex)=>`<label>${n}<input value="${esc(d[k])}" placeholder="${ph||''}" ${ex||''} ${dud.has(k)?'style="outline:2px solid #ffc857;outline-offset:1px;border-radius:8px"':''} onchange="tkCampo('${k}',this.value)"></label>`;
+  const hayDud=dud.size>0;
+  return `<div style="margin-top:12px"><div id="tkdup">${tkDupHtml(t)}</div>
+  <div class="msg ${col[t.confianza]||'warn'}">Lectura del ticket: confianza <b>${t.confianza}</b>${t.qr?' (con el QR de ARCA)':''}. ${t.confianza==='alta'?'Los datos pasaron todos los controles (CUIT, fecha y suma de importes), pero igual conviene mirarlos contra la foto.':'Revisá cada dato contra la foto: la lectura automática puede equivocarse.'}</div>
+  ${(t.info||[]).map(a=>`<div class="msg info">${esc(a)}</div>`).join('')}${(t.avisos||[]).map(a=>`<div class="msg warn">${esc(a)}</div>`).join('')}
+  ${hayDud?`<div class="s" style="margin:6px 0">Los campos con borde amarillo son los que la lectura no pudo confirmar del todo.</div>`:''}
   <div class="row" style="align-items:flex-start;margin-top:8px">${prev}<div class="fgrid" style="flex:1;min-width:240px">
   ${inp('fecha','Fecha (AAAA-MM-DD)','2026-09-15')}<label>Tipo<select onchange="tkCampo('tipo',this.value)">${TK_TIPOS.map(([k,n])=>`<option value="${k}" ${String(k)===d.tipo?'selected':''}>${n}</option>`).join('')}</select></label>
   ${inp('cuit','CUIT del proveedor','11 dígitos','inputmode="numeric"')}${inp('nombre','Proveedor','')}${inp('pv','Punto de venta','0','inputmode="numeric"')}${inp('num','Número','','inputmode="numeric"')}
-  ${inp('neto','Neto gravado','0,00','inputmode="decimal"')}${inp('iva','IVA (vacío si no discrimina)','0,00','inputmode="decimal"')}${inp('total','Importe total','0,00','inputmode="decimal"')}</div></div>
-  <div class="row" style="margin-top:10px"><button class="b" onclick="tkGuardar()">Guardar ticket y marcarlo como recibido</button><button class="g" onclick="tkCancelar()">Descartar</button></div>
+  ${inp('neto','Neto gravado','0,00','inputmode="decimal"')}${inp('iva','IVA (vacío si no discrimina)','0,00','inputmode="decimal"')}${inp('nog','No gravado','0,00','inputmode="decimal"')}
+  ${inp('exe','Exento','0,00','inputmode="decimal"')}${inp('otros','Otros tributos / percepciones','0,00','inputmode="decimal"')}${inp('total','Importe total','0,00','inputmode="decimal"')}</div></div>
+  <div id="tksum" style="margin-top:8px">${tkSumaHtml(t)}</div>
+  <div class="row" style="margin-top:10px"><button id="tkbtn" class="b" onclick="tkGuardar()" ${t.dup&&t.dup.nivel==='igual'?'disabled':''}>Guardar ticket y marcarlo como recibido</button><button class="g" onclick="tkCancelar()">Descartar</button></div>
   ${t.texto?`<details style="margin-top:8px"><summary class="s" style="cursor:pointer">Ver el texto que se leyó de la foto</summary><pre style="white-space:pre-wrap;font-size:12px;color:var(--mut)">${esc(t.texto)}</pre></details>`:''}</div>`;
 }
 async function tkGuardar(){
   const t=TK();if(!t||t.estado!=='form'||t.guardando)return;const d=t.datos,bad=m=>{flash(m,'err');draw()};
   if(exentoMsg(t.cid))return bad(exentoMsg(t.cid));
   const fecha=d.fecha,pv=pNum(d.pv||'0'),num=pNum(d.num),cuit=String(d.cuit).replace(/\D/g,''),total=pNum(d.total),tipo=Number(d.tipo),nom=d.nombre.trim();
-  const neto=d.neto===''?null:pNum(d.neto),iva=d.iva===''?null:pNum(d.iva);
+  const neto=d.neto===''?null:pNum(d.neto),iva=d.iva===''?null:pNum(d.iva),nog=d.nog===''?0:pNum(d.nog),exe=d.exe===''?0:pNum(d.exe),otros=d.otros===''?0:pNum(d.otros);
   if(!pDate(fecha))return bad('La fecha no es válida (formato AAAA-MM-DD).');
   if(cuit.length!==11)return bad('El CUIT del proveedor tiene que tener 11 dígitos.');
   if(!cuitValido(cuit)&&!confirm('El CUIT no tiene un dígito verificador válido. ¿Guardar igual?'))return;
   if(!nom)return bad('Cargá el nombre del proveedor.');
   if(pv===null||!Number.isInteger(pv)||pv<0||num===null||!Number.isInteger(num)||num<=0)return bad('El punto de venta y el número tienen que ser enteros (el número mayor a cero).');
   if(total===null||!(total>0))return bad('El importe total tiene que ser mayor a cero.');
-  if((d.neto!==''&&neto===null)||(d.iva!==''&&iva===null))return bad('El neto y el IVA tienen que ser números.');
-  if(neto!==null&&iva!==null&&Math.abs(neto+iva-total)>1.5&&!confirm(`El neto más el IVA (${money(neto+iva)}) no coincide con el total (${money(total)}). ¿Guardar igual?`))return;
+  if((d.neto!==''&&neto===null)||(d.iva!==''&&iva===null)||nog===null||exe===null||otros===null)return bad('Los importes tienen que ser números.');
+  if(neto!==null&&iva!==null){const sm=Math.round((neto+iva+nog+exe+otros)*100)/100;if(Math.abs(sm-total)>0.06&&!confirm(`El neto, el IVA y los demás conceptos suman ${money(sm)} y el total es ${money(total)}. ¿Guardar igual?`))return}
   t.guardando=true;let path=null,batchId=null,vid=null;const nombreTipo=(TK_TIPOS.find(x=>x[0]===tipo)||[0,'Tique'])[1];
   try{
+    const dp=await tk2Dup(t);
+    if(dp&&dp.nivel==='igual'){t.guardando=false;tkDupRender();return bad('Ese comprobante ya está cargado para este cliente (mismo proveedor, tipo, punto de venta y número).')}
+    if(dp&&!confirm(dp.nivel==='foto'?'Esta misma foto ya se cargó antes. ¿Guardar igual?':'Hay un comprobante parecido ya cargado ('+dp.motivo+'). ¿Guardar igual?')){t.guardando=false;return}
     const {data:per,error:e1}=await sb.from('client_periods').upsert({client_id:t.cid,periodo:fecha.slice(0,7)+'-01'},{onConflict:'client_id,periodo'}).select('id').single();if(e1)throw e1;
-    const ex=await sb.from('vouchers').select('id').eq('client_id',t.cid).eq('emisor_cuit',cuit).eq('tipo_cmp',tipo).eq('punto_venta',pv).eq('numero',num);if(ex.error)throw ex.error;
-    if(ex.data.length){t.guardando=false;return bad('Ese comprobante ya está cargado para este cliente (mismo proveedor, tipo, punto de venta y número).')}
     path=`${t.cid}/tickets/${crypto.randomUUID()}.jpg`;const up=await sb.storage.from('clientes').upload(path,t.blob,{contentType:'image/jpeg',upsert:false});if(up.error)throw up.error;
-    const hash=[...new Uint8Array(await crypto.subtle.digest('SHA-256',await t.blob.arrayBuffer()))].map(x=>x.toString(16).padStart(2,'0')).join('');
+    const hash=t.hash||await tk2Hash(t.blob);
     const {data:b,error:e2}=await sb.from('import_batches').insert({client_id:t.cid,period_id:per.id,file_name:'Ticket (foto): '+t.nombre,file_sha256:hash,imported_by:me.id,kind:'libro_iva',rows_read:1,rows_new:1,rows_duplicate:0,rows_rejected:0,errors:[]}).select('id').single();if(e2)throw e2;batchId=b.id;
-    const ahora=new Date().toISOString(),raw={Tipo:nombreTipo,fuente:'ticket_foto',archivo_path:path,archivo_nombre:t.nombre,ocr_confianza:t.confianza};
-    const {data:v,error:e3}=await sb.from('vouchers').insert({client_id:t.cid,period_id:per.id,batch_id:batchId,fecha,tipo_cmp:tipo,punto_venta:pv,numero:num,emisor_cuit:cuit,emisor_nombre:nom,moneda:'PES',tipo_cambio:1,importe_total:total,neto_gravado:neto,no_gravado:0,exento:0,otros_tributos:0,iva,raw,origen:'libro_iva',doc_status:'recibida_fisica',proc_status:'pendiente',received_at:ahora,updated_by:me.id}).select('id').single();if(e3)throw e3;vid=v.id;
+    const ahora=new Date().toISOString(),raw={Tipo:nombreTipo,fuente:'ticket_foto',archivo_path:path,archivo_nombre:t.nombre,ocr_confianza:t.confianza,qr_arca:!!t.qr,campos_corregidos:t.corr||[]};
+    const {data:v,error:e3}=await sb.from('vouchers').insert({client_id:t.cid,period_id:per.id,batch_id:batchId,fecha,tipo_cmp:tipo,punto_venta:pv,numero:num,emisor_cuit:cuit,emisor_nombre:nom,moneda:'PES',tipo_cambio:1,importe_total:total,neto_gravado:neto,no_gravado:nog,exento:exe,otros_tributos:otros,iva,raw,origen:'libro_iva',doc_status:'recibida_fisica',proc_status:'pendiente',received_at:ahora,updated_by:me.id}).select('id').single();if(e3)throw e3;vid=v.id;
     const {error:e4}=await sb.from('document_receipts').insert({voucher_id:vid,method:'manual',received_by:me.id,match_result:'ticket_foto'});if(e4)throw e4;
     const cli=ui.clients.find(c=>c.id===t.cid);QRS.list.unshift(`${new Date().toLocaleTimeString('es-AR')}, ${cli?cli.razon_social+', ':''}${nom}, ticket ${nroF(pv,num)}`);
-    if(t.url)URL.revokeObjectURL(t.url);ui.tk=null;flash(`Ticket guardado para ${cli?cli.razon_social:'el cliente'}: ${nom}, ${money(total)}. Quedó como recibido.`);
+    clearTimeout(t.dupTimer);if(t.url)URL.revokeObjectURL(t.url);ui.tk=null;flash(`Ticket guardado para ${cli?cli.razon_social:'el cliente'}: ${nom}, ${money(total)}. Quedó como recibido.`);
   }catch(e){
     if(vid)await sb.from('vouchers').delete().eq('id',vid);if(batchId)await sb.from('import_batches').delete().eq('id',batchId);if(path)await sb.storage.from('clientes').remove([path]);
     t.guardando=false;flash(/duplicate/i.test(e.message||'')?'Ese comprobante ya está cargado para este cliente.':errTxt(e),'err');
   }
   draw();
 }
+
 
 /* La cámara no puede quedar prendida si se oculta la pestaña o se cierra la página */
 document.addEventListener('visibilitychange',()=>{if(document.hidden&&QRS.on){stopCam();setScan({k:'info',t:'La cámara se apagó porque saliste de la página. Tocá "Activar cámara" para seguir.'})}});
