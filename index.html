@@ -170,7 +170,7 @@ function planImport(parsed,meta,existing,ctx){
 
 
 /* ===== Supabase ===== */
-const APP_VERSION='29/10/2026, lector de tickets mejorado: foto enderezada, doble lectura de números, validación por suma y CUIT, QR de ARCA y aviso de ticket ya cargado';
+const APP_VERSION='29/10/2026, vencimientos cargados a mano por terminación, filtros y vista por día de vencimiento';
 const SUPABASE_URL='https://tugdqcoxcpsiynlvnqdu.supabase.co';
 const SUPABASE_KEY='sb_publishable_2-96VeZrsNNftRXkzA1l_A_YG7ThJrL'; // clave pública: los permisos los da la base (RLS)
 const sb=(typeof supabase!=='undefined')?supabase.createClient(SUPABASE_URL,SUPABASE_KEY):null;
@@ -743,6 +743,86 @@ async function saveImps(id){
   if(error)flash(errTxt(error),'err');else if(!data.length)flash('No tenés permiso para editar clientes.','err');else{await loadClients();flash('Impuestos del cliente actualizados.')}
   draw();
 }
+
+/* ===== Calendario de vencimientos cargado a mano ===== */
+const VENC_IMPS=[['IVA','IVA'],['CM','IIBB Convenio Multilateral'],['IIBB','IIBB provincial (fuera de CM)'],['F931','Cargas sociales F.931'],['GANANCIAS_PH','Ganancias y Bienes Personales (personas humanas)'],['MONOTRIBUTO','Monotributo'],['SERV_DOM','Servicio doméstico (Casas Particulares)'],['OTRO','Otro']];
+const VENC_DESC={IVA:'IVA: declaración jurada y Libro IVA Digital',CM:'Ingresos Brutos Convenio Multilateral: CM03/CM04',IIBB:'Ingresos Brutos provincial: declaración jurada',F931:'Cargas sociales F.931: declaración jurada de empleadores',GANANCIAS_PH:'Ganancias y Bienes Personales (personas humanas): anticipo',MONOTRIBUTO:'Monotributo: cuota mensual',SERV_DOM:'Servicio doméstico: aportes y contribuciones',OTRO:'Vencimiento'};
+const VENC_PRESETS={IVA:['0,1','2,3','4,5','6,7','8,9'],CM:['0,1,2','3,4,5','6,7','8,9'],F931:['0,1,2,3','4,5,6','7,8,9'],GANANCIAS_PH:['0,1,2,3','4,5,6','7,8,9']};
+ui.vcal={imp:'IVA',per:null,rows:null,fte:''};
+/** "0,1,2", "0-2", "0 1 2" -> [0,1,2]; null si hay algo que no es una terminación (0 a 9). */
+function vencTer(t){
+  const out=new Set();for(const p of String(t||'').split(/[,;\s]+/).filter(Boolean)){
+    const m=p.match(/^(\d)(?:-(\d))?$/);if(!m)return null;const a=Number(m[1]),b=m[2]===undefined?a:Number(m[2]);if(b<a)return null;for(let i=a;i<=b;i++)out.add(i)}
+  return out.size?[...out].sort((a,b)=>a-b):null;
+}
+/** dd/mm/aaaa, dd/mm (año actual) o aaaa-mm-dd -> aaaa-mm-dd; null si no es una fecha. */
+function vencFecha(t){
+  const s=String(t||'').trim();let m=s.match(/^(\d{4})-(\d{2})-(\d{2})$/);if(m)return vDate(+m[1],+m[2],+m[3]);
+  m=s.match(/^(\d{1,2})[\/\-.](\d{1,2})(?:[\/\-.](\d{2}|\d{4}))?$/);if(!m)return null;
+  const y=m[3]?(m[3].length===2?2000+Number(m[3]):Number(m[3])):new Date().getFullYear();return vDate(y,+m[2],+m[1]);
+}
+const vcalRows=()=>{const V=ui.vcal;if(!V.rows)V.rows=(VENC_PRESETS[V.imp]||['0,1,2,3,4,5,6,7,8,9']).map(t=>({ter:t,fec:''}));return V.rows};
+function vcalImp(v){const V=ui.vcal;V.imp=v;V.rows=null;draw()}
+function vcalSet(i,k,v){const r=ui.vcal.rows&&ui.vcal.rows[i];if(r)r[k]=v}
+function vcalAgregar(){vcalRows().push({ter:'',fec:''});draw()}
+function vcalQuitar(i){vcalRows().splice(i,1);draw()}
+function vcalPreset(k){const V=ui.vcal;V.rows=k==='cada'?[0,1,2,3,4,5,6,7,8,9].map(n=>({ter:String(n),fec:''})):k==='todas'?[{ter:'0,1,2,3,4,5,6,7,8,9',fec:''}]:(VENC_PRESETS[V.imp]||['0,1,2,3,4,5,6,7,8,9']).map(t=>({ter:t,fec:''}));draw()}
+function formCalendario(){
+  const V=ui.vcal;V.per=V.per||workPeriod();const rows=vcalRows(),ya=ui.dl.filter(d=>d.impuesto===V.imp&&String(d.periodo||'').slice(0,7)===V.per);
+  return `<h3>Cargar el calendario de un impuesto</h3><div class="card">
+  <p class="s" style="margin:0 0 10px">ARCA no ofrece su calendario para conectarlo con la app, así que acá cargás vos cuándo vence cada terminación de CUIT. Lo que cargues queda como fecha confirmada y se usa en Vencimientos, Cumplimiento y los avisos.</p>
+  <div class="row" style="align-items:end"><label>Impuesto<br><select onchange="vcalImp(this.value)">${VENC_IMPS.map(([k,t])=>`<option value="${k}" ${V.imp===k?'selected':''}>${t}</option>`).join('')}</select></label>
+  <label>Período que se declara<br>${mesPick(V.per,'ui.vcal.per=this.value;draw()')}</label>
+  <label style="flex:1;min-width:200px">Fuente (opcional)<br><input value="${esc(V.fte)}" oninput="ui.vcal.fte=this.value" placeholder="Ej.: calendario ARCA, RG 5xxx" style="width:100%"></label></div>
+  ${ya.length?`<p class="s" style="margin-top:10px">Ya hay cargado para ${V.per.slice(5)}/${V.per.slice(0,4)}: ${ya.map(d=>`${fAR(d.fecha).slice(0,5)} (term. ${d.terminaciones.length===10?'todas':d.terminaciones.join(',')})`).join(' · ')}. Si cargás una terminación que ya tiene fecha, se reemplaza.</p>`:''}
+  <div class="tw" style="margin-top:10px"><table><thead><tr><th>Terminaciones de CUIT</th><th>Vence el</th><th></th></tr></thead><tbody>
+  ${rows.map((r,i)=>`<tr><td><input value="${esc(r.ter)}" oninput="vcalSet(${i},'ter',this.value)" placeholder="0,1 o 0-2" style="width:140px" inputmode="numeric"></td><td><input type="date" value="${esc(vencFecha(r.fec)||'')}" onchange="vcalSet(${i},'fec',this.value)"></td><td><button type="button" class="g sm" onclick="vcalQuitar(${i})">Quitar</button></td></tr>`).join('')}</tbody></table></div>
+  <div class="row" style="margin-top:10px"><button type="button" class="g sm" onclick="vcalAgregar()">Agregar tramo</button>${VENC_PRESETS[V.imp]?`<button type="button" class="g sm" onclick="vcalPreset('std')">Tramos habituales</button>`:''}<button type="button" class="g sm" onclick="vcalPreset('cada')">Una fecha por terminación</button><button type="button" class="g sm" onclick="vcalPreset('todas')">Misma fecha para todas</button><span style="flex:1"></span><button type="button" class="b" onclick="vcalGuardar()">Guardar calendario</button></div></div>`;
+}
+async function vcalGuardar(){
+  const V=ui.vcal,per=V.per||workPeriod(),imp=V.imp,rows=vcalRows(),nuevos=[],usadas=new Set();
+  for(const r of rows){
+    const tx=String(r.ter||'').trim(),fx=String(r.fec||'').trim();if(!tx&&!fx)continue;
+    const ter=vencTer(tx);if(!ter){flash('Revisá las terminaciones: tienen que ser números de 0 a 9 ("0,1,2" o "0-2").','err');return draw()}
+    const f=vencFecha(fx);if(!f){if(!fx)continue;flash('Hay una fecha que no es válida.','err');return draw()}
+    for(const n of ter){if(usadas.has(n)){flash(`La terminación ${n} está en más de un tramo.`,'err');return draw()}usadas.add(n)}
+    nuevos.push({ter,f})}
+  if(!nuevos.length){flash('Poné al menos una fecha de vencimiento.','err');return draw()}
+  const sin=[0,1,2,3,4,5,6,7,8,9].filter(n=>!usadas.has(n));
+  if(sin.length&&!confirm(`No cargaste fecha para la terminación ${sin.join(', ')}. ¿Guardar igual?`))return;
+  try{
+    const perDb=imp==='GANANCIAS_PH'?null:per;
+    let q=sb.from('tax_deadlines').select('id,fecha,terminaciones').eq('impuesto',imp);q=perDb===null?q.is('periodo',null):q.eq('periodo',perDb);
+    const ex=await q;if(ex.error)throw ex.error;let cambios=0;
+    for(const e of (ex.data||[])){
+      const rest=(e.terminaciones||[]).filter(n=>!usadas.has(n));if(rest.length===(e.terminaciones||[]).length)continue;
+      if(imp==='GANANCIAS_PH'&&!nuevos.some(n=>n.f.slice(0,4)===String(e.fecha).slice(0,4)))continue;
+      cambios++;
+      if(!rest.length){const r=await sb.from('tax_deadlines').delete().eq('id',e.id);if(r.error)throw r.error}
+      else{const r=await sb.from('tax_deadlines').update({terminaciones:rest}).eq('id',e.id);if(r.error)throw r.error}}
+    const ahora=new Date().toISOString(),desc=((ui.dl.find(d=>d.impuesto===imp&&d.descripcion)||{}).descripcion)||VENC_DESC[imp]||'Vencimiento';
+    const filas=nuevos.map(n=>({impuesto:imp,descripcion:desc,periodo:perDb,fecha:n.f,terminaciones:n.ter,fuente:V.fte.trim()||'Cargado a mano por el estudio',verificado:true,verificado_por:me.id,verificado_at:ahora}));
+    const ins=await sb.from('tax_deadlines').insert(filas);if(ins.error)throw ins.error;
+    await loadDeadlines();try{await loadCum()}catch(e){}
+    V.rows=null;V.fte='';flash(`Calendario guardado: ${filas.length} ${filas.length===1?'fecha':'fechas'} de ${(VENC_IMPS.find(x=>x[0]===imp)||[0,imp])[1]}${cambios?' (se reemplazaron las que había para esas terminaciones)':''}.`);
+  }catch(e){flash(errTxt(e),'err')}
+  draw();
+}
+async function vencEditar(id){
+  const d=(ui.dl.find(x=>x.id===id))||((ui.cum&&ui.cum.dl)||[]).find(x=>x.id===id);if(!d)return;
+  const t=prompt(`¿Cuándo vence? (dd/mm/aaaa)\n${d.descripcion}${d.periodo?' · período '+d.periodo:''} · terminaciones ${d.terminaciones.length===10?'todas':d.terminaciones.join(', ')}`,fAR(d.fecha));if(t===null)return;
+  const f=vencFecha(t);if(!f){flash('Esa fecha no es válida. Escribila como dd/mm/aaaa.','err');return draw()}
+  const {data,error}=await sb.from('tax_deadlines').update({fecha:f,verificado:true,verificado_por:me.id,verificado_at:new Date().toISOString()}).eq('id',id).select('id');
+  if(error)flash(errTxt(error),'err');else if(!data.length)flash('No tenés permiso para cambiar vencimientos.','err');else{await loadDeadlines();try{await loadCum()}catch(e){}flash('Fecha actualizada y confirmada.')}
+  draw();
+}
+async function vencQuitar(id){
+  const d=ui.dl.find(x=>x.id===id)||((ui.cum&&ui.cum.dl)||[]).find(x=>x.id===id);if(!d||!confirm(`¿Quitar este vencimiento del ${fAR(d.fecha)}? (${d.descripcion}, terminaciones ${d.terminaciones.join(', ')})`))return;
+  const {data,error}=await sb.from('tax_deadlines').delete().eq('id',id).select('id');
+  if(error)flash(errTxt(error),'err');else if(!data.length)flash('Solo un administrador puede quitar vencimientos.','err');else{await loadDeadlines();try{await loadCum()}catch(e){}flash('Vencimiento quitado.')}
+  draw();
+}
+const vencAcc=d=>canEdit()?`<div class="row" style="gap:4px;margin-top:4px"><button class="g sm" onclick="vencEditar('${d.id}')">Cambiar fecha</button>${isAdmin()?`<button class="g sm" onclick="vencQuitar('${d.id}')">Quitar</button>`:''}</div>`:'';
 
 /* ===== Ficha del cliente ===== */
 async function loadCStats(){
@@ -5990,14 +6070,14 @@ function vVenc(){
   let rows=ui.dl.filter(d=>{const x=diasHasta(d.fecha);return x>=-7&&(n===0||x<=n)}).map(d=>({d,a:afectados(d)}));
   if(sel)rows=rows.filter(x=>x.a.some(c=>c.id===sel));
   const sinConf=rows.filter(({d})=>!d.verificado);
-  return `<h2>Vencimientos</h2><div class="msg warn">Estas fechas se tomaron de calendarios publicados y se cruzaron entre varias fuentes; no se leen directamente de ARCA. Confirmá cada fecha contra el calendario oficial y actualizala si ARCA prorroga. "Fecha a confirmar" habla de la fecha, no de si el cliente presentó: eso se ve en la columna de presentación.</div>
+  return `<h2>Vencimientos</h2><div class="msg warn">Estas fechas se tomaron de calendarios publicados y se cruzaron entre varias fuentes; ARCA no permite leer su calendario desde la app, así que si una fecha no coincide o falta, la cargás o la cambiás vos (botón "Cambiar fecha" o "Cargar el calendario de un impuesto" más abajo). Confirmá cada fecha contra el calendario oficial y actualizala si ARCA prorroga. "Fecha a confirmar" habla de la fecha, no de si el cliente presentó: eso se ve en la columna de presentación.</div>
   <div class="card row" style="margin-bottom:12px;align-items:end"><label>Cliente<br><select onchange="ui.vcli=this.value;draw()"><option value="">Todos los clientes</option>${ui.clients.map(c=>`<option value="${c.id}" ${sel===c.id?'selected':''}>${esc(c.razon_social)}</option>`).join('')}</select></label>
   <label>Ver<br><select onchange="ui.vdias=this.value;draw()">${[['30','Próximos 30 días'],['60','Próximos 60 días'],['0','Todo lo cargado']].map(([k,t])=>`<option value="${k}" ${ui.vdias===k?'selected':''}>${t}</option>`).join('')}</select></label>
   ${canEdit()&&sinConf.length?`<button class="b" onclick="verifTodos([${sinConf.map(({d})=>`'${d.id}'`).join(',')}])">${sinConf.length===1?'Confirmar la fecha que se ve':'Confirmar las '+sinConf.length+' fechas que se ven'}</button>`:''}</div>
   <div class="tw"><table><thead><tr><th>Vence</th><th>Obligación</th><th>Terminaciones</th><th>Clientes y presentación</th><th>Fecha</th></tr></thead><tbody>
   ${rows.length?rows.map(({d,a})=>{const x=diasHasta(d.fecha),ps=a.map(c=>({c,p:presDeVenc(c,d)})),mapea=ps.length&&ps[0].p.k!=='na',ok=ps.filter(z=>z.p.k==='ok').length;
-    return `<tr><td style="white-space:nowrap">${fAR(d.fecha)}<span class="s">${diaSem(d.fecha)} · ${cuando(x)}</span></td><td>${esc(d.descripcion)}${d.periodo?`<span class="s">período ${esc(d.periodo)}</span>`:''}</td><td>${d.terminaciones.length===10?'Todas':d.terminaciones.join(', ')}</td><td>${a.length?(mapea?`<span class="s" style="margin-bottom:4px">Presentaron ${ok} de ${a.length}</span>`:'')+ps.map(({c,p})=>`<div>${esc(c.razon_social)} ${presTag(p)}</div>`).join(''):'<span class="s">Ningún cliente con este impuesto</span>'}</td><td>${confTag(d)}${canEdit()?`<br><button class="g sm" style="margin-top:4px" onclick="toggleVerif('${d.id}',${!d.verificado})">${d.verificado?'Desmarcar':'Confirmar fecha'}</button>`:''}</td></tr>`}).join(''):'<tr><td colspan="5" style="color:var(--mut)">No hay vencimientos en este rango.</td></tr>'}</tbody></table></div>
-  ${isAdmin()?formVenc():''}`;
+    return `<tr><td style="white-space:nowrap">${fAR(d.fecha)}<span class="s">${diaSem(d.fecha)} · ${cuando(x)}</span></td><td>${esc(d.descripcion)}${d.periodo?`<span class="s">período ${esc(d.periodo)}</span>`:''}</td><td>${d.terminaciones.length===10?'Todas':d.terminaciones.join(', ')}</td><td>${a.length?(mapea?`<span class="s" style="margin-bottom:4px">Presentaron ${ok} de ${a.length}</span>`:'')+ps.map(({c,p})=>`<div>${esc(c.razon_social)} ${presTag(p)}</div>`).join(''):'<span class="s">Ningún cliente con este impuesto</span>'}</td><td>${confTag(d)}${canEdit()?`<br><button class="g sm" style="margin-top:4px" onclick="toggleVerif('${d.id}',${!d.verificado})">${d.verificado?'Desmarcar':'Confirmar fecha'}</button>`:''}${vencAcc(d)}</td></tr>`}).join(''):'<tr><td colspan="5" style="color:var(--mut)">No hay vencimientos en este rango.</td></tr>'}</tbody></table></div>
+  ${isAdmin()?formCalendario()+formVenc():''}`;
 }
 async function toggleVerif(id,v){
   const {data,error}=await sb.from('tax_deadlines').update({verificado:v,verificado_por:v?me.id:null,verificado_at:v?new Date().toISOString():null}).eq('id',id).select('id');
@@ -6312,6 +6392,38 @@ function cumCelda(c,k){
   return {k:'pend',t:null};
 }
 function cumIr(cid,k){const per=ui.cum.periodo;if(k==='F931')return irSueldos(cid,per);if(k==='GAN_ANT')return irAnticipos(per);abrirFicha(cid,'present')}
+/* ===== Cumplimiento: más filtros y vista por día de vencimiento ===== */
+Object.assign(ui.cum,{imp:'',est:'',vista:'tablero'});
+const CUM_IMP_DL={IVA:['IVA'],IIBB:['CM','IIBB'],F931:['F931']};
+function cumFiltrosExtra(){
+  const C=ui.cum,op=(v,t,cur)=>`<option value="${v}" ${cur===v?'selected':''}>${t}</option>`;
+  return `<label>Impuesto<select onchange="ui.cum.imp=this.value;draw()">${op('','Todos',C.imp)}${CUM_COLS.map(([k,t])=>op(k,t,C.imp)).join('')}</select></label>
+  <label>Estado<select onchange="ui.cum.est=this.value;draw()">${op('','Todos',C.est)}${op('pend','Pendientes (incluye vencidas)',C.est)}${op('venc','Vencidas sin presentar',C.est)}${op('ok','Presentadas',C.est)}</select></label>
+  <label>Ver<select onchange="ui.cum.vista=this.value;draw()">${op('tablero','Tablero por cliente',C.vista)}${op('dias','Por día de vencimiento',C.vista)}</select></label>`;
+}
+/** Un cuadro por cada día de vencimiento: qué terminaciones vencen ese día y qué clientes son, con su estado. */
+function cumDiasHtml(){
+  const C=ui.cum,q=norm(C.q);
+  if(C.imp==='GAN_ANT')return '<div class="card" style="color:var(--mut)">Los anticipos de Ganancias no tienen una fecha por período en el calendario cargado: se controlan en la pantalla Anticipos. Elegí otro impuesto o "Todos".</div>';
+  let dl=C.dl.filter(d=>FIL_DE_VENC[d.impuesto]&&(!C.imp||(CUM_IMP_DL[C.imp]||[]).includes(d.impuesto)));
+  if(C.term!=='')dl=dl.filter(d=>d.terminaciones.includes(Number(C.term)));
+  dl.sort((a,b)=>a.fecha<b.fecha?-1:a.fecha>b.fecha?1:a.impuesto.localeCompare(b.impuesto));
+  const m={pend:['pend','venc'],venc:['venc'],ok:['ok']}[C.est]||null;
+  const cards=dl.map(d=>{
+    let cl=afectados(d).filter(c=>(C.term===''||c.cuit.slice(-1)===C.term)&&(!q||norm(c.razon_social+' '+(c.nombre_comercial||'')).includes(q)||(q.replace(/\D/g,'').length>=2&&c.cuit.includes(q.replace(/\D/g,'')))));
+    cl=cl.map(c=>({c,p:presDeVenc(c,d)}));const ok=cl.filter(x=>x.p.k==='ok').length,tot=cl.length;
+    if(m)cl=cl.filter(x=>m.includes(x.p.k));
+    cl.sort((a,b)=>a.c.razon_social.localeCompare(b.c.razon_social,'es'));
+    return {d,cl,ok,tot};
+  }).filter(x=>x.tot>0||!(C.est||C.q));
+  const vis=cards.filter(x=>x.cl.length||!(C.est||C.q||C.term!==''));
+  if(!vis.length)return `<div class="card" style="color:var(--mut)">${C.dl.length?'No hay vencimientos con clientes que coincidan con los filtros.':'No hay vencimientos cargados para este período. Cargalos en Vencimientos ("Cargar el calendario de un impuesto").'}</div>`;
+  return vis.map(({d,cl,ok,tot})=>{const n=diasHasta(d.fecha),key=FIL_DE_VENC[d.impuesto];
+    return `<div class="card" style="margin-bottom:12px"><div class="row" style="justify-content:space-between;align-items:flex-start;gap:10px"><div><b style="font-size:15px">${diaSem(d.fecha)[0].toUpperCase()+diaSem(d.fecha).slice(1)} ${fAR(d.fecha)}</b> <span class="s" style="display:inline">· ${cuando(n)}</span><div>${esc(d.descripcion)}<span class="s">período ${esc(d.periodo||'')} · vencen las terminaciones <b>${d.terminaciones.length===10?'todas':d.terminaciones.join(', ')}</b></span></div></div>
+    <div style="text-align:right">${confTag(d)}<div class="s">Presentaron ${ok} de ${tot}</div>${vencAcc(d)}</div></div>
+    ${cl.length?`<div class="tw" style="margin-top:8px"><table><tbody>${cl.map(({c,p})=>`<tr><td><a href="#" style="color:var(--tx);font-weight:600;text-decoration:none" onclick="abrirFicha('${c.id}');return false">${esc(c.razon_social)}</a><span class="s">CUIT termina en ${c.cuit.slice(-1)}</span></td><td style="text-align:right"><button class="tag" style="background:var(--${p.k==='ok'?'grn':p.k==='venc'?'red':'amb'});color:var(--${p.k==='ok'?'grnt':p.k==='venc'?'redt':'ambt'});border:0;cursor:pointer;font:inherit" onclick="cumIr('${c.id}','${key}')">${esc(p.t)}</button></td></tr>`).join('')}</tbody></table></div>`:'<p class="s" style="margin-top:8px">Ningún cliente con este impuesto vence ese día.</p>'}</div>`}).join('');
+}
+
 function vCumplimiento(){
   const C=ui.cum,per=C.periodo||workPeriod(),q=norm(C.q);
   let L=ui.clients.filter(c=>c.active!==false).map(c=>({c,cel:Object.fromEntries(CUM_COLS.map(([k])=>[k,cumCelda(c,k)])),falt:((ui.pst.find(r=>r.client_id===c.id&&r.periodo.slice(0,7)===per)||{}).faltan)||0}));
@@ -6319,6 +6431,8 @@ function vCumplimiento(){
   if(q)L=L.filter(x=>norm(x.c.razon_social+' '+(x.c.nombre_comercial||'')).includes(q)||(q.replace(/\D/g,'').length>=2&&x.c.cuit.includes(q.replace(/\D/g,''))));
   if(C.term!=='')L=L.filter(x=>x.c.cuit.slice(-1)===C.term);
   if(C.solo)L=L.filter(x=>Object.values(x.cel).some(z=>z.k==='pend'||z.k==='venc'));
+  if(C.imp)L=L.filter(x=>x.cel[C.imp]&&x.cel[C.imp].k!=='na');
+  if(C.est){const ks=x=>C.imp?[x.cel[C.imp]]:Object.values(x.cel),mm={pend:['pend','venc'],ok:['ok'],venc:['venc']}[C.est];L=L.filter(x=>ks(x).some(z=>z&&mm.includes(z.k)))}
   const peso=x=>Object.values(x.cel).filter(z=>z.k==='venc').length*100+Object.values(x.cel).filter(z=>z.k==='pend').length;
   L.sort((a,b)=>peso(b)-peso(a)||a.c.razon_social.localeCompare(b.c.razon_social,'es'));
   const pct=all.length?Math.round(100*ok/all.length):0;
@@ -6330,12 +6444,13 @@ function vCumplimiento(){
   <div class="card row" style="margin-bottom:12px;align-items:end"><label>Período<br>${mesPick(per,`ui.cum.periodo=this.value;show('cumplimiento')`)}</label>
    <label style="flex:1;min-width:200px">Buscar cliente<input type="search" value="${esc(C.q)}" oninput="ui.cum.q=this.value;draw()" style="width:100%" autocomplete="off"></label>
    <label>CUIT termina en<select onchange="ui.cum.term=this.value;draw()"><option value="">Cualquiera</option>${[0,1,2,3,4,5,6,7,8,9].map(n=>`<option value="${n}" ${C.term===String(n)?'selected':''}>${n}</option>`).join('')}</select></label>
-   <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" style="margin:0" ${C.solo?'checked':''} onchange="ui.cum.solo=this.checked;draw()"> Solo con pendientes</label></div>
-  <div class="grid" style="margin-bottom:12px"><div class="card kpi"><b>${pct}%</b><span>cumplido (${ok} de ${all.length})</span></div><div class="card kpi"><b style="color:var(--redt)">${venc}</b><span>vencidas sin presentar</span></div><div class="card kpi"><b>${pend}</b><span>pendientes (incluye las vencidas)</span></div><div class="card kpi"><b>${ui.clients.filter(c=>c.active!==false).length}</b><span>clientes activos</span></div></div>
+   ${cumFiltrosExtra()}<label style="display:flex;gap:8px;align-items:center"><input type="checkbox" style="margin:0" ${C.solo?'checked':''} onchange="ui.cum.solo=this.checked;draw()"> Solo con pendientes</label></div>
+  ${C.vista==='dias'?cumDiasHtml():''}
+  <div style="${C.vista==='dias'?'display:none':''}"><div class="grid" style="margin-bottom:12px"><div class="card kpi"><b>${pct}%</b><span>cumplido (${ok} de ${all.length})</span></div><div class="card kpi"><b style="color:var(--redt)">${venc}</b><span>vencidas sin presentar</span></div><div class="card kpi"><b>${pend}</b><span>pendientes (incluye las vencidas)</span></div><div class="card kpi"><b>${ui.clients.filter(c=>c.active!==false).length}</b><span>clientes activos</span></div></div>
   <div style="height:10px;border-radius:99px;background:var(--hd);overflow:hidden;border:1px solid var(--bd);margin-bottom:14px"><div style="height:100%;width:${pct}%;background:var(--pri)"></div></div>
   <div class="tw"><table><thead><tr><th>Cliente</th>${CUM_COLS.map(([k,t])=>`<th>${t}</th>`).join('')}<th>Facturas faltantes</th></tr></thead><tbody>
   ${L.length?L.map(x=>`<tr><td><a href="#" style="color:var(--tx);font-weight:600;text-decoration:none" onclick="abrirFicha('${x.c.id}');return false">${esc(x.c.razon_social)}</a><span class="s">termina en ${x.c.cuit.slice(-1)}${esExento(x.c)?' · IVA exento (en cero)':''}</span></td>${CUM_COLS.map(([k])=>`<td>${celda(x,k)}</td>`).join('')}<td ${x.falt?'style="color:var(--redt);font-weight:600"':''}>${esExento(x.c)?'-':x.falt}</td></tr>`).join(''):'<tr><td colspan="6" style="color:var(--mut)">No hay clientes que coincidan.</td></tr>'}</tbody></table></div>
-  <p class="s" style="margin-top:10px">Se arma con lo que marcás como presentado o pagado en cada cliente y con los vencimientos cargados. Tocá una celda para ir a marcarla. Las fechas "a confirmar" se confirman en Vencimientos.</p>`;
+  </div><p class="s" style="margin-top:10px">Se arma con lo que marcás como presentado o pagado en cada cliente y con los vencimientos cargados. Tocá una celda para ir a marcarla. Las fechas "a confirmar" se confirman en Vencimientos.</p>`;
 }
 
 /* ===== Avisos de vencimientos (con anticipación) ===== */
