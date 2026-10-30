@@ -170,7 +170,7 @@ function planImport(parsed,meta,existing,ctx){
 
 
 /* ===== Supabase ===== */
-const APP_VERSION='29/10/2026, vencimientos cargados a mano por terminación, filtros y vista por día de vencimiento';
+const APP_VERSION='30/10/2026, recibos de varios empleados en un solo PDF, WhatsApp de empleadores y envío por WhatsApp corregido';
 const SUPABASE_URL='https://tugdqcoxcpsiynlvnqdu.supabase.co';
 const SUPABASE_KEY='sb_publishable_2-96VeZrsNNftRXkzA1l_A_YG7ThJrL'; // clave pública: los permisos los da la base (RLS)
 const sb=(typeof supabase!=='undefined')?supabase.createClient(SUPABASE_URL,SUPABASE_KEY):null;
@@ -1538,7 +1538,7 @@ function vSueldos(c,f){
     const sub=lbl=>`<label class="g sm">${lbl}<input type="file" accept="application/pdf,.pdf" hidden onchange="subirRecibo('${e.id}',this)"></label>`;
     return `<tr><td>${esc(e.nombre)}<span class="s">${e.cuil?cuitF(e.cuil):''}</span>${sueTag(e.tipo)}${envio(e)}</td>
     <td>${p?`<span class="tag" style="background:var(--grn);color:var(--grnt)">Cargado</span><span class="s">${esc(p.nombre_archivo)}</span><div class="row" style="gap:4px;margin-top:4px"><button class="g sm" onclick="verArchivo('${p.path}')">Ver</button>${sub('Reemplazar')}<button class="g sm" onclick="quitarRecibo('${p.id}')">Quitar</button></div>`:`<span class="tag" style="background:var(--amb);color:var(--ambt)">Falta</span> ${sub('Subir PDF')}`}</td>
-    <td>${p?(ok?`<div class="row" style="gap:4px;flex-wrap:wrap">${T.lista.filter(t=>t.ok).map(t=>`<button class="b sm" onclick="enviarReciboWa('${p.id}','${t.rol}')">Enviar PDF al ${t.rol}</button>`).join('')}<button class="g sm" onclick="descargarRecibo('${p.id}')">Descargar</button></div><span class="s">Se envía a: ${T.lista.filter(t=>t.ok).map(t=>t.rol+' ('+esc(t.quien)+')').join(' y ')}</span><div style="margin-top:4px">${sueEstadoHtml(p,true)}</div>`:`<span class="s">${T.lista.map(t=>esc(t.motivo)).join('. ')}</span><button class="g sm" onclick="descargarRecibo('${p.id}')">Descargar</button><div style="margin-top:4px">${sueEstadoHtml(p,false)}</div>`):'<span class="s">Subí primero el recibo</span>'}</td></tr>`}).join('');
+    <td>${p?(ok?`<div class="row" style="gap:4px;flex-wrap:wrap">${T.lista.filter(t=>t.ok).map(t=>`<button class="b sm" onclick="enviarReciboWa('${p.id}','${t.rol}')">Enviar PDF al ${t.rol}</button>`).join('')}<button class="g sm" onclick="descargarRecibo('${p.id}')">Descargar</button></div><span class="s">Se envía a: ${T.lista.filter(t=>t.ok).map(t=>t.rol+' ('+esc(t.quien)+')').join(' y ')}</span><div style="margin-top:4px">${sueEstadoHtml(p,true)}</div>`:`<span class="s">${T.lista.map(t=>esc(t.motivo)).join('. ')}</span>${sueTelForm(c,T)}<button class="g sm" onclick="descargarRecibo('${p.id}')">Descargar</button><div style="margin-top:4px">${sueEstadoHtml(p,false)}</div>`):'<span class="s">Subí primero el recibo</span>'}</td></tr>`}).join('');
   return `<h3 style="margin-top:0">Fichas de liquidación</h3><p class="s" style="margin-bottom:8px">Datos de cómo se liquida y se envía cada tipo de personal de este cliente: a quién van los recibos y el VEP, medio de pago, boletas y vencimientos según la terminación del CUIT.</p>${sueSelector(c,f,tipos)}${tipos.map(t=>sueFicha(c,f,t)).join('')}
   <h3>Empleados</h3>${tipos.length||edit?form:'<div class="msg warn">Tildá arriba qué tipo de personal tiene este empleador para poder agregar empleados.</div>'}${empT}
   <h3>Recibos de ${mesAnio(s.periodo+'-01')}</h3>
@@ -1621,14 +1621,20 @@ async function marcarPrep(id){
   draw();
 }
 /** Abre WhatsApp con el mensaje y un enlace privado y temporal al recibo. */
+const sueFileCache=new Map();
 async function enviarReciboWa(id,rol){
   const f=ui.sd,s=sueMsgs(),p=f.pay.find(x=>x.id===id),e=f.emp.find(x=>x.id===p.employee_id),c=sueCli(f.id),t=sueTargets(c,e).lista.find(x=>x.ok&&(!rol||x.rol===rol));
   if(!t){flash('No hay un WhatsApp válido para ese destinatario. Revisá la ficha o el número cargado.','err');return draw()}
-  let file;try{file=await sueBajar(p)}catch(x){flash('No se pudo bajar el PDF: '+errTxt(x),'err');return draw()}
   const texto=sueArmar(t.rol==='empleador'?s.pdfEmp:s.pdfAdo,{saludo:t.saludo,empleado:e.nombre,empleador:c.razon_social,periodo:mesAnio(p.periodo.slice(0,7)),horas:''});
-  const r=await sueEntregar({file,texto,url:'https://wa.me/'+t.num+'?text='+encodeURIComponent(texto)});
+  const url='https://wa.me/'+t.num+'?text='+encodeURIComponent(texto),comparte=sueCompartePdf(),ck=p.id+'|'+(p.subido_at||'');
+  /* En la compu la ventana de WhatsApp se abre YA, dentro del toque: si se abre después de bajar el PDF, el navegador la bloquea. */
+  const w=comparte?null:window.open('about:blank','wa_envio');
+  let file=sueFileCache.get(ck);const estabaListo=!!file;
+  if(!file){try{file=await sueBajar(p);sueFileCache.set(ck,file)}catch(x){if(w)w.close();flash('No se pudo bajar el PDF: '+errTxt(x),'err');return draw()}}
+  const r=await sueEntregar({file,texto,url,win:w,sinGesto:comparte&&!estabaListo});
   if(r==='cancel')return;
-  if(r==='bloqueado'){flash('El navegador bloqueó la ventana emergente. Permitila para esta página e intentá de nuevo.','warn');return draw()}
+  if(r==='reintentar'){flash('El PDF ya está listo: tocá "Enviar PDF" otra vez y se abre el menú de compartir.','warn');return draw()}
+  if(r==='bloqueado'){ui.sueWaLink={url,nombre:e.nombre};window.scrollTo(0,0);flash('El navegador bloqueó la ventana de WhatsApp. El PDF se descargó: usá el botón "Abrir WhatsApp" que aparece arriba.','warn');return draw()}
   flash(r==='share'?'Elegí WhatsApp y el contacto: el PDF va adjunto.':'Se descargó el PDF y se abrió el chat: arrastrá el archivo al chat y enviá.','ok');
   await marcarPrep(id);
 }
@@ -1702,7 +1708,7 @@ function sueAltaCard(){
   <form onsubmit="return sueAltaEmpleador(event)"><div class="fgrid">
    <label>Nombre o razón social del empleador<input name="rs" required placeholder="Apellido y nombre"></label>
    <label>CUIT / CUIL del empleador<input name="cuit" inputmode="numeric" required placeholder="20-12345678-9"></label>
-   <label>WhatsApp del empleador (opcional)<input name="wa" inputmode="tel" placeholder="3537 412345"></label>
+   <label>WhatsApp del empleador (recomendado: sin él no se le pueden enviar los recibos)<input name="wa" inputmode="tel" placeholder="3537 412345"></label>
    <div class="full"><div class="s" style="margin-bottom:6px">Tipo de personal que tiene</div><div class="row" style="gap:18px">${Object.entries(SUE_TIPOS).map(([k,t])=>`<label class="row" style="gap:6px;align-items:center"><input type="checkbox" name="tp" value="${k}" style="margin:0"> ${t}</label>`).join('')}</div></div>
    ${typeof isLiq==='function'&&isLiq()?'':`<label class="full row" style="gap:8px;align-items:center"><input type="checkbox" name="solo" checked style="margin:0"> Solo para Sueldos (no mostrarlo en Clientes)</label>`}
    <div class="full row"><button class="b">Agregar empleador</button></div></div></form></details>`;
@@ -1794,7 +1800,8 @@ function sueEnvTog(id,on){const E=sueEnvSt();on?E.sel.add(id):E.sel.delete(id);E
 function sueEnvOv(pid,k,v){const E=sueEnvSt();E.ov[pid]=E.ov[pid]||{};if(v)E.ov[pid][k]=v;else delete E.ov[pid][k];if(k==='a')delete E.ov[pid].num;E.cola=null;draw()}
 /** Baja cada PDF elegido y arma la cola. Después cada WhatsApp se abre con un clic (con el archivo adjunto en celulares, o descargado en la compu). */
 const sueBajar=async p=>{const {data,error}=await sb.storage.from('clientes').createSignedUrl(p.path,300,{download:p.nombre_archivo});if(error||!data)throw error||new Error('sin respuesta');const r=await fetch(data.signedUrl);if(!r.ok)throw new Error('no se pudo bajar el PDF');return new File([await r.blob()],p.nombre_archivo,{type:'application/pdf'})};
-const sueCompartePdf=()=>{try{return typeof navigator.canShare==='function'&&navigator.canShare({files:[new File(['x'],'a.pdf',{type:'application/pdf'})]})}catch(x){return false}};
+const sueEsMovil=()=>/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)||(navigator.maxTouchPoints>1&&/Mac/i.test(navigator.platform||navigator.userAgent));
+const sueCompartePdf=()=>{try{return sueEsMovil()&&typeof navigator.canShare==='function'&&navigator.canShare({files:[new File(['x'],'a.pdf',{type:'application/pdf'})]})}catch(x){return false}};
 async function sueEnvPreparar(){
   const E=sueEnvSt(),s=sueMsgs(),R=sueEnvFilas().rows.filter(r=>E.sel.has(r.p.id)&&r.ok);
   if(!R.length){flash('No hay recibos elegidos para enviar.','warn');return draw()}
@@ -1816,9 +1823,11 @@ async function sueEnvPreparar(){
 /** Entrega un PDF: en celular abre el menú de compartir con el archivo y el texto; en la compu descarga el PDF y abre el chat con el número. */
 async function sueEntregar(it){
   if(sueCompartePdf()){
-    try{await navigator.share({files:[it.file],text:it.texto,title:it.file.name});return 'share'}catch(x){if(x&&x.name==='AbortError')return 'cancel'}
+    try{await navigator.share({files:[it.file],text:it.texto,title:it.file.name});return 'share'}
+    catch(x){if(x&&x.name==='AbortError')return 'cancel';if(x&&x.name==='NotAllowedError'&&it.sinGesto)return 'reintentar'}
   }
   const u=URL.createObjectURL(it.file),a=document.createElement('a');a.href=u;a.download=it.file.name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),30000);
+  if(it.win&&!it.win.closed){it.win.location.href=it.url;return 'chat'}
   const w=window.open(it.url,'wa_envio');
   return w?'chat':'bloqueado';
 }
@@ -1878,7 +1887,7 @@ function sueEnvioPanel(){
   const tabla=vis.length?`<div class="tw" style="margin-bottom:10px"><table style="min-width:900px"><thead><tr><th style="width:34px"></th><th>Empleador</th><th>Empleado</th><th>Recibo</th><th>Enviar a</th><th>WhatsApp</th><th>Estado</th></tr></thead><tbody>${vis.map(r=>{
     const T=r.T,id=r.p.id,a=T.a,emp=T.lista.find(x=>x.rol==='empleador'),ado=T.lista.find(x=>x.rol==='empleado');
     const selA=T.a==='ninguno'?'<span class="s">-</span>':`<select onchange="sueEnvOv('${id}','a',this.value)">${Object.entries(SUE_A).map(([k,t])=>`<option value="${k}" ${a===k?'selected':''}>${t}</option>`).join('')}</select>`;
-    const numEmp=emp?(emp.ok?(T.opts.length>1?`<select onchange="sueEnvOv('${id}','num',this.value)">${T.opts.map(o=>`<option value="${o.num}" ${o.num===emp.num?'selected':''}>${esc(sueEtqWa(o))}</option>`).join('')}</select>`:`<span>${esc(emp.quien)}</span>`):`<span class="s" style="color:var(--redt)">${esc(emp.motivo)}</span>`):'';
+    const numEmp=emp?(emp.ok?(T.opts.length>1?`<select onchange="sueEnvOv('${id}','num',this.value)">${T.opts.map(o=>`<option value="${o.num}" ${o.num===emp.num?'selected':''}>${esc(sueEtqWa(o))}</option>`).join('')}</select>`:`<span>${esc(emp.quien)}</span>`):`<span class="s" style="color:var(--redt)">${esc(emp.motivo)}</span>${sueTelForm(r.k,T)}`):'';
     const numAdo=ado?(ado.ok?`<span>${esc(ado.quien)}</span><span class="s">empleado</span>`:`<span class="s" style="color:var(--redt)">${esc(ado.motivo)}</span>`):'';
     const nin=T.a==='ninguno'?`<span class="s">${esc(T.lista[0].motivo)}</span>`:'';
     return `<tr><td><input type="checkbox" ${r.ok?'':'disabled'} ${E.sel.has(id)?'checked':''} onchange="sueEnvTog('${id}',this.checked)"></td><td>${esc(r.k.razon_social)}${r.k.solo_sueldos?'<span class="s">Solo Sueldos</span>':''}</td><td>${esc(r.e.nombre)}${sueTag(r.e.tipo)}</td><td>${esc(r.p.nombre_archivo)}</td><td>${selA}</td><td>${nin||numEmp+(emp&&ado?'<br>':'')+numAdo}</td><td>${sueEstadoHtml(r.p,r.ok)}</td></tr>`}).join('')}</tbody></table></div>`
@@ -1891,6 +1900,283 @@ function sueEnvioPanel(){
    <button class="g sm" onclick="sueMarcarEnv(${JSON.stringify(selIds).replace(/"/g,'&quot;')},true)" ${sel?'':'disabled'}>Marcar ${sel} como enviado(s)</button><button class="g sm" onclick="sueMarcarEnv(${JSON.stringify(selIds).replace(/"/g,'&quot;')},false)" ${sel?'':'disabled'}>Volver a pendiente</button>
    <button class="b" onclick="sueEnvPreparar()" ${sel&&!E.busy?'':'disabled'}>${E.busy?'Preparando…':`Preparar envío de ${sel} recibo(s)`}</button></div>
   ${cola}${tabla}${falt}${sueMsgCard()}`;
+}
+
+/* ===== Recibos: un solo PDF con varios empleados (la app lo separa por empleado) ===== */
+const SUE_MESES_RX='enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre';
+const sueTitulo=n=>String(n||'').toLowerCase().replace(/(^|\s)\S/g,c=>c.toUpperCase()).replace(/\s(De|Del|La|Las|Los|Y)(?=\s)/g,m=>m.toLowerCase());
+const suePal=n=>normN(n).split(' ').filter(Boolean).sort().join(' ');
+async function suePdfjs(){
+  if(typeof pdfjsLib==='undefined')await cargarScript('https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js').catch(()=>{});
+  if(typeof pdfjsLib==='undefined')throw new Error('No se pudo cargar el lector de PDF (¿sin conexión a internet?).');
+  if(!pdfjsLib.GlobalWorkerOptions.workerSrc){try{const r=await fetch('https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js');pdfjsLib.GlobalWorkerOptions.workerSrc=URL.createObjectURL(new Blob([await r.text()],{type:'text/javascript'}))}catch(e){}}
+}
+async function suePdfLib(){
+  if(typeof PDFLib==='undefined')await cargarScript('https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js').catch(()=>{});
+  if(typeof PDFLib==='undefined')throw new Error('No se pudo cargar la librería para separar el PDF (¿sin conexión a internet?).');
+}
+/** Lee los datos de una página de recibo a partir de sus renglones de texto. */
+function sueMultiPagina(lineas,n){
+  const t=lineas.join('\n'),P={n,texto:t};
+  const c=t.match(/CUIT\s*:?\s*(\d{2})-?(\d{8})-?(\d)/i);P.cuit=c?c[1]+c[2]+c[3]:null;
+  const todos=[...t.matchAll(/\b(\d{2})-(\d{8})-(\d)\b/g)].map(m=>m[1]+m[2]+m[3]);
+  P.cuil=todos.find(x=>x!==P.cuit)||null;
+  P.cab=/RECIBO DE HABERES/i.test(t);
+  const em=t.match(/^(.+?)\s+RECIBO DE HABERES/im);P.empleador=em?em[1].trim():null;
+  const l=t.match(new RegExp('^(.+?)\\s+('+SUE_MESES_RX+')\\s+(20\\d\\d)\\s+(.*?)\\s*(\\d{3,6})\\s+(\\d{2}/\\d{2}/\\d{4})\\s*$','im'));
+  if(l){P.nombre=l[1].trim();P.mes=l[2].toLowerCase();P.anio=l[3];P.tipoTxt=l[4].trim();P.legajo=l[5]}
+  const ing=t.match(/(\d{2}-\d{8}-\d)\s+(\d{2}\/\d{2}\/\d{4})\s+(?:(\d+)\s+)?(.*)$/m);
+  if(ing){P.ingreso=ing[2];P.cargo=(ing[4]||'').trim()||null}
+  const ne=t.match(/SUELDO NETO\s+([\d.]+,\d{2})/i);P.neto=ne?ne[1]:null;
+  const co=t.match(/\((Original|Duplicado)\)/i);P.copia=co?co[1]:null;
+  return P;
+}
+/** Lee los datos de una página de VEP de ARCA (volante electrónico de pago). */
+function sueVepPagina(lineas,n){
+  const t=lineas.join('\n'),P={n},g=rx=>{const m=t.match(rx);return m?m[1].trim():null};
+  P.esVep=/Volante Electr[oó]nico de Pago|Nro\.?\s*VEP/i.test(t);
+  P.nro=g(/Nro\.?\s*VEP:?\s*(\d+)/i);
+  const c=t.match(/\bCUIT:?\s*(\d{2})-?(\d{8})-?(\d)/i);P.cuit=c?c[1]+c[2]+c[3]:null;
+  P.tipoPago=g(/Tipo de Pago:?\s*(.+)/i);P.desc=g(/Descripci[oó]n Reducida:?\s*(.+)/i);
+  const pm=t.match(/Per[ií]odo:?\s*(\d{4})-(\d{2})/i);P.per=pm?pm[1]+'-'+pm[2]:null;
+  P.total=g(/Importe total a pagar:?\s*\$?\s*([\d.]+,\d{2})/i);P.vence=g(/D[ií]a de Expiraci[oó]n:?\s*(\d{4}-\d{2}-\d{2})/i);
+  const tx=(P.tipoPago||'')+' '+(P.desc||'');
+  P.concepto=/casas particulares|servicio dom[eé]stico|serv\.?\s*dom/i.test(tx)?'SERV_DOM':/SICOSS|SIJP|empleadores/i.test(tx)?'F931':null;
+  return P;
+}
+/** Un archivo puede traer uno o varios VEP: cada VEP arranca en la página que tiene "Nro. VEP". */
+function sueVepAnalizar(pv){
+  const R={pags:pv.length,veps:[],sinId:[],bloqueo:null};let ult=null;
+  for(const P of pv){
+    if(P.esVep&&P.nro){ult={nro:P.nro,cuit:P.cuit,tipoPago:P.tipoPago,per:P.per||workPeriod(),perLeido:!!P.per,total:P.total,vence:P.vence,concepto:P.concepto||'F931',conceptoLeido:!!P.concepto,pags:[P.n],omitir:false};R.veps.push(ult)}
+    else if(ult)ult.pags.push(P.n);else R.sinId.push(P.n);
+  }
+  if(!R.veps.length)R.bloqueo='No se encontró ningún VEP en el archivo.';
+  return R;
+}
+/** Cruza un VEP con lo ya cargado: empleador, si ya hay un VEP del período y si el tipo de personal está tildado. */
+function sueVepPrev(V,M){
+  const k=sueClientes().find(c=>String(c.cuit)===V.cuit)||null,tipo=V.concepto==='SERV_DOM'?'domestico':'dependencia';
+  const nuevoPorRecibos=!k&&!!V.cuit&&M.items.some(it=>it.kind==='recibos'&&it.res&&it.res.emps&&it.res.emps.some(E=>!E.omitir&&E.cuit===V.cuit));
+  const ya=!!k&&(ui.sdAll.pf||[]).some(x=>x.client_id===k.id&&x.categoria==='vep'&&x.concepto===V.concepto&&x.periodo.slice(0,7)===V.per);
+  const sinTipo=!!k&&!sueTiposDe(k,ui.sdAll.emp).includes(tipo);
+  return {k,tipo,ya,sinTipo,nuevoPorRecibos,ok:!!V.cuit&&(!!k||nuevoPorRecibos)};
+}
+/** Agrupa las páginas por empleador (CUIT) y por empleado (CUIL). Un PDF puede traer varios empleadores. */
+function sueMultiAnalizar(pags){
+  const R={pags:pags.length,emps:[],sinId:[],bloqueo:null},mapaE=new Map(),mapaG=new Map();let ultC=null,ultG=null;
+  for(const P of pags){
+    if(P.cuit)ultC=P.cuit;
+    const cu=P.cuit||ultC;let g=null,E=null;
+    if(P.cuil&&cu){
+      E=mapaE.get(cu);if(!E){E={cuit:cu,razon:null,grupos:[],pers:{},tipoTxt:'',omitir:false};mapaE.set(cu,E);R.emps.push(E)}
+      const kg=cu+'|'+P.cuil;g=mapaG.get(kg);
+      if(!g){g={cuil:P.cuil,nombre:null,legajo:null,ingreso:null,cargo:null,neto:null,pags:[],cuit:cu};mapaG.set(kg,g);E.grupos.push(g)}
+    }else if(!P.cab&&ultG){g=ultG;E=mapaE.get(g.cuit)}
+    if(!g){R.sinId.push(P.n);continue}
+    g.pags.push(P.n);ultG=g;
+    g.nombre=g.nombre||P.nombre||null;g.legajo=g.legajo||P.legajo||null;g.ingreso=g.ingreso||P.ingreso||null;g.cargo=g.cargo||P.cargo||null;g.neto=g.neto||P.neto||null;
+    if(E&&P.cab){if(P.empleador&&!E.razon)E.razon=P.empleador;if(P.tipoTxt&&!E.tipoTxt)E.tipoTxt=P.tipoTxt;if(P.mes){const per=P.anio+'-'+String(MESES.indexOf(P.mes==='setiembre'?'septiembre':P.mes)+1).padStart(2,'0');E.pers[per]=(E.pers[per]||0)+1}}
+  }
+  R.emps.forEach(E=>{
+    E.grupos.forEach(g=>g.pags.sort((a,b)=>a-b));
+    const top=Object.entries(E.pers).sort((a,b)=>b[1]-a[1])[0];E.per=top?top[0]:workPeriod();
+    E.tipo=/aguinaldo|s\.?a\.?c\b/i.test(E.tipoTxt)?'SAC (aguinaldo)':/vacaciones/i.test(E.tipoTxt)?'Vacaciones':'Mensual';
+    E.aviso=Object.keys(E.pers).length>1?'Los recibos de este empleador son de períodos distintos: se propone el más frecuente. Revisalo antes de confirmar.':null;
+  });
+  if(!R.emps.length)R.bloqueo='No se encontró ningún recibo en el PDF (no se pudo leer el CUIT del empleador ni el CUIL de los empleados).';
+  return R;
+}
+/** Busca al empleado entre los ya cargados: por CUIL y, si no, por nombre (solo si no tiene CUIL cargado). */
+function sueMultiBuscar(emps,g){
+  let e=emps.find(x=>x.cuil&&x.cuil===g.cuil)||null;
+  if(!e&&g.nombre){const pn=suePal(g.nombre),m=emps.filter(x=>!x.cuil&&suePal(x.nombre)===pn);if(m.length===1)e=m[0]}
+  return e;
+}
+/** Cruza un empleador del PDF con lo ya cargado: si existe, y por empleado si existe, se crea o se reactiva. */
+function sueMultiPrev(E){
+  const k=sueClientes().find(c=>String(c.cuit)===E.cuit)||null,emps=k?ui.sdAll.emp.filter(e=>e.client_id===k.id):[];
+  const filas=E.grupos.map(g=>{
+    const e=sueMultiBuscar(emps,g),accion=!e?'crea':!e.activo?'reactiva':'existe';
+    const reemplaza=!!e&&ui.sdAll.pay.some(p=>p.employee_id===e.id&&p.periodo.slice(0,7)===E.per&&p.tipo===E.tipo);
+    return {g,e,accion,reemplaza,sinNombre:accion==='crea'&&!g.nombre};
+  });
+  return {k,filas};
+}
+const sueMultiBufs=new Map();
+/** Lee uno o varios PDF (arrastrados o elegidos): recibos de sueldo (de uno o más empleadores) o VEP de ARCA. */
+async function sueMultiLeer(files){
+  files=[...files];if(!files.length)return;
+  const M=ui.sueMulti=(ui.sueMulti&&ui.sueMulti.fase==='previa')?ui.sueMulti:{fase:'leyendo',items:[]};
+  M.fase='leyendo';M.leyendo=0;M.nLeer=files.length;draw();
+  try{await suePdfjs()}catch(x){M.items.push({nombre:'(lector de PDF)',err:x.message});M.fase='error';draw();return}
+  for(const f of files){
+    const it={nombre:f.name,id:uid()+uid()};
+    try{
+      if(!/\.pdf$/i.test(f.name))throw new Error('No es un PDF.');
+      if(f.size>40*1048576)throw new Error('Supera los 40 MB.');
+      if(await f.slice(0,5).text()!=='%PDF-')throw new Error('No parece un PDF válido.');
+      const buf=await f.arrayBuffer(),doc=await pdfjsLib.getDocument({data:new Uint8Array(buf.slice(0))}).promise,lin=[];
+      if(doc.numPages>400)throw new Error('Tiene demasiadas páginas (máximo 400).');
+      for(let n=1;n<=doc.numPages;n++){const pg=await doc.getPage(n),tc=await pg.getTextContent();lin.push(liqLineas(tc.items))}
+      const pr=lin.map((l,i)=>sueMultiPagina(l,i+1)),pv=lin.map((l,i)=>sueVepPagina(l,i+1));
+      if(pr.some(P=>P.cab||P.cuil)){it.kind='recibos';it.res=sueMultiAnalizar(pr)}
+      else if(pv.some(P=>P.esVep)){it.kind='vep';it.res=sueVepAnalizar(pv)}
+      else throw new Error('No se reconoció el documento: tiene que ser un recibo de sueldo o un VEP de ARCA en PDF con texto (no una imagen escaneada).');
+      sueMultiBufs.set(it.id,buf);
+    }catch(x){it.err=(x&&x.message)||String(x)}
+    M.items.push(it);M.leyendo++;draw();
+  }
+  M.fase=M.items.some(i=>i.res&&!i.res.bloqueo)?'previa':'error';draw();
+}
+function sueMultiDrop(e){e.preventDefault();const z=e.currentTarget;z.style.background='';z.style.borderColor='';sueMultiLeer(e.dataTransfer?e.dataTransfer.files:[])}
+function sueMultiSet(i,j,k,v){ui.sueMulti.items[i].res.emps[j][k]=v;draw()}
+function sueVepSet(i,j,k,v){ui.sueMulti.items[i].res.veps[j][k]=v;draw()}
+function sueMultiCancelar(){ui.sueMulti=null;sueMultiBufs.clear();draw()}
+async function sueGuardarPdf(cid,e,file,per,tipo){
+  const path=`${cid}/recibos/${e.id}/${per}-${TIPO_SLUG[tipo]}.pdf`;
+  const up=await sb.storage.from('clientes').upload(path,file,{contentType:'application/pdf',upsert:true});if(up.error)throw new Error('No se pudo subir: '+errTxt(up.error));
+  const {error}=await sb.from('payslips').upsert({employee_id:e.id,client_id:cid,periodo:per+'-01',tipo,nombre_archivo:file.name,path,size_bytes:file.size,subido_by:me.id,subido_at:new Date().toISOString(),wa_preparado_at:null,wa_preparado_by:null,enviado_at:null,enviado_by:null},{onConflict:'employee_id,periodo,tipo'});
+  if(error)throw error;
+}
+async function sueMultiConfirmar(){
+  const M=ui.sueMulti;if(!M||M.fase!=='previa')return;
+  const tr=[],tv=[];
+  M.items.forEach(it=>{if(!it.res||it.res.bloqueo)return;
+    if(it.kind==='vep')it.res.veps.forEach(V=>{if(!V.omitir&&V.cuit)tv.push({it,V})});
+    else it.res.emps.forEach(E=>{if(!E.omitir)tr.push({it,E})})});
+  if(!tr.length&&!tv.length){flash('No hay nada para cargar: todo está omitido.','warn');return draw()}
+  const mal=[],porEmpl=[],nuevosEmpl=[],vepOk=[],avisos=[];let ok=0,creados=0,ult=null;
+  const total=tr.reduce((a,t)=>a+t.E.grupos.length,0)+tv.length,srcs=new Map();
+  M.fase='guardando';M.prog=0;M.total=total;draw();
+  try{
+    const getSrc=async it=>{if(!srcs.has(it.id)){await suePdfLib();srcs.set(it.id,await PDFLib.PDFDocument.load(sueMultiBufs.get(it.id).slice(0),{ignoreEncryption:true}))}return srcs.get(it.id)};
+    for(const {it,E} of tr){
+      let k=sueClientes().find(c=>String(c.cuit)===E.cuit),okE=0;
+      const etqE=(k&&k.razon_social)||E.razon||cuitF(E.cuit);
+      try{
+        if(!k){
+          const {data,error}=await sb.from('clients').insert({razon_social:E.razon||('Empleador '+cuitF(E.cuit)),cuit:E.cuit,impuestos:[SUE_IMP.dependencia],solo_sueldos:true}).select('id').single();
+          if(error)throw ((error.code==='23505')?new Error('ya existe un cliente con ese CUIT que no podés ver desde este perfil (pedile al estudio que lo habilite en Sueldos)'):error);
+          nuevosEmpl.push(E.razon||cuitF(E.cuit));await loadClients();await loadSueldosAll();k=sueCli(data.id)||{id:data.id,razon_social:E.razon};
+        }
+        const src=await getSrc(it),PDFDocument=PDFLib.PDFDocument;
+        for(const g of E.grupos){
+          const etq=g.nombre?sueTitulo(g.nombre):g.cuil;
+          try{
+            const emps=ui.sdAll.emp.filter(e=>e.client_id===k.id);let e=sueMultiBuscar(emps,g);
+            if(!e){
+              if(!g.nombre)throw new Error('no se pudo leer el nombre para crear al empleado');
+              const obs=['Legajo '+(g.legajo||'-'),g.ingreso?'Ingreso '+g.ingreso:null,'(cargado desde el PDF de recibos)'].filter(Boolean).join(' · ');
+              const r=await sb.from('employees').insert({client_id:k.id,nombre:sueTitulo(g.nombre),cuil:g.cuil,whatsapp:null,cargo:g.cargo||null,tipo:'dependencia',horas_semanales:null,observaciones:obs}).select('*').single();
+              if(r.error)throw (/cuil_uniq|duplicate/i.test(r.error.message)?new Error('ya hay un empleado con ese CUIL'):r.error);
+              e=r.data;creados++;ui.sdAll.emp.push(e);
+            }else{
+              const cambios={};if(!e.activo)cambios.activo=true;if(!e.cuil&&g.cuil)cambios.cuil=g.cuil;
+              if(Object.keys(cambios).length){const r=await sb.from('employees').update(cambios).eq('id',e.id).select('id');if(r.error)throw r.error;if(!r.data||!r.data.length)throw new Error('sin permiso para actualizar al empleado');Object.assign(e,cambios)}
+            }
+            const out=await PDFDocument.create(),cp=await out.copyPages(src,g.pags.map(n=>n-1));cp.forEach(p=>out.addPage(p));
+            const bytes=await out.save(),file=new File([bytes],`Recibo de sueldo - ${etq} - ${MESES[Number(E.per.slice(5,7))-1]} ${E.per.slice(0,4)}.pdf`,{type:'application/pdf'});
+            await sueGuardarPdf(k.id,e,file,E.per,E.tipo);ok++;okE++;
+          }catch(x){mal.push(etqE+': '+etq+' ('+((x&&x.message)||x)+')')}
+          M.prog++;draw();
+        }
+        ult={k,per:E.per,tipo:E.tipo};
+      }catch(x){mal.push(etqE+' ('+((x&&x.message)||x)+')');M.prog+=E.grupos.length-okE;draw()}
+      porEmpl.push(`${etqE} (${okE}/${E.grupos.length})`);
+    }
+    for(const {it,V} of tv){
+      const k=sueClientes().find(c=>String(c.cuit)===V.cuit),etqV='VEP '+(V.nro||'')+(k?' de '+k.razon_social:'');
+      try{
+        if(!k)throw new Error('el empleador '+cuitF(V.cuit)+' no está cargado');
+        const nom=`VEP ${V.concepto==='SERV_DOM'?'servicio doméstico':'F.931'} - ${MESES[Number(V.per.slice(5,7))-1]} ${V.per.slice(0,4)}${V.nro?' (Nro '+V.nro+')':''}.pdf`;
+        let file;
+        if(it.res.veps.length===1)file=new File([sueMultiBufs.get(it.id)],nom,{type:'application/pdf'});
+        else{const src=await getSrc(it),out=await PDFLib.PDFDocument.create(),cp=await out.copyPages(src,V.pags.map(n=>n-1));cp.forEach(p=>out.addPage(p));file=new File([await out.save()],nom,{type:'application/pdf'})}
+        const path=`${k.id}/sueldos/${V.per}/vep-${cgSlug(V.concepto)}.pdf`;
+        const up=await sb.storage.from('clientes').upload(path,file,{contentType:'application/pdf',upsert:true});if(up.error)throw new Error('No se pudo subir: '+errTxt(up.error));
+        const {error}=await sb.from('payroll_files').upsert({client_id:k.id,periodo:V.per+'-01',categoria:'vep',concepto:V.concepto,nombre_archivo:file.name,path,size_bytes:file.size,subido_by:me.id,subido_at:new Date().toISOString(),enviado_at:null,enviado_by:null},{onConflict:'client_id,periodo,categoria,concepto'});
+        if(error)throw error;
+        const tipo=V.concepto==='SERV_DOM'?'domestico':'dependencia';
+        if(!sueTiposDe(k,ui.sdAll.emp).includes(tipo)){
+          const r=await sb.from('clients').update({impuestos:[...new Set([...(k.impuestos||[]),SUE_IMP[tipo]])]}).eq('id',k.id).select('id');
+          avisos.push((r.error||!r.data||!r.data.length)?`en ${k.razon_social} tildá "${SUE_TIPOS[tipo]}" en la ficha para ver el VEP en la lista`:`en ${k.razon_social} se tildó "${SUE_TIPOS[tipo]}"`);
+        }
+        vepOk.push(`${V.concepto==='SERV_DOM'?'serv. doméstico':'F.931'} ${V.per.slice(5)}/${V.per.slice(0,4)} de ${k.razon_social}`);
+        if(!ult||ult.k.id!==k.id)ult={k,per:V.per,tipo:(ui.sueCfg&&ui.sueCfg.tipo)||'Mensual'};
+      }catch(x){mal.push(etqV+' ('+((x&&x.message)||x)+')')}
+      M.prog++;draw();
+    }
+    await loadClients();await loadSueldosAll();
+    if(ult){ui.sueCfg=ui.sueCfg||{periodo:ult.per,tipo:ult.tipo,horas:24,msg:MSG_REC,editEmp:null};ui.sueCfg.periodo=ult.per;ui.sueCfg.tipo=ult.tipo;setSd(ult.k.id)}
+    ui.sueMulti=null;sueMultiBufs.clear();
+    const partes=[];
+    if(tr.length)partes.push(`Se cargaron ${ok} de ${tr.reduce((a,t)=>a+t.E.grupos.length,0)} recibo(s): ${porEmpl.join(', ')}.${creados?` Se crearon ${creados} empleado(s) nuevo(s).`:''}${nuevosEmpl.length?' Empleadores que no existían (creados como "solo Sueldos"): '+nuevosEmpl.join(', ')+'.':''}`);
+    if(tv.length)partes.push(`VEP cargados: ${vepOk.length} de ${tv.length}${vepOk.length?' ('+vepOk.join('; ')+')':''}.${avisos.length?' Ojo: '+avisos.join('; ')+'.':''}`);
+    if(mal.length)partes.push('No se cargaron: '+mal.join('; ')+'.');
+    flash(partes.join(' '),mal.length?((ok+vepOk.length)?'warn':'err'):'ok');
+  }catch(x){M.fase='error';M.items=[{nombre:'Carga interrumpida',err:errTxt(x)+((ok+vepOk.length)?` (Antes de fallar se cargaron ${ok} recibo(s) y ${vepOk.length} VEP.)`:'')}];try{await loadSueldosAll()}catch(y){}}
+  draw();
+}
+function sueMultiPrevHtml(M){
+  let nRec=0,nVep=0;
+  const bloques=M.items.map((it,i)=>{
+    const cab=`<div style="margin-top:12px"><b>${esc(it.nombre)}</b>${it.res?`<span class="s">${it.kind==='vep'?'VEP de ARCA':'Recibos de sueldo'} · ${it.res.pags} página(s)</span>`:''}</div>`;
+    if(it.err)return cab+`<div class="msg err">${esc(it.err)} Este archivo no se carga.</div>`;
+    const R=it.res;if(R.bloqueo)return cab+`<div class="msg err">${esc(R.bloqueo)}</div>`;
+    const sinId=R.sinId.length?`<div class="msg warn">Páginas que no se pudieron asignar (no se cargan): ${R.sinId.join(', ')}.</div>`:'';
+    if(it.kind==='vep')return cab+sinId+R.veps.map((V,j)=>{
+      const P=sueVepPrev(V,M),k=P.k;if(!V.omitir&&P.ok)nVep++;
+      return `<div class="card" style="margin:8px 0;${V.omitir?'opacity:.55':''}"><div class="row" style="gap:10px;align-items:center;flex-wrap:wrap"><b>${esc(k?k.razon_social:(V.cuit?'CUIT '+cuitF(V.cuit):'(no se leyó el CUIT)'))}</b>${V.cuit?`<span class="s">CUIT ${cuitF(V.cuit)}</span>`:''}${k?'<span class="tag" style="background:var(--grn);color:var(--grnt)">Empleador cargado</span>':P.nuevoPorRecibos?'<span class="tag" style="background:var(--blu);color:var(--blut)">Se crea con los recibos de este mismo envío</span>':'<span class="tag" style="background:var(--red);color:var(--redt)">Empleador no cargado: no se puede guardar este VEP</span>'}<label class="row" style="gap:5px;align-items:center;margin-left:auto"><input type="checkbox" ${V.omitir?'checked':''} onchange="sueVepSet(${i},${j},'omitir',this.checked)"> No cargar este VEP</label></div>
+       <div class="s" style="margin-top:4px">VEP Nro ${esc(V.nro)}${V.tipoPago?' · '+esc(V.tipoPago):''}${V.total?' · Total $ '+esc(V.total):''}${V.vence?' · Vence '+fAR(V.vence):''}</div>
+       ${!V.conceptoLeido?'<div class="msg warn" style="margin-top:6px">No se reconoció el tipo de VEP: elegí a cuál corresponde.</div>':''}${!V.perLeido?'<div class="msg warn" style="margin-top:6px">No se leyó el período: revisalo.</div>':''}
+       <div class="row" style="gap:14px;flex-wrap:wrap;align-items:flex-end;margin:8px 0"><label>Período<br>${mesPick(V.per,`sueVepSet(${i},${j},'per',this.value)`)}</label>
+        <label>Corresponde a<br><select onchange="sueVepSet(${i},${j},'concepto',this.value)">${Object.values(CG_VEP).map(([c,t])=>`<option value="${c}" ${V.concepto===c?'selected':''}>${esc(t)}</option>`).join('')}</select></label></div>
+       ${P.ya?'<span class="s">Ya hay un VEP de este período y tipo: se reemplaza.</span>':''}${P.sinTipo&&k?`<span class="s">Este empleador no tiene tildado "${SUE_TIPOS[P.tipo]}": se va a tildar para que el VEP aparezca en la lista.</span>`:''}</div>`}).join('');
+    return cab+sinId+R.emps.map((E,j)=>{
+      const P=sueMultiPrev(E),k=P.k,n=P.filas.filter(f=>!f.sinNombre).length;if(!E.omitir)nRec+=n;
+      const lista=P.filas.map(f=>{
+        const est=f.accion==='existe'?'<span class="tag" style="background:var(--grn);color:var(--grnt)">Ya existe</span>':f.accion==='reactiva'?'<span class="tag" style="background:var(--amb);color:var(--ambt)">Estaba de baja: se reactiva</span>':f.sinNombre?'<span class="tag" style="background:var(--red);color:var(--redt)">No se leyó el nombre</span>':'<span class="tag" style="background:var(--blu);color:var(--blut)">Se creará</span>';
+        return `<tr><td>${esc(f.g.nombre?sueTitulo(f.g.nombre):'(sin nombre)')}<span class="s">${f.g.legajo?'Legajo '+esc(f.g.legajo):''}${f.g.neto?' · Neto $ '+esc(f.g.neto):''}</span></td><td>${cuitF(f.g.cuil)}</td><td>${esc(f.g.cargo||'')}</td><td>${f.g.pags.join(', ')}</td><td>${est}${f.reemplaza?'<span class="s">Ya tiene recibo de este período: se reemplaza</span>':''}</td></tr>`}).join('');
+      return `<div class="card" style="margin:8px 0;${E.omitir?'opacity:.55':''}"><div class="row" style="gap:10px;align-items:center;flex-wrap:wrap"><b>${esc(k?k.razon_social:(E.razon||'(sin nombre)'))}</b><span class="s">CUIT ${cuitF(E.cuit)}</span>${k?'<span class="tag" style="background:var(--grn);color:var(--grnt)">Empleador cargado</span>':'<span class="tag" style="background:var(--amb);color:var(--ambt)">No está cargado: se creará como solo Sueldos</span>'}<label class="row" style="gap:5px;align-items:center;margin-left:auto"><input type="checkbox" ${E.omitir?'checked':''} onchange="sueMultiSet(${i},${j},'omitir',this.checked)"> No cargar este empleador</label></div>
+       ${E.aviso?`<div class="msg warn" style="margin-top:6px">${esc(E.aviso)}</div>`:''}
+       <div class="row" style="gap:14px;flex-wrap:wrap;align-items:flex-end;margin:8px 0"><label>Período de los recibos<br>${mesPick(E.per,`sueMultiSet(${i},${j},'per',this.value)`)}</label>
+        <label>Tipo de recibo<br><select onchange="sueMultiSet(${i},${j},'tipo',this.value)">${TIPOS_REC.map(t=>`<option ${E.tipo===t?'selected':''}>${t}</option>`).join('')}</select></label></div>
+       <div class="tw"><table><thead><tr><th>Empleado</th><th>CUIL</th><th>Categoría</th><th>Páginas</th><th>Estado</th></tr></thead><tbody>${lista}</tbody></table></div></div>`}).join('');
+  }).join('');
+  const txt=[nRec?nRec+' recibo(s)':'',nVep?nVep+' VEP':''].filter(Boolean).join(' y ');
+  return `${bloques}
+  <div class="row" style="gap:8px;margin-top:10px"><button class="b" onclick="sueMultiConfirmar()" ${txt?'':'disabled'}>Confirmar y cargar ${txt||'nada'}</button><button class="g" onclick="sueMultiCancelar()">Cancelar</button></div>
+  <p class="s" style="margin-top:6px">Cada empleado recibe un PDF con sus propias páginas (original y duplicado); cada VEP queda en el empleador y período que indica. Los empleadores y empleados de recibos que no estén cargados se crean con los datos del recibo. Podés arrastrar más archivos arriba antes de confirmar.</p>`;
+}
+function sueMultiZona(){
+  return `<div ondragover="event.preventDefault();this.style.background='rgba(120,160,255,.14)';this.style.borderColor='var(--blut,#3b6fd4)'" ondragleave="this.style.background='';this.style.borderColor=''" ondrop="sueMultiDrop(event)" style="border:2px dashed var(--bd,#cbd5e1);border-radius:12px;padding:18px;text-align:center"><div><b>Arrastrá acá los recibos de sueldo y los VEP</b> (uno o varios PDF, de cualquier empleador)</div><div class="s" style="margin:4px 0 10px">La app reconoce si cada archivo es un recibo o un VEP, identifica el empleador por su CUIT, separa los recibos por empleado y crea lo que falte. Antes de guardar vas a ver una vista previa.</div><label class="b" style="cursor:pointer;display:inline-block">O elegí los archivos<input type="file" accept="application/pdf,.pdf" multiple hidden onchange="sueMultiLeer([...this.files]);this.value=''"></label></div>`;
+}
+function sueMultiCard(){
+  const M=ui.sueMulti,L=ui.sueWaLink;
+  const rw=L?`<div class="msg warn" style="margin-bottom:12px">WhatsApp no se abrió solo. <a href="${esc(L.url)}" target="_blank" rel="noopener" style="font-weight:700" onclick="ui.sueWaLink=null;setTimeout(draw,0)">Abrir WhatsApp (${esc(L.nombre)})</a> <button class="g sm" onclick="ui.sueWaLink=null;draw()">Cerrar</button><span class="s">El PDF ya se descargó: arrastralo al chat.</span></div>`:'';
+  let cuerpo;
+  if(!M)cuerpo=sueMultiZona();
+  else if(M.fase==='leyendo')cuerpo=`<p><b>Leyendo los archivos…</b> ${M.leyendo||0} de ${M.nLeer||0}</p>`;
+  else if(M.fase==='guardando')cuerpo=`<p><b>Guardando…</b> ${M.prog||0} de ${M.total||0}. No cierres esta página.</p>`;
+  else if(M.fase==='error')cuerpo=M.items.map(it=>`<div class="msg err"><b>${esc(it.nombre)}:</b> ${esc(it.err||(it.res&&it.res.bloqueo)||'No se pudo leer.')}</div>`).join('')+`<button class="g" onclick="sueMultiCancelar()">Cerrar</button>`;
+  else cuerpo=sueMultiZona()+sueMultiPrevHtml(M);
+  return rw+`<div class="card" style="margin-bottom:14px"><b>Cargar recibos de sueldo y VEP (varios empleados o empleadores)</b><div style="margin-top:8px">${cuerpo}</div></div>`;
+}
+/** Campo para cargar el WhatsApp del empleador justo donde falta (si no, el recibo no se puede enviar). */
+function sueTelForm(k,T){
+  const em=(T&&T.lista||[]).find(t=>t.rol==='empleador'&&!t.ok);if(!em)return '';
+  return `<div class="row" style="gap:4px;margin-top:4px;flex-wrap:wrap"><input placeholder="WhatsApp del empleador (3537 412345)" inputmode="tel" style="min-width:200px"><button type="button" class="b sm" onclick="sueGuardarTel('${k.id}',this.previousElementSibling)">Guardar WhatsApp</button></div>`;
+}
+async function sueGuardarTel(cid,inp){
+  const v=String(inp&&inp.value||'').trim(),w=waNum(v);
+  if(!w||!w.ok){flash('Revisá el WhatsApp: código de área + número, sin 0 ni 15 (por ejemplo 3537 412345).','err');return draw()}
+  try{
+    const {data,error}=await sb.from('clients').update({telefono:v}).eq('id',cid).select('id');if(error)throw error;
+    if(!data||!data.length)throw new Error('No tenés permiso para editar los datos de este empleador.');
+    await loadClients();await loadSueldosAll();flash('WhatsApp del empleador guardado: ya se pueden enviar sus recibos.');
+  }catch(x){flash(errTxt(x),'err')}
+  draw();
 }
 
 /* ===== Carga de sueldos: perfil "liquidador" (recibos, VEP y boletas de sindicatos) ===== */
@@ -2013,6 +2299,7 @@ function vCarga(){
   const c=sueCli(ui.sd.id);
   return `<h2>Carga de sueldos</h2>
   ${sueAltaCard()}
+  ${sueMultiCard()}
   <p class="s" style="margin-bottom:12px">Cargá los recibos de sueldo, el VEP y las boletas de sindicatos de cada empleador. Lo que cargues aparece en el perfil del estudio para enviarlo.</p>
   <div class="card row" style="margin-bottom:12px;gap:14px;flex-wrap:wrap;align-items:flex-end"><label>Período<br>${mesPick(s.periodo,`ui.sueCfg.periodo=this.value;draw()`)}</label>
    <label>Tipo de recibo<br><select onchange="ui.sueCfg.tipo=this.value;draw()">${TIPOS_REC.map(t=>`<option ${s.tipo===t?'selected':''}>${t}</option>`).join('')}</select></label>
@@ -2149,7 +2436,7 @@ function vSueldosPage(){
   const R=act.filter(sueFiltroOk).map(k=>{const em=ui.sdAll.emp.filter(e=>e.client_id===k.id&&e.activo),ok=em.filter(e=>ui.sdAll.pay.some(p=>p.employee_id===e.id&&p.periodo.slice(0,7)===s.periodo&&p.tipo===s.tipo)).length;return {k,n:em.length,ok,f:aplica(k).includes('F931')?(filDe(k.id,'F931',s.periodo)?'ok':'pend'):null}}).filter(r=>r.n>0||r.f||sueTiposDe(r.k,ui.sdAll.emp).length);
   return `<h2>Sueldos</h2>
   <p class="s" style="margin-bottom:12px">Recibos de sueldo de ${mesAnio(s.periodo+'-01')} (${esc(s.tipo)}). Cambiá el período y el tipo más abajo.</p>
-  ${sueAltaCard()}${sueFiltroBar()}
+  ${sueAltaCard()}${sueMultiCard()}${sueFiltroBar()}
   ${R.length?`<div class="tw" style="margin-bottom:18px"><table><thead><tr><th>Cliente</th><th>CUIT termina en</th><th>Empleados</th><th>Recibos cargados</th><th>Faltan</th><th>Próximo vencimiento</th><th>F.931</th><th></th></tr></thead><tbody>${R.map(r=>`<tr><td>${esc(r.k.razon_social)}${r.k.solo_sueldos?' <span class="tag" style="background:var(--gry,#e5e7eb)">Solo Sueldos</span>':''}${sueResTipos(r.k)}</td><td>${r.k.cuit.slice(-1)}</td><td>${r.n}</td><td>${r.ok}</td><td ${r.n-r.ok?'style="color:var(--redt);font-weight:600"':''}>${r.n-r.ok}</td><td>${sueResVenc(r.k)}</td><td>${r.f==='ok'?'<span class="tag" style="background:var(--grn);color:var(--grnt)">Presentado</span>':r.f==='pend'?'<span class="tag" style="background:var(--amb);color:var(--ambt)">Pendiente</span>':'<span class="s">-</span>'}</td><td><button class="g sm" onclick="cambiarClienteSd('${r.k.id}')">Abrir</button></td></tr>`).join('')}</tbody></table></div>`:'<div class="card" style="margin-bottom:18px;color:var(--mut)">No hay empleadores que coincidan con el filtro (o todavía ninguno tiene empleados cargados). Elegí un cliente o agregá un empleador y cargá el primer empleado.</div>'}
   ${sueEnvioPanel()}
   <div class="card row" style="margin-bottom:16px"><label>Cliente o empleador<br><select onchange="cambiarClienteSd(this.value)">${act.filter(k=>sueFiltroOk(k)||k.id===ui.sd.id).map(k=>`<option value="${k.id}" ${k.id===ui.sd.id?'selected':''}>${esc(k.razon_social)}</option>`).join('')}</select></label></div>
