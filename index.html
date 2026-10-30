@@ -1548,7 +1548,7 @@ function vSueldos(c,f){
    <label class="g">Subir varios PDF a la vez<input type="file" accept="application/pdf,.pdf" multiple hidden onchange="subirVarios(this)"></label></div>
   <p class="s" style="margin-bottom:10px">Para subir varios juntos, cada archivo tiene que llevar en su nombre el CUIL o el nombre y apellido del empleado.</p>
   <div class="tw" style="margin-bottom:14px"><table><thead><tr><th>Empleado</th><th>Recibo</th><th>Enviar por WhatsApp</th></tr></thead><tbody>${act.length?filas:'<tr><td colspan="3" style="color:var(--mut)">No hay empleados activos.</td></tr>'}</tbody></table></div>
-  ${sueMsgCard()}
+  ${sueTodosCard(c,f)}${sueMsgCard()}
   <p class="s" style="margin-top:8px">El recibo se envía como archivo PDF, sin enlace. En el celular se abre el menú de compartir con el PDF y el texto ya cargados (elegís WhatsApp y el contacto). En la compu se descarga el PDF y se abre el chat con el número y el texto: arrastrás el archivo al chat. La app no sabe si el mensaje se envió: solo anota que lo preparaste.</p>`;
 }
 async function recargarSueldos(){await loadSueldosAll()}
@@ -1726,7 +1726,7 @@ function sueFiltroBar(){
 const SUE_A={empleador:'Empleador',empleado:'Empleado',ambos:'Ambos'};
 const MSG_PDF_EMP='Hola {nombre}, ¿cómo estás? Te enviamos el recibo de sueldo de {empleado} de {periodo}. Cualquier duda, avisanos. Estudio Theiler.';
 const MSG_PDF_ADO='Hola {nombre}, ¿cómo estás? Te enviamos tu recibo de sueldo de {periodo} de {empleador}. Cualquier duda, avisanos. Estudio Theiler.';
-const sueMsgs=()=>{const s=ui.sueCfg;if(!s.pdfAdo)s.pdfAdo=MSG_PDF_ADO;if(!s.pdfEmp)s.pdfEmp=MSG_PDF_EMP;return s};
+const sueMsgs=()=>{const s=ui.sueCfg;if(!s.pdfAdo)s.pdfAdo=MSG_PDF_ADO;if(!s.pdfEmp)s.pdfEmp=MSG_PDF_EMP;if(!s.pdfTodos)s.pdfTodos=MSG_PDF_TODOS;return s};
 /** Primer nombre para saludar al empleador: del contacto elegido o, si no hay, de la razón social ("Apellido, Nombre"). */
 function sueSaludo(k,opt){
   if(opt&&opt.nombre)return String(opt.nombre).trim().split(/\s+/)[0];
@@ -1866,7 +1866,7 @@ function sueMsgCard(){
   <p class="s" style="margin:4px 0 10px">Se completan solos con los datos de cada recibo: {nombre} (a quien se le escribe), {empleado}, {empleador} y {periodo}. El PDF del recibo va adjunto (sin enlace). Abajo ves cómo queda con ${P.m.real?'un recibo real ('+esc(P.m.empleado)+')':'datos de ejemplo'}, y se actualiza mientras escribís.</p>
   <div class="fgrid">
    <div class="full"><label>Mensaje para el empleador<textarea rows="5" oninput="sueMsgSet('pdfEmp',this.value)">${esc(s.pdfEmp)}</textarea></label><div class="s" style="margin-top:4px">Vista previa:</div><pre id="sue_pv_emp" style="white-space:pre-wrap;margin:4px 0;padding:10px;border-radius:10px;background:var(--grn,#e8f5e9);font:inherit">${esc(P.emp)}</pre><button type="button" class="g sm" onclick="sueMsgReset('pdfEmp')">Volver al mensaje original</button></div>
-   <div class="full"><label>Mensaje para el empleado<textarea rows="5" oninput="sueMsgSet('pdfAdo',this.value)">${esc(s.pdfAdo)}</textarea></label><div class="s" style="margin-top:4px">Vista previa:</div><pre id="sue_pv_ado" style="white-space:pre-wrap;margin:4px 0;padding:10px;border-radius:10px;background:var(--grn,#e8f5e9);font:inherit">${esc(P.ado)}</pre><button type="button" class="g sm" onclick="sueMsgReset('pdfAdo')">Volver al mensaje original</button></div></div></div>`;
+   <div class="full"><label>Mensaje para el empleado<textarea rows="5" oninput="sueMsgSet('pdfAdo',this.value)">${esc(s.pdfAdo)}</textarea></label><div class="s" style="margin-top:4px">Vista previa:</div><pre id="sue_pv_ado" style="white-space:pre-wrap;margin:4px 0;padding:10px;border-radius:10px;background:var(--grn,#e8f5e9);font:inherit">${esc(P.ado)}</pre><button type="button" class="g sm" onclick="sueMsgReset('pdfAdo')">Volver al mensaje original</button></div>${sueMsgTodosBloque()}</div></div>`;
 }
 function sueEstadoHtml(p,ok){
   const e=sueEstado(p),fe=d=>new Date(d).toLocaleDateString('es-AR');
@@ -1899,7 +1899,7 @@ function sueEnvioPanel(){
   <div class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:8px"><button class="g sm" onclick="sueEnvMarcar('nuevos')">Elegir los no enviados (${nuevos})</button><button class="g sm" onclick="sueEnvMarcar('todos')">Elegir todos los que corresponden (${corresp})</button><button class="g sm" onclick="sueEnvMarcar('ninguno')">Desmarcar</button>
    <button class="g sm" onclick="sueMarcarEnv(${JSON.stringify(selIds).replace(/"/g,'&quot;')},true)" ${sel?'':'disabled'}>Marcar ${sel} como enviado(s)</button><button class="g sm" onclick="sueMarcarEnv(${JSON.stringify(selIds).replace(/"/g,'&quot;')},false)" ${sel?'':'disabled'}>Volver a pendiente</button>
    <button class="b" onclick="sueEnvPreparar()" ${sel&&!E.busy?'':'disabled'}>${E.busy?'Preparando…':`Preparar envío de ${sel} recibo(s)`}</button></div>
-  ${cola}${tabla}${falt}${sueMsgCard()}`;
+  ${cola}${tabla}${falt}${sueTodosPanel()}${sueMsgCard()}`;
 }
 
 /* ===== Recibos: un solo PDF con varios empleados (la app lo separa por empleado) ===== */
@@ -2046,7 +2046,7 @@ async function sueMultiConfirmar(){
     if(it.kind==='vep')it.res.veps.forEach(V=>{if(!V.omitir&&V.cuit)tv.push({it,V})});
     else it.res.emps.forEach(E=>{if(!E.omitir)tr.push({it,E})})});
   if(!tr.length&&!tv.length){flash('No hay nada para cargar: todo está omitido.','warn');return draw()}
-  const mal=[],porEmpl=[],nuevosEmpl=[],vepOk=[],avisos=[];let ok=0,creados=0,ult=null;
+  const mal=[],porEmpl=[],nuevosEmpl=[],vepOk=[],avisos=[],todosOk=[],todosMal=[];let ok=0,creados=0,ult=null;
   const total=tr.reduce((a,t)=>a+t.E.grupos.length,0)+tv.length,srcs=new Map();
   M.fase='guardando';M.prog=0;M.total=total;draw();
   try{
@@ -2081,6 +2081,16 @@ async function sueMultiConfirmar(){
           }catch(x){mal.push(etqE+': '+etq+' ('+((x&&x.message)||x)+')')}
           M.prog++;draw();
         }
+        if(E.todos!==false&&okE>0){
+          /* El archivo con todos los recibos juntos (para mandárselo completo al empleador) se guarda además de los individuales. */
+          try{
+            const nomT=`Recibos de sueldo (todos) - ${etqE} - ${MESES[Number(E.per.slice(5,7))-1]} ${E.per.slice(0,4)}.pdf`;
+            let ft;
+            if(it.res.emps.length===1&&!it.res.sinId.length)ft=new File([sueMultiBufs.get(it.id)],nomT,{type:'application/pdf'});
+            else{const pg=[...new Set(E.grupos.flatMap(g=>g.pags))].sort((a,b)=>a-b),out=await PDFDocument.create(),cp=await out.copyPages(src,pg.map(n=>n-1));cp.forEach(p=>out.addPage(p));ft=new File([await out.save()],nomT,{type:'application/pdf'})}
+            await sueGuardarTodos(k.id,ft,E.per,E.tipo);todosOk.push(etqE);
+          }catch(x){todosMal.push(etqE+' ('+((x&&x.message)||x)+')')}
+        }
         ult={k,per:E.per,tipo:E.tipo};
       }catch(x){mal.push(etqE+' ('+((x&&x.message)||x)+')');M.prog+=E.grupos.length-okE;draw()}
       porEmpl.push(`${etqE} (${okE}/${E.grupos.length})`);
@@ -2111,10 +2121,10 @@ async function sueMultiConfirmar(){
     if(ult){ui.sueCfg=ui.sueCfg||{periodo:ult.per,tipo:ult.tipo,horas:24,msg:MSG_REC,editEmp:null};ui.sueCfg.periodo=ult.per;ui.sueCfg.tipo=ult.tipo;setSd(ult.k.id)}
     ui.sueMulti=null;sueMultiBufs.clear();
     const partes=[];
-    if(tr.length)partes.push(`Se cargaron ${ok} de ${tr.reduce((a,t)=>a+t.E.grupos.length,0)} recibo(s): ${porEmpl.join(', ')}.${creados?` Se crearon ${creados} empleado(s) nuevo(s).`:''}${nuevosEmpl.length?' Empleadores que no existían (creados como "solo Sueldos"): '+nuevosEmpl.join(', ')+'.':''}`);
+    if(tr.length)partes.push(`Se cargaron ${ok} de ${tr.reduce((a,t)=>a+t.E.grupos.length,0)} recibo(s): ${porEmpl.join(', ')}.${creados?` Se crearon ${creados} empleado(s) nuevo(s).`:''}${nuevosEmpl.length?' Empleadores que no existían (creados como "solo Sueldos"): '+nuevosEmpl.join(', ')+'.':''}${todosOk.length?' Archivo con todos los recibos guardado: '+todosOk.join(', ')+'.':''}${todosMal.length?' No se pudo guardar el archivo con todos los recibos: '+todosMal.join('; ')+'.':''}`);
     if(tv.length)partes.push(`VEP cargados: ${vepOk.length} de ${tv.length}${vepOk.length?' ('+vepOk.join('; ')+')':''}.${avisos.length?' Ojo: '+avisos.join('; ')+'.':''}`);
     if(mal.length)partes.push('No se cargaron: '+mal.join('; ')+'.');
-    flash(partes.join(' '),mal.length?((ok+vepOk.length)?'warn':'err'):'ok');
+    flash(partes.join(' '),(mal.length||todosMal.length)?((ok+vepOk.length)?'warn':'err'):'ok');
   }catch(x){M.fase='error';M.items=[{nombre:'Carga interrumpida',err:errTxt(x)+((ok+vepOk.length)?` (Antes de fallar se cargaron ${ok} recibo(s) y ${vepOk.length} VEP.)`:'')}];try{await loadSueldosAll()}catch(y){}}
   draw();
 }
@@ -2140,6 +2150,7 @@ function sueMultiPrevHtml(M){
         return `<tr><td>${esc(f.g.nombre?sueTitulo(f.g.nombre):'(sin nombre)')}<span class="s">${f.g.legajo?'Legajo '+esc(f.g.legajo):''}${f.g.neto?' · Neto $ '+esc(f.g.neto):''}</span></td><td>${cuitF(f.g.cuil)}</td><td>${esc(f.g.cargo||'')}</td><td>${f.g.pags.join(', ')}</td><td>${est}${f.reemplaza?'<span class="s">Ya tiene recibo de este período: se reemplaza</span>':''}</td></tr>`}).join('');
       return `<div class="card" style="margin:8px 0;${E.omitir?'opacity:.55':''}"><div class="row" style="gap:10px;align-items:center;flex-wrap:wrap"><b>${esc(k?k.razon_social:(E.razon||'(sin nombre)'))}</b><span class="s">CUIT ${cuitF(E.cuit)}</span>${k?'<span class="tag" style="background:var(--grn);color:var(--grnt)">Empleador cargado</span>':'<span class="tag" style="background:var(--amb);color:var(--ambt)">No está cargado: se creará como solo Sueldos</span>'}<label class="row" style="gap:5px;align-items:center;margin-left:auto"><input type="checkbox" ${E.omitir?'checked':''} onchange="sueMultiSet(${i},${j},'omitir',this.checked)"> No cargar este empleador</label></div>
        ${E.aviso?`<div class="msg warn" style="margin-top:6px">${esc(E.aviso)}</div>`:''}
+       <label class="row" style="gap:6px;align-items:center;margin-top:6px"><input type="checkbox" ${E.todos===false?'':'checked'} onchange="sueMultiSet(${i},${j},'todos',this.checked)"> Guardar también el archivo con todos los recibos juntos (para mandárselo completo al empleador)</label>
        <div class="row" style="gap:14px;flex-wrap:wrap;align-items:flex-end;margin:8px 0"><label>Período de los recibos<br>${mesPick(E.per,`sueMultiSet(${i},${j},'per',this.value)`)}</label>
         <label>Tipo de recibo<br><select onchange="sueMultiSet(${i},${j},'tipo',this.value)">${TIPOS_REC.map(t=>`<option ${E.tipo===t?'selected':''}>${t}</option>`).join('')}</select></label></div>
        <div class="tw"><table><thead><tr><th>Empleado</th><th>CUIL</th><th>Categoría</th><th>Páginas</th><th>Estado</th></tr></thead><tbody>${lista}</tbody></table></div></div>`}).join('');
@@ -2147,7 +2158,7 @@ function sueMultiPrevHtml(M){
   const txt=[nRec?nRec+' recibo(s)':'',nVep?nVep+' VEP':''].filter(Boolean).join(' y ');
   return `${bloques}
   <div class="row" style="gap:8px;margin-top:10px"><button class="b" onclick="sueMultiConfirmar()" ${txt?'':'disabled'}>Confirmar y cargar ${txt||'nada'}</button><button class="g" onclick="sueMultiCancelar()">Cancelar</button></div>
-  <p class="s" style="margin-top:6px">Cada empleado recibe un PDF con sus propias páginas (original y duplicado); cada VEP queda en el empleador y período que indica. Los empleadores y empleados de recibos que no estén cargados se crean con los datos del recibo. Podés arrastrar más archivos arriba antes de confirmar.</p>`;
+  <p class="s" style="margin-top:6px">Cada empleado recibe un PDF con sus propias páginas (original y duplicado), y además se puede guardar el archivo completo; cada VEP queda en el empleador y período que indica. Los empleadores y empleados de recibos que no estén cargados se crean con los datos del recibo. Podés arrastrar más archivos arriba antes de confirmar.</p>`;
 }
 function sueMultiZona(){
   return `<div ondragover="event.preventDefault();this.style.background='rgba(120,160,255,.14)';this.style.borderColor='var(--blut,#3b6fd4)'" ondragleave="this.style.background='';this.style.borderColor=''" ondrop="sueMultiDrop(event)" style="border:2px dashed var(--bd,#cbd5e1);border-radius:12px;padding:18px;text-align:center"><div><b>Arrastrá acá los recibos de sueldo y los VEP</b> (uno o varios PDF, de cualquier empleador)</div><div class="s" style="margin:4px 0 10px">La app reconoce si cada archivo es un recibo o un VEP, identifica el empleador por su CUIT, separa los recibos por empleado y crea lo que falte. Antes de guardar vas a ver una vista previa.</div><label class="b" style="cursor:pointer;display:inline-block">O elegí los archivos<input type="file" accept="application/pdf,.pdf" multiple hidden onchange="sueMultiLeer([...this.files]);this.value=''"></label></div>`;
@@ -2163,6 +2174,74 @@ function sueMultiCard(){
   else cuerpo=sueMultiZona()+sueMultiPrevHtml(M);
   return rw+`<div class="card" style="margin-bottom:14px"><b>Cargar recibos de sueldo y VEP (varios empleados o empleadores)</b><div style="margin-top:8px">${cuerpo}</div></div>`;
 }
+/* ===== Archivo con todos los recibos juntos: se guarda al separar y se puede enviar completo al empleador ===== */
+const MSG_PDF_TODOS='Hola {nombre}, ¿cómo estás? Te enviamos los recibos de sueldo de {periodo} de {empleador}, todos juntos en un solo archivo. Cualquier duda, avisanos. Estudio Theiler.';
+async function sueGuardarTodos(cid,file,per,tipo){
+  const conc=TIPO_SLUG[tipo],path=`${cid}/sueldos/${per}/recibos-${conc}.pdf`;
+  const up=await sb.storage.from('clientes').upload(path,file,{contentType:'application/pdf',upsert:true});if(up.error)throw new Error('No se pudo subir: '+errTxt(up.error));
+  const {error}=await sb.from('payroll_files').upsert({client_id:cid,periodo:per+'-01',categoria:'recibos',concepto:conc,nombre_archivo:file.name,path,size_bytes:file.size,subido_by:me.id,subido_at:new Date().toISOString(),enviado_at:null,enviado_by:null},{onConflict:'client_id,periodo,categoria,concepto'});
+  if(error){
+    if(/categoria_check|check constraint/i.test(error.message||'')){try{await sb.storage.from('clientes').remove([path])}catch(x){}throw new Error('falta ejecutar en Supabase el archivo migracion_recibos_completos.sql')}
+    throw error;
+  }
+}
+const sueTodosPf=(cid,per,tipo)=>(ui.sdAll.pf||[]).find(x=>x.client_id===cid&&x.categoria==='recibos'&&x.concepto===TIPO_SLUG[tipo]&&x.periodo.slice(0,7)===per)||null;
+/** A quién se le manda el archivo completo: al empleador, con las mismas reglas de la ficha de liquidación. */
+const sueTodosDest=c=>{const T=sueTargets(c,{tipo:'dependencia',nombre:''},{a:'empleador'});return {T,t:T.lista.find(z=>z.rol==='empleador')||T.lista[0]||null}};
+const sueTodosEstado=x=>x.enviado_at?`<span class="tag" style="background:var(--grn);color:var(--grnt)">Enviado</span><span class="s">${new Date(x.enviado_at).toLocaleDateString('es-AR')}</span><button class="g sm" onclick="cgEnviado('${x.id}',false)">Deshacer</button>`:`<span class="tag" style="background:var(--amb);color:var(--ambt)">Pendiente</span><button class="g sm" onclick="cgEnviado('${x.id}',true)">Marcar enviado</button>`;
+function sueTodosCard(c,f){
+  const s=sueState(f),x=sueTodosPf(c.id,s.periodo,s.tipo),D=sueTodosDest(c),ok=!!(D.t&&D.t.ok);
+  const sub=lbl=>`<label class="g sm">${lbl}<input type="file" accept="application/pdf,.pdf" hidden onchange="subirTodos('${c.id}',this)"></label>`;
+  const cab=`<b>Archivo con todos los recibos juntos (${mesAnio(s.periodo+'-01')}, ${esc(s.tipo)})</b>`;
+  if(!x)return `<div class="card" style="margin-bottom:14px">${cab}<div class="s" style="margin:4px 0 8px">Un solo PDF con los recibos de todos los empleados, para mandárselo completo al empleador. Se guarda solo cuando cargás los recibos juntos en un PDF; también lo podés subir acá.</div>${sub('Subir archivo completo')}</div>`;
+  return `<div class="card" style="margin-bottom:14px">${cab}<div style="margin:6px 0">${esc(x.nombre_archivo)}</div>
+   <div class="row" style="gap:4px;flex-wrap:wrap">${ok?`<button class="b sm" onclick="enviarTodosWa('${x.id}')">Enviar archivo completo al empleador</button>`:''}<button class="g sm" onclick="verArchivo('${x.path}')">Ver</button><button class="g sm" onclick="descargarPf('${x.id}')">Descargar</button>${sub('Reemplazar')}<button class="g sm" onclick="cgQuitar('${x.id}')">Quitar</button></div>
+   <div class="s" style="margin-top:6px">${ok?'Se envía a: empleador ('+esc(D.t.quien)+')':esc(D.t?D.t.motivo:'')}</div>${D.t&&!D.t.ok?sueTelForm(c,D.T):''}<div style="margin-top:6px">${sueTodosEstado(x)}</div></div>`;
+}
+function sueTodosPanel(){
+  const s=ui.sueCfg,L=[];
+  sueClientes().filter(k=>k.active!==false&&sueFiltroOk(k)).forEach(k=>{const x=sueTodosPf(k.id,s.periodo,s.tipo);if(x)L.push({k,x,D:sueTodosDest(k)})});
+  if(!L.length)return '';
+  return `<h3>Archivos con todos los recibos juntos</h3><p class="s" style="margin-bottom:8px">Para mandarle al empleador un solo PDF con los recibos de todos sus empleados (${mesAnio(s.periodo+'-01')}, ${esc(s.tipo)}).</p>
+  <div class="tw" style="margin-bottom:14px"><table><thead><tr><th>Empleador</th><th>Archivo</th><th>Enviar a</th><th>Estado</th><th></th></tr></thead><tbody>${L.map(({k,x,D})=>{const ok=!!(D.t&&D.t.ok);return `<tr><td>${esc(k.razon_social)}</td><td>${esc(x.nombre_archivo)}</td><td>${ok?esc(D.t.quien):`<span class="s" style="color:var(--redt)">${esc(D.t?D.t.motivo:'')}</span>${D.t&&!D.t.ok?sueTelForm(k,D.T):''}`}</td><td>${sueTodosEstado(x)}</td><td>${ok?`<button class="b sm" onclick="enviarTodosWa('${x.id}')">Enviar archivo completo</button> `:''}<button class="g sm" onclick="verArchivo('${x.path}')">Ver</button></td></tr>`}).join('')}</tbody></table></div>`;
+}
+async function subirTodos(cid,inp){
+  const f=inp.files[0];inp.value='';const err=await esPdf(f);if(err){flash(err,'err');return draw()}
+  const s=sueState(ui.sd);
+  try{await sueGuardarTodos(cid,f,s.periodo,s.tipo);await recargarSueldos();flash('Archivo con todos los recibos cargado.')}catch(x){flash(errTxt(x),'err')}
+  draw();
+}
+async function descargarPf(id){
+  const p=(ui.sdAll.pf||[]).find(x=>x.id===id);if(!p)return;
+  const {data,error}=await sb.storage.from('clientes').createSignedUrl(p.path,120,{download:p.nombre_archivo});
+  if(error||!data){flash('No se pudo descargar: '+(error?errTxt(error):'sin respuesta'),'err');return draw()}
+  const a=document.createElement('a');a.href=data.signedUrl;a.download=p.nombre_archivo;document.body.appendChild(a);a.click();a.remove();
+}
+/** Manda el archivo completo al WhatsApp del empleador (mismo mecanismo que los recibos sueltos). */
+async function enviarTodosWa(id){
+  const x=(ui.sdAll.pf||[]).find(p=>p.id===id),c=x&&sueCli(x.client_id);
+  if(!x||!c){flash('No se encontró el archivo.','err');return draw()}
+  const D=sueTodosDest(c),t=D.t&&D.t.ok?D.t:null;
+  if(!t){flash('No hay un WhatsApp válido del empleador. Cargalo en la ficha de liquidación o en el campo que aparece junto al archivo.','err');return draw()}
+  const texto=sueArmar(sueMsgs().pdfTodos,{saludo:t.saludo,empleado:'',empleador:c.razon_social,periodo:mesAnio(x.periodo.slice(0,7)),horas:''});
+  const url='https://wa.me/'+t.num+'?text='+encodeURIComponent(texto),comparte=sueCompartePdf(),ck='pf|'+x.id+'|'+(x.subido_at||'');
+  const w=comparte?null:window.open('about:blank','wa_envio');
+  let file=sueFileCache.get(ck);const listo=!!file;
+  if(!file){try{file=await sueBajar(x);sueFileCache.set(ck,file)}catch(e){if(w)w.close();flash('No se pudo bajar el PDF: '+errTxt(e),'err');return draw()}}
+  const r=await sueEntregar({file,texto,url,win:w,sinGesto:comparte&&!listo});
+  if(r==='cancel')return;
+  if(r==='reintentar'){flash('El PDF ya está listo: tocá "Enviar archivo completo" otra vez y se abre el menú de compartir.','warn');return draw()}
+  if(r==='bloqueado'){ui.sueWaLink={url,nombre:c.razon_social};window.scrollTo(0,0);flash('El navegador bloqueó la ventana de WhatsApp. El PDF se descargó: usá el botón "Abrir WhatsApp" que aparece arriba.','warn');return draw()}
+  flash((r==='share'?'Elegí WhatsApp y el contacto: el PDF va adjunto.':'Se descargó el PDF y se abrió el chat: arrastrá el archivo al chat y enviá.')+' Después tocá "Marcar enviado".','ok');draw();
+}
+const sueMsgTodosArmar=(v,m)=>sueArmar(v,{saludo:m.sEmp,empleado:'',empleador:m.empleador,periodo:mesAnio(m.per+'-01'),horas:''});
+function sueMsgTodosBloque(){
+  const s=sueMsgs(),pv=sueMsgTodosArmar(s.pdfTodos,sueMuestra());
+  return `<div class="full"><label>Mensaje para el empleador (archivo con todos los recibos juntos)<textarea rows="4" oninput="sueMsgTodosSet(this.value)">${esc(s.pdfTodos)}</textarea></label><div class="s" style="margin-top:4px">Vista previa:</div><pre id="sue_pv_todos" style="white-space:pre-wrap;margin:4px 0;padding:10px;border-radius:10px;background:var(--grn,#e8f5e9);font:inherit">${esc(pv)}</pre><button type="button" class="g sm" onclick="sueMsgTodosReset()">Volver al mensaje original</button></div>`;
+}
+function sueMsgTodosSet(v){sueMsgs().pdfTodos=v;const el=document.getElementById('sue_pv_todos');if(el)el.textContent=sueMsgTodosArmar(v,sueMuestra())}
+function sueMsgTodosReset(){sueMsgs().pdfTodos=MSG_PDF_TODOS;draw()}
+
 /** Campo para cargar el WhatsApp del empleador justo donde falta (si no, el recibo no se puede enviar). */
 function sueTelForm(k,T){
   const em=(T&&T.lista||[]).find(t=>t.rol==='empleador'&&!t.ok);if(!em)return '';
@@ -2314,7 +2393,7 @@ function vCarga(){
 }
 /** En el perfil del estudio: VEP y boletas de sindicatos cargados para el período, para verlos y marcarlos como enviados. */
 function cgArchivosCard(c){
-  const per=ui.sueCfg.periodo,L=(ui.sdAll.pf||[]).filter(x=>x.client_id===c.id&&x.periodo.slice(0,7)===per);
+  const per=ui.sueCfg.periodo,L=(ui.sdAll.pf||[]).filter(x=>x.client_id===c.id&&x.categoria!=='recibos'&&x.periodo.slice(0,7)===per);
   return `<div class="card" style="margin-top:18px"><b>VEP y boletas de sindicatos de ${mesAnio(per+'-01')}</b>
    ${L.length?`<div class="tw" style="margin-top:8px"><table><thead><tr><th>Archivo</th><th>Concepto</th><th>Estado</th><th></th></tr></thead><tbody>${L.map(x=>`<tr><td>${esc(x.nombre_archivo)}</td><td>${x.categoria==='vep'?'VEP ':'Sindicato '}${esc(x.concepto)}</td><td>${x.enviado_at?`<span class="tag" style="background:var(--grn);color:var(--grnt)">Enviado</span><span class="s">${new Date(x.enviado_at).toLocaleDateString('es-AR')}</span>`:'<span class="tag" style="background:var(--amb);color:var(--ambt)">Pendiente</span>'}</td><td><div class="row" style="gap:4px"><button class="g sm" onclick="verArchivo('${x.path}')">Ver</button>${x.enviado_at?`<button class="g sm" onclick="cgEnviado('${x.id}',false)">Deshacer</button>`:`<button class="g sm" onclick="cgEnviado('${x.id}',true)">Marcar enviado</button>`}</div></td></tr>`).join('')}</tbody></table></div>`:'<p class="s" style="margin:6px 0 0">Todavía no se cargó ningún VEP ni boleta de este período. Se cargan desde "Carga de sueldos".</p>'}</div>`;
 }
