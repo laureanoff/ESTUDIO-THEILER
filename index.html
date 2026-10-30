@@ -1958,9 +1958,10 @@ function sueVepAnalizar(pv){
 function sueVepPrev(V,M){
   const k=sueClientes().find(c=>String(c.cuit)===V.cuit)||null,tipo=V.concepto==='SERV_DOM'?'domestico':'dependencia';
   const nuevoPorRecibos=!k&&!!V.cuit&&M.items.some(it=>it.kind==='recibos'&&it.res&&it.res.emps&&it.res.emps.some(E=>!E.omitir&&E.cuit===V.cuit));
-  const ya=!!k&&(ui.sdAll.pf||[]).some(x=>x.client_id===k.id&&x.categoria==='vep'&&x.concepto===V.concepto&&x.periodo.slice(0,7)===V.per);
+  const ex=k?(ui.sdAll.pf||[]).find(x=>x.client_id===k.id&&x.categoria==='vep'&&x.concepto===V.concepto&&x.periodo.slice(0,7)===V.per):null;
+  const ya=!!ex,mismoNro=!!ex&&!!V.nro&&String(ex.nombre_archivo||'').includes(V.nro);
   const sinTipo=!!k&&!sueTiposDe(k,ui.sdAll.emp).includes(tipo);
-  return {k,tipo,ya,sinTipo,nuevoPorRecibos,ok:!!V.cuit&&(!!k||nuevoPorRecibos)};
+  return {k,tipo,ya,ex,mismoNro,sinTipo,nuevoPorRecibos,ok:!!V.cuit&&(!!k||nuevoPorRecibos)};
 }
 /** Agrupa las páginas por empleador (CUIT) y por empleado (CUIL). Un PDF puede traer varios empleadores. */
 function sueMultiAnalizar(pags){
@@ -2022,7 +2023,7 @@ async function sueMultiLeer(files){
       const pr=lin.map((l,i)=>sueMultiPagina(l,i+1)),pv=lin.map((l,i)=>sueVepPagina(l,i+1));
       if(pr.some(P=>P.cab||P.cuil)){it.kind='recibos';it.res=sueMultiAnalizar(pr)}
       else if(pv.some(P=>P.esVep)){it.kind='vep';it.res=sueVepAnalizar(pv)}
-      else throw new Error('No se reconoció el documento: tiene que ser un recibo de sueldo o un VEP de ARCA en PDF con texto (no una imagen escaneada).');
+      else{const dt=ddjjTipo(lin.flat().map(String));throw new Error(dt?'Esto es una declaración jurada de '+(dt==='IVA'?'IVA':'Ingresos Brutos')+': cargala desde la pestaña Cumplimiento.':'No se reconoció el documento: tiene que ser un recibo de sueldo o un VEP de ARCA en PDF con texto (no una imagen escaneada).')}
       sueMultiBufs.set(it.id,buf);
     }catch(x){it.err=(x&&x.message)||String(x)}
     M.items.push(it);M.leyendo++;draw();
@@ -2046,7 +2047,7 @@ async function sueMultiConfirmar(){
     if(it.kind==='vep')it.res.veps.forEach(V=>{if(!V.omitir&&V.cuit)tv.push({it,V})});
     else it.res.emps.forEach(E=>{if(!E.omitir)tr.push({it,E})})});
   if(!tr.length&&!tv.length){flash('No hay nada para cargar: todo está omitido.','warn');return draw()}
-  const mal=[],porEmpl=[],nuevosEmpl=[],vepOk=[],avisos=[],todosOk=[],todosMal=[];let ok=0,creados=0,ult=null;
+  const mal=[],porEmpl=[],nuevosEmpl=[],vepOk=[],avisos=[],todosOk=[],todosMal=[],omit=[];let ok=0,creados=0,ult=null;
   const total=tr.reduce((a,t)=>a+t.E.grupos.length,0)+tv.length,srcs=new Map();
   M.fase='guardando';M.prog=0;M.total=total;draw();
   try{
@@ -2065,6 +2066,7 @@ async function sueMultiConfirmar(){
           const etq=g.nombre?sueTitulo(g.nombre):g.cuil;
           try{
             const emps=ui.sdAll.emp.filter(e=>e.client_id===k.id);let e=sueMultiBuscar(emps,g);
+            if(e&&!E.reemplazar&&ui.sdAll.pay.some(p=>p.employee_id===e.id&&p.periodo.slice(0,7)===E.per&&p.tipo===E.tipo)){omit.push(etqE+': '+etq);M.prog++;draw();continue}
             if(!e){
               if(!g.nombre)throw new Error('no se pudo leer el nombre para crear al empleado');
               const obs=['Legajo '+(g.legajo||'-'),g.ingreso?'Ingreso '+g.ingreso:null,'(cargado desde el PDF de recibos)'].filter(Boolean).join(' · ');
@@ -2099,6 +2101,8 @@ async function sueMultiConfirmar(){
       const k=sueClientes().find(c=>String(c.cuit)===V.cuit),etqV='VEP '+(V.nro||'')+(k?' de '+k.razon_social:'');
       try{
         if(!k)throw new Error('el empleador '+cuitF(V.cuit)+' no está cargado');
+        const ex=(ui.sdAll.pf||[]).find(x=>x.client_id===k.id&&x.categoria==='vep'&&x.concepto===V.concepto&&x.periodo.slice(0,7)===V.per);
+        if(ex&&!V.reemplazar){omit.push(etqV+' '+V.per.slice(5)+'/'+V.per.slice(0,4));M.prog++;draw();continue}
         const nom=`VEP ${V.concepto==='SERV_DOM'?'servicio doméstico':'F.931'} - ${MESES[Number(V.per.slice(5,7))-1]} ${V.per.slice(0,4)}${V.nro?' (Nro '+V.nro+')':''}.pdf`;
         let file;
         if(it.res.veps.length===1)file=new File([sueMultiBufs.get(it.id)],nom,{type:'application/pdf'});
@@ -2123,8 +2127,9 @@ async function sueMultiConfirmar(){
     const partes=[];
     if(tr.length)partes.push(`Se cargaron ${ok} de ${tr.reduce((a,t)=>a+t.E.grupos.length,0)} recibo(s): ${porEmpl.join(', ')}.${creados?` Se crearon ${creados} empleado(s) nuevo(s).`:''}${nuevosEmpl.length?' Empleadores que no existían (creados como "solo Sueldos"): '+nuevosEmpl.join(', ')+'.':''}${todosOk.length?' Archivo con todos los recibos guardado: '+todosOk.join(', ')+'.':''}${todosMal.length?' No se pudo guardar el archivo con todos los recibos: '+todosMal.join('; ')+'.':''}`);
     if(tv.length)partes.push(`VEP cargados: ${vepOk.length} de ${tv.length}${vepOk.length?' ('+vepOk.join('; ')+')':''}.${avisos.length?' Ojo: '+avisos.join('; ')+'.':''}`);
+    if(omit.length)partes.push('Ya estaban cargados y se omitieron: '+omit.join('; ')+'. Para reemplazarlos marcá "Reemplazar" en la vista previa.');
     if(mal.length)partes.push('No se cargaron: '+mal.join('; ')+'.');
-    flash(partes.join(' '),(mal.length||todosMal.length)?((ok+vepOk.length)?'warn':'err'):'ok');
+    flash(partes.join(' '),(mal.length||todosMal.length)?((ok+vepOk.length)?'warn':'err'):((omit.length&&!(ok+vepOk.length))?'warn':'ok'));
   }catch(x){M.fase='error';M.items=[{nombre:'Carga interrumpida',err:errTxt(x)+((ok+vepOk.length)?` (Antes de fallar se cargaron ${ok} recibo(s) y ${vepOk.length} VEP.)`:'')}];try{await loadSueldosAll()}catch(y){}}
   draw();
 }
@@ -2136,20 +2141,21 @@ function sueMultiPrevHtml(M){
     const R=it.res;if(R.bloqueo)return cab+`<div class="msg err">${esc(R.bloqueo)}</div>`;
     const sinId=R.sinId.length?`<div class="msg warn">Páginas que no se pudieron asignar (no se cargan): ${R.sinId.join(', ')}.</div>`:'';
     if(it.kind==='vep')return cab+sinId+R.veps.map((V,j)=>{
-      const P=sueVepPrev(V,M),k=P.k;if(!V.omitir&&P.ok)nVep++;
+      const P=sueVepPrev(V,M),k=P.k;if(!V.omitir&&P.ok&&(!P.ya||V.reemplazar))nVep++;
       return `<div class="card" style="margin:8px 0;${V.omitir?'opacity:.55':''}"><div class="row" style="gap:10px;align-items:center;flex-wrap:wrap"><b>${esc(k?k.razon_social:(V.cuit?'CUIT '+cuitF(V.cuit):'(no se leyó el CUIT)'))}</b>${V.cuit?`<span class="s">CUIT ${cuitF(V.cuit)}</span>`:''}${k?'<span class="tag" style="background:var(--grn);color:var(--grnt)">Empleador cargado</span>':P.nuevoPorRecibos?'<span class="tag" style="background:var(--blu);color:var(--blut)">Se crea con los recibos de este mismo envío</span>':'<span class="tag" style="background:var(--red);color:var(--redt)">Empleador no cargado: no se puede guardar este VEP</span>'}<label class="row" style="gap:5px;align-items:center;margin-left:auto"><input type="checkbox" ${V.omitir?'checked':''} onchange="sueVepSet(${i},${j},'omitir',this.checked)"> No cargar este VEP</label></div>
        <div class="s" style="margin-top:4px">VEP Nro ${esc(V.nro)}${V.tipoPago?' · '+esc(V.tipoPago):''}${V.total?' · Total $ '+esc(V.total):''}${V.vence?' · Vence '+fAR(V.vence):''}</div>
        ${!V.conceptoLeido?'<div class="msg warn" style="margin-top:6px">No se reconoció el tipo de VEP: elegí a cuál corresponde.</div>':''}${!V.perLeido?'<div class="msg warn" style="margin-top:6px">No se leyó el período: revisalo.</div>':''}
        <div class="row" style="gap:14px;flex-wrap:wrap;align-items:flex-end;margin:8px 0"><label>Período<br>${mesPick(V.per,`sueVepSet(${i},${j},'per',this.value)`)}</label>
         <label>Corresponde a<br><select onchange="sueVepSet(${i},${j},'concepto',this.value)">${Object.values(CG_VEP).map(([c,t])=>`<option value="${c}" ${V.concepto===c?'selected':''}>${esc(t)}</option>`).join('')}</select></label></div>
-       ${P.ya?'<span class="s">Ya hay un VEP de este período y tipo: se reemplaza.</span>':''}${P.sinTipo&&k?`<span class="s">Este empleador no tiene tildado "${SUE_TIPOS[P.tipo]}": se va a tildar para que el VEP aparezca en la lista.</span>`:''}</div>`}).join('');
+       ${P.ya?`<div class="msg warn" style="margin-top:6px"><b>${P.mismoNro?'Este mismo VEP (Nro '+esc(V.nro)+') ya estaba cargado':'Ya hay otro VEP de este período y tipo cargado'}</b> (archivo: ${esc(P.ex.nombre_archivo||'')}${P.ex.subido_at?', subido el '+fAR(isoLocal(new Date(P.ex.subido_at))):''}${P.ex.enviado_at?', ya marcado como enviado':''}).${V.reemplazar?' Se va a reemplazar.':' Se va a omitir.'} <label class="row" style="gap:5px;align-items:center;display:inline-flex"><input type="checkbox" ${V.reemplazar?'checked':''} onchange="sueVepSet(${i},${j},'reemplazar',this.checked)"> Reemplazar el que ya estaba</label></div>`:''}${P.sinTipo&&k?`<span class="s">Este empleador no tiene tildado "${SUE_TIPOS[P.tipo]}": se va a tildar para que el VEP aparezca en la lista.</span>`:''}</div>`}).join('');
     return cab+sinId+R.emps.map((E,j)=>{
-      const P=sueMultiPrev(E),k=P.k,n=P.filas.filter(f=>!f.sinNombre).length;if(!E.omitir)nRec+=n;
+      const P=sueMultiPrev(E),k=P.k,n=P.filas.filter(f=>!f.sinNombre&&(!f.reemplaza||E.reemplazar)).length,dups=P.filas.filter(f=>f.reemplaza).length;if(!E.omitir)nRec+=n;
       const lista=P.filas.map(f=>{
         const est=f.accion==='existe'?'<span class="tag" style="background:var(--grn);color:var(--grnt)">Ya existe</span>':f.accion==='reactiva'?'<span class="tag" style="background:var(--amb);color:var(--ambt)">Estaba de baja: se reactiva</span>':f.sinNombre?'<span class="tag" style="background:var(--red);color:var(--redt)">No se leyó el nombre</span>':'<span class="tag" style="background:var(--blu);color:var(--blut)">Se creará</span>';
-        return `<tr><td>${esc(f.g.nombre?sueTitulo(f.g.nombre):'(sin nombre)')}<span class="s">${f.g.legajo?'Legajo '+esc(f.g.legajo):''}${f.g.neto?' · Neto $ '+esc(f.g.neto):''}</span></td><td>${cuitF(f.g.cuil)}</td><td>${esc(f.g.cargo||'')}</td><td>${f.g.pags.join(', ')}</td><td>${est}${f.reemplaza?'<span class="s">Ya tiene recibo de este período: se reemplaza</span>':''}</td></tr>`}).join('');
+        return `<tr><td>${esc(f.g.nombre?sueTitulo(f.g.nombre):'(sin nombre)')}<span class="s">${f.g.legajo?'Legajo '+esc(f.g.legajo):''}${f.g.neto?' · Neto $ '+esc(f.g.neto):''}</span></td><td>${cuitF(f.g.cuil)}</td><td>${esc(f.g.cargo||'')}</td><td>${f.g.pags.join(', ')}</td><td>${est}${f.reemplaza?(E.reemplazar?'<span class="tag" style="background:var(--amb);color:var(--ambt)">Ya cargado: se reemplaza</span>':'<span class="tag" style="background:var(--amb);color:var(--ambt)">Ya estaba cargado: se omite</span>'):''}</td></tr>`}).join('');
       return `<div class="card" style="margin:8px 0;${E.omitir?'opacity:.55':''}"><div class="row" style="gap:10px;align-items:center;flex-wrap:wrap"><b>${esc(k?k.razon_social:(E.razon||'(sin nombre)'))}</b><span class="s">CUIT ${cuitF(E.cuit)}</span>${k?'<span class="tag" style="background:var(--grn);color:var(--grnt)">Empleador cargado</span>':'<span class="tag" style="background:var(--amb);color:var(--ambt)">No está cargado: se creará como solo Sueldos</span>'}<label class="row" style="gap:5px;align-items:center;margin-left:auto"><input type="checkbox" ${E.omitir?'checked':''} onchange="sueMultiSet(${i},${j},'omitir',this.checked)"> No cargar este empleador</label></div>
        ${E.aviso?`<div class="msg warn" style="margin-top:6px">${esc(E.aviso)}</div>`:''}
+       ${dups?`<div class="msg warn" style="margin-top:6px"><b>${dups} de ${P.filas.length}</b> recibo(s) de este período y tipo ya estaban cargados.${E.reemplazar?' Se van a reemplazar.':' Se van a omitir.'} <label class="row" style="gap:5px;align-items:center;display:inline-flex"><input type="checkbox" ${E.reemplazar?'checked':''} onchange="sueMultiSet(${i},${j},'reemplazar',this.checked)"> Reemplazar los que ya estaban cargados</label></div>`:''}
        <label class="row" style="gap:6px;align-items:center;margin-top:6px"><input type="checkbox" ${E.todos===false?'':'checked'} onchange="sueMultiSet(${i},${j},'todos',this.checked)"> Guardar también el archivo con todos los recibos juntos (para mandárselo completo al empleador)</label>
        <div class="row" style="gap:14px;flex-wrap:wrap;align-items:flex-end;margin:8px 0"><label>Período de los recibos<br>${mesPick(E.per,`sueMultiSet(${i},${j},'per',this.value)`)}</label>
         <label>Tipo de recibo<br><select onchange="sueMultiSet(${i},${j},'tipo',this.value)">${TIPOS_REC.map(t=>`<option ${E.tipo===t?'selected':''}>${t}</option>`).join('')}</select></label></div>
@@ -2241,6 +2247,132 @@ function sueMsgTodosBloque(){
 }
 function sueMsgTodosSet(v){sueMsgs().pdfTodos=v;const el=document.getElementById('sue_pv_todos');if(el)el.textContent=sueMsgTodosArmar(v,sueMuestra())}
 function sueMsgTodosReset(){sueMsgs().pdfTodos=MSG_PDF_TODOS;draw()}
+
+/* ===== Cumplimiento: arrastrar declaraciones juradas de IVA e IIBB (se leen con el mismo lector y se marcan como presentadas) ===== */
+const cumDdjjFiles=new Map();
+function cumDdjjFecha(lineas){
+  for(const l of lineas){if(/presentaci/.test(liqNorm(l))){const m=String(l).match(/(\d{2})\/(\d{2})\/(\d{4})/);if(m)return m[3]+'-'+m[2]+'-'+m[1]}}
+  return null;
+}
+const cumDdjjNom=it=>it.imp==='IVA'?'IVA':it.tipo==='IIBB_LOCAL'?'Ingresos Brutos (régimen local)':'Ingresos Brutos (Convenio Multilateral)';
+function cumDdjjAnal(it){try{it.D=ddjjAnalizar(it.lineas,it.cid,it.per,it.imp)}catch(e){it.D={ok:false,motivos:['no se pudo analizar: '+errTxt(e)],chequeos:[],vals:{}}}}
+async function cumDdjjLeer(files){
+  files=[...files];if(!files.length)return;
+  const M=ui.ddjjDrop=(ui.ddjjDrop&&ui.ddjjDrop.fase==='previa')?ui.ddjjDrop:{fase:'leyendo',items:[]};
+  M.fase='leyendo';M.leyendo=0;M.nLeer=files.length;draw();
+  for(const f of files){
+    const it={nombre:f.name,id:uid()+uid()};
+    try{
+      const err=await esPdf(f);if(err)throw new Error(err);
+      const lineas=Array.from(await pdfTexto(f)).map(String),tipo=ddjjTipo(lineas);
+      if(!tipo){
+        const t=lineas.join('\n');
+        throw new Error(/RECIBO DE HABERES/i.test(t)?'Esto es un recibo de sueldo: cargalo desde Sueldos.':/Volante Electr[oó]nico de Pago|Nro\.?\s*VEP/i.test(t)?'Esto es un VEP: cargalo desde Sueldos.':'No se reconoció como declaración jurada de IVA (F.2051) ni de Ingresos Brutos. Tiene que ser un PDF con texto (no una imagen escaneada).');
+      }
+      const cab=ddjjCabecera(lineas,tipo),cl=cab.cuit?ui.clients.find(c=>String(c.cuit)===cab.cuit):null;
+      Object.assign(it,{tipo,imp:tipo==='IVA'?'IVA':'IIBB',cab,cid:cl?cl.id:null,per:cab.per||workPeriod(),perLeido:!!cab.per,fecha:cumDdjjFecha(lineas)||hoyISO(),fechaLeida:!!cumDdjjFecha(lineas),lineas});
+      cumDdjjAnal(it);cumDdjjFiles.set(it.id,f);
+    }catch(e){it.err=(e&&e.message)||String(e)}
+    M.items.push(it);M.leyendo++;draw();
+  }
+  M.fase=M.items.some(i=>!i.err)?'previa':'error';draw();
+}
+function cumDdjjDrop(e){e.preventDefault();const z=e.currentTarget;z.style.background='';z.style.borderColor='';cumDdjjLeer(e.dataTransfer?e.dataTransfer.files:[])}
+function cumDdjjSet(i,k,v){const it=ui.ddjjDrop.items[i];it[k]=v;if(k==='per')cumDdjjAnal(it);draw()}
+function cumDdjjCancelar(){ui.ddjjDrop=null;cumDdjjFiles.clear();draw()}
+/** Cruza una declaración con lo cargado: cliente, si el impuesto le corresponde y si ya estaba presentada (con PDF y datos). */
+function cumDdjjPrev(it){
+  const cl=it.cid?ui.clients.find(c=>c.id===it.cid):null,x=cl?filDe(cl.id,it.imp,it.per):null;
+  const ap=!!cl&&aplica(cl).includes(it.imp),fs=x?(ui.ffil||[]).filter(f=>f.filing_id===x.id):[];
+  return {cl,x,ap,tienePdf:fs.some(f=>f.tipo==='PRESENTACION'),tieneDatos:!!(x&&x.datos&&x.datos.ddjj),ok:!!cl&&ap};
+}
+/** Lo que se va a hacer con cada archivo: cargar, omitir porque ya estaba, o repetido dentro del mismo envío. */
+function cumDdjjPlan(M){
+  const vistos=new Set();
+  return M.items.map(it=>{
+    if(it.err)return {it,acc:'error'};
+    const P=cumDdjjPrev(it);if(!P.ok)return {it,P,acc:'bloqueada'};
+    if(it.omitir)return {it,P,acc:'omitida'};
+    const key=it.cid+'|'+it.imp+'|'+it.per;if(vistos.has(key))return {it,P,acc:'repetida'};
+    vistos.add(key);
+    if(P.x&&!it.reemplazar)return {it,P,acc:'ya'};
+    return {it,P,acc:'cargar'};
+  });
+}
+async function cumDdjjConfirmar(){
+  const M=ui.ddjjDrop;if(!M||M.fase!=='previa')return;
+  const plan=cumDdjjPlan(M),trabajo=plan.filter(p=>p.acc==='cargar'),etq=(it,P)=>`${P.cl.razon_social} · ${it.imp} ${it.per.slice(5)}/${it.per.slice(0,4)}`;
+  const omit=plan.filter(p=>p.acc==='ya'||p.acc==='repetida').map(p=>etq(p.it,p.P)+(p.acc==='repetida'?' (repetida en este envío)':''));
+  if(!trabajo.length){ui.ddjjDrop=null;cumDdjjFiles.clear();flash(omit.length?'Todo lo que arrastraste ya estaba cargado: '+omit.join('; ')+'.':'No hay nada para cargar.','warn');return draw()}
+  M.fase='guardando';M.prog=0;M.total=trabajo.length;draw();
+  const hechas=[],conDatos=[],revisar=[],mal=[];
+  for(const {it,P} of trabajo){
+    const cl=P.cl,et=etq(it,P);
+    try{
+      const f=cumDdjjFiles.get(it.id);let x=P.x;
+      if(!x){
+        const r=await sb.from('tax_filings').insert({client_id:cl.id,periodo:it.per+'-01',impuesto:it.imp,presentado_by:me.id,presentado_at:nuevaFecha(it.fecha),nota:null,cancelacion:null,numero_anticipo:null}).select('*').single();
+        if(r.error)throw r.error;x=r.data;
+      }
+      const path=`${cl.id}/ddjj/${it.imp}-${it.per}-presentacion.pdf`;
+      const up=await sb.storage.from('clientes').upload(path,f,{contentType:'application/pdf',upsert:true});if(up.error)throw new Error('No se pudo subir el PDF: '+errTxt(up.error));
+      const a=await sb.from('tax_filing_files').upsert({filing_id:x.id,client_id:cl.id,tipo:'PRESENTACION',nombre_archivo:f.name,path,size_bytes:f.size,subido_by:me.id},{onConflict:'filing_id,tipo'});if(a.error)throw a.error;
+      const D=it.D||{};
+      if(D.ok){
+        const g={};ddjjCampos(it.imp).forEach(([k])=>{if(D.vals[k]!==''&&D.vals[k]!==undefined)g[k]=Number(D.vals[k])});
+        if(it.imp==='IIBB'){if(D.tipo==='IIBB_LOCAL'){g.local=D.local;g.regimen='local'}else{g.jurisdicciones=D.jur;g.totales=D.totales;g.encabezado=D.encabezado;g.regimen='convenio'}}
+        g.confirmado_at=new Date().toISOString();g.confirmado_por=me.id;g.fuente='pdf';
+        const u=await sb.from('tax_filings').update({datos:{...(x.datos||{}),ddjj:g},modificado_by:me.id,modificado_at:new Date().toISOString()}).eq('id',x.id);
+        if(u.error)throw u.error;conDatos.push(et);
+      }else revisar.push(et+((D.motivos&&D.motivos.length)?' ('+D.motivos.slice(0,2).join('; ')+')':'')+((P.x&&P.tieneDatos)?' (quedan los datos del PDF anterior)':''));
+      hechas.push(et);
+    }catch(e){mal.push(et+' ('+((e&&e.message)||e)+')')}
+    M.prog++;draw();
+  }
+  try{await loadFil()}catch(e){}
+  ui.ddjjDrop=null;cumDdjjFiles.clear();
+  const partes=[`Se cargaron ${hechas.length} de ${trabajo.length} declaración(es): marcadas como presentadas con su PDF adjunto.${conDatos.length?` Datos leídos y guardados: ${conDatos.length}.`:''}`];
+  if(revisar.length)partes.push('Para revisar los datos (abrí "Datos DDJJ" en el cliente): '+revisar.join('; ')+'.');
+  if(omit.length)partes.push('Ya estaban cargadas y se omitieron: '+omit.join('; ')+'.');
+  if(mal.length)partes.push('No se cargaron: '+mal.join('; ')+'.');
+  flash(partes.join(' '),mal.length?(hechas.length?'warn':'err'):((revisar.length||(omit.length&&!hechas.length))?'warn':'ok'));
+  draw();
+}
+function cumDdjjPrevHtml(M){
+  const plan=cumDdjjPlan(M);let n=0;
+  const bloques=plan.map(({it,P,acc},i)=>{
+    if(acc==='error')return `<div class="msg err" style="margin-top:8px"><b>${esc(it.nombre)}:</b> ${esc(it.err)} Este archivo no se carga.</div>`;
+    if(acc==='cargar')n++;
+    const D=it.D||{},cl=P.cl,lab=it.per.slice(5)+'/'+it.per.slice(0,4);
+    const ks=it.imp==='IVA'?[['debito','Débito fiscal'],['credito','Crédito fiscal'],['saldo_tecnico','Saldo técnico a favor'],['saldo_libre','Saldo de libre disponibilidad']]:[['a_pagar','Total a pagar']];
+    const datos=ks.filter(([k])=>D.vals&&D.vals[k]!==''&&D.vals[k]!==undefined).map(([k,t])=>`${t} ${esc(money(Number(D.vals[k])))}`).join(' · ');
+    const aviso=!cl?`<div class="msg err" style="margin-top:6px">El CUIT ${it.cab&&it.cab.cuit?cuitF(it.cab.cuit):'(no se leyó)'} no corresponde a ningún cliente cargado en Clientes. Este archivo no se carga.</div>`
+      :!P.ap?`<div class="msg err" style="margin-top:6px">${esc(cl.razon_social)} no tiene ${it.imp==='IVA'?'IVA':'Ingresos Brutos'} tildado en sus impuestos (pestaña Datos de su ficha). Tildalo y volvé a arrastrar el archivo. Este archivo no se carga.</div>`:'';
+    const ya=P.x?`<div class="msg warn" style="margin-top:6px"><b>Ya estaba cargada:</b> marcada como presentada el ${fAR(isoLocal(new Date(P.x.presentado_at)))}${P.tienePdf?', con PDF adjunto':''}${P.tieneDatos?', con datos leídos':''}.${it.reemplazar?' Se va a reemplazar el PDF y los datos (la marca y su fecha no cambian).':' Se va a omitir.'} <label class="row" style="gap:5px;align-items:center;display:inline-flex"><input type="checkbox" ${it.reemplazar?'checked':''} onchange="cumDdjjSet(${i},'reemplazar',this.checked)"> Reemplazar</label></div>`:'';
+    const rep=acc==='repetida'?'<div class="msg warn" style="margin-top:6px">Hay otro archivo en este envío del mismo cliente, impuesto y período: este se omite.</div>':'';
+    const est=D.ok?'<span class="s" style="color:var(--grnt)">Datos completos y controles correctos: se guardan.</span>':`<span class="s">Se marca como presentada y se adjunta el PDF, pero los datos no pasaron todos los controles (${esc((D.motivos||[]).join('; ')||'sin detalle')}): quedan para revisar con "Datos DDJJ".</span>`;
+    return `<div class="card" style="margin:8px 0;${acc==='omitida'?'opacity:.55':''}"><div class="row" style="gap:10px;align-items:center;flex-wrap:wrap"><b>${esc(cl?cl.razon_social:'(cliente no encontrado)')}</b><span class="s">${esc(cumDdjjNom(it))} · ${esc(it.nombre)}</span><label class="row" style="gap:5px;align-items:center;margin-left:auto"><input type="checkbox" ${it.omitir?'checked':''} onchange="cumDdjjSet(${i},'omitir',this.checked)"> No cargar</label></div>
+     ${aviso}${ya}${rep}
+     ${cl&&P.ap?`<div class="row" style="gap:14px;flex-wrap:wrap;align-items:flex-end;margin:8px 0"><label>Período<br>${mesPick(it.per,`cumDdjjSet(${i},'per',this.value)`)}</label>${P.x?'':`<label>Fecha de presentación<br><input type="date" value="${esc(it.fecha)}" onchange="cumDdjjSet(${i},'fecha',this.value)"></label>`}</div>
+     ${!it.perLeido?'<div class="s">No se leyó el período del PDF: revisalo.</div>':''}${!P.x&&!it.fechaLeida?'<div class="s">La fecha de presentación es la de hoy (no se leyó del PDF): cambiala si hace falta.</div>':''}
+     ${(D.chequeos||[]).map(c=>`<div class="msg warn" style="margin-top:6px">${esc(c)}</div>`).join('')}
+     ${datos?`<div class="s" style="margin-top:6px">Leído: ${datos}</div>`:''}<div style="margin-top:4px">${est}</div>`:''}</div>`;
+  }).join('');
+  return `${bloques}<div class="row" style="gap:8px;margin-top:10px"><button class="b" onclick="cumDdjjConfirmar()" ${n?'':'disabled'}>Confirmar y cargar ${n} declaración(es)</button><button class="g" onclick="cumDdjjCancelar()">Cancelar</button></div>
+  <p class="s" style="margin-top:6px">Cada declaración se marca como presentada en el cliente y período que indica el PDF, y el PDF queda adjunto. Los datos se leen con el mismo lector de siempre y solo se guardan si pasan todos los controles; si no, quedan para revisar. Podés arrastrar más archivos arriba antes de confirmar.</p>`;
+}
+function cumDdjjZona(){
+  return `<div ondragover="event.preventDefault();this.style.background='rgba(120,160,255,.14)';this.style.borderColor='var(--blut,#3b6fd4)'" ondragleave="this.style.background='';this.style.borderColor=''" ondrop="cumDdjjDrop(event)" style="border:2px dashed var(--bd,#cbd5e1);border-radius:12px;padding:18px;text-align:center"><div><b>Arrastrá acá las declaraciones juradas de IVA e Ingresos Brutos</b> (uno o varios PDF, de cualquier cliente)</div><div class="s" style="margin:4px 0 10px">La app identifica el cliente por su CUIT y el período, las marca como presentadas, adjunta el PDF y lee los datos. Antes de guardar vas a ver una vista previa.</div><label class="b" style="cursor:pointer;display:inline-block">O elegí los archivos<input type="file" accept="application/pdf,.pdf" multiple hidden onchange="cumDdjjLeer([...this.files]);this.value=''"></label></div>`;
+}
+function cumDdjjCard(){
+  const M=ui.ddjjDrop;let cuerpo;
+  if(!M)cuerpo=cumDdjjZona();
+  else if(M.fase==='leyendo')cuerpo=`<p><b>Leyendo los archivos…</b> ${M.leyendo||0} de ${M.nLeer||0}</p>`;
+  else if(M.fase==='guardando')cuerpo=`<p><b>Guardando…</b> ${M.prog||0} de ${M.total||0}. No cierres esta página.</p>`;
+  else if(M.fase==='error')cuerpo=M.items.map(it=>`<div class="msg err"><b>${esc(it.nombre)}:</b> ${esc(it.err||'No se pudo leer.')}</div>`).join('')+`<button class="g" onclick="cumDdjjCancelar()">Cerrar</button>`;
+  else cuerpo=cumDdjjZona()+cumDdjjPrevHtml(M);
+  return `<div class="card" style="margin-bottom:14px"><b>Cargar declaraciones juradas de IVA e IIBB</b><div style="margin-top:8px">${cuerpo}</div></div>`;
+}
 
 /** Campo para cargar el WhatsApp del empleador justo donde falta (si no, el recibo no se puede enviar). */
 function sueTelForm(k,T){
@@ -6807,6 +6939,7 @@ function vCumplimiento(){
     const col=z.k==='ok'?['grn','grnt']:z.k==='venc'?['red','redt']:['amb','ambt'],txt=z.k==='ok'?'✓ '+(k==='GAN_ANT'&&z.n?'N° '+z.n+' ':'')+z.t:z.k==='venc'?'venció '+z.t:z.t?'vence '+z.t:'pendiente';
     return `<button class="tag" style="background:var(--${col[0]});color:var(--${col[1]});border:0;cursor:pointer;font:inherit" title="Abrir" onclick="cumIr('${x.c.id}','${k}')">${txt}</button>`};
   return `<h2>Cumplimiento del mes</h2>
+  ${cumDdjjCard()}
   <div class="card row" style="margin-bottom:12px;align-items:end"><label>Período<br>${mesPick(per,`ui.cum.periodo=this.value;show('cumplimiento')`)}</label>
    <label style="flex:1;min-width:200px">Buscar cliente<input type="search" value="${esc(C.q)}" oninput="ui.cum.q=this.value;draw()" style="width:100%" autocomplete="off"></label>
    <label>CUIT termina en<select onchange="ui.cum.term=this.value;draw()"><option value="">Cualquiera</option>${[0,1,2,3,4,5,6,7,8,9].map(n=>`<option value="${n}" ${C.term===String(n)?'selected':''}>${n}</option>`).join('')}</select></label>
