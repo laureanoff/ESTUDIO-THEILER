@@ -307,7 +307,7 @@ function vImportar(){
   return `<h2>Importar compras (Excel de ARCA)</h2><div id="exbanner">${exentoAviso(ui.cid)}</div><div class="card row" style="max-width:640px">
   <label>Cliente<br><select id="icl" onchange="ui.cid=this.value;exBanner(this.value)">${clientOpts()}</select></label>
   <label>Período<br>${mesPick(ui.periodo,`ui.periodo=this.value`,'iper')}</label>
-  <label style="flex:1;min-width:220px">Archivo de "Mis Comprobantes Recibidos" (.xls / .xlsx)<br><input type="file" id="ifile" accept=".xls,.xlsx"></label>
+  <label style="flex:1;min-width:220px">Archivo de "Mis Comprobantes Recibidos" (.xls / .xlsx), o arrastralo a este recuadro<br><input type="file" id="ifile" accept=".xls,.xlsx"></label>
   <button class="b" onclick="previsualizar()">Ver vista previa</button></div>
   <p style="color:var(--mut);font-size:12px">El archivo se lee en tu navegador; solo se guardan los comprobantes en la base.</p>
   ${libroCard()}
@@ -734,7 +734,7 @@ async function addVenc(e){
   e.preventDefault();const f=new FormData(e.target),t=String(f.get('ter')).trim(),ter=t?t.split(/[,\s]+/).map(Number):[0,1,2,3,4,5,6,7,8,9];
   if(ter.some(x=>!Number.isInteger(x)||x<0||x>9)){flash('Las terminaciones deben ser números de 0 a 9.','err');draw();return false}
   const {error}=await sb.from('tax_deadlines').insert({impuesto:f.get('imp'),descripcion:String(f.get('desc')).trim(),periodo:String(f.get('per')).trim()||null,fecha:f.get('fec'),terminaciones:ter,fuente:String(f.get('fte')).trim()||null});
-  if(error)flash(errTxt(error),'err');else{await loadDeadlines();flash('Vencimiento agregado: queda "A confirmar" hasta que lo marques como verificado.')}
+  if(error)flash(vencErr(error),'err');else{await loadDeadlines();flash('Vencimiento agregado: queda "A confirmar" hasta que lo marques como verificado.')}
   draw();return false;
 }
 async function saveImps(id){
@@ -745,8 +745,8 @@ async function saveImps(id){
 }
 
 /* ===== Calendario de vencimientos cargado a mano ===== */
-const VENC_IMPS=[['IVA','IVA'],['CM','IIBB Convenio Multilateral'],['IIBB','IIBB provincial (fuera de CM)'],['F931','Cargas sociales F.931'],['GANANCIAS_PH','Ganancias y Bienes Personales (personas humanas)'],['MONOTRIBUTO','Monotributo'],['SERV_DOM','Servicio doméstico (Casas Particulares)'],['OTRO','Otro']];
-const VENC_DESC={IVA:'IVA: declaración jurada y Libro IVA Digital',CM:'Ingresos Brutos Convenio Multilateral: CM03/CM04',IIBB:'Ingresos Brutos provincial: declaración jurada',F931:'Cargas sociales F.931: declaración jurada de empleadores',GANANCIAS_PH:'Ganancias y Bienes Personales (personas humanas): anticipo',MONOTRIBUTO:'Monotributo: cuota mensual',SERV_DOM:'Servicio doméstico: aportes y contribuciones',OTRO:'Vencimiento'};
+const VENC_IMPS=[['IVA','IVA'],['CM','IIBB Convenio Multilateral'],['IIBB','IIBB provincial (fuera de CM)'],['F931','Cargas sociales F.931'],['GANANCIAS_PH','Ganancias y Bienes Personales (personas humanas)'],['GAN_ANT','Ganancias: anticipos'],['GAN_DDJJ','Ganancias: declaración jurada anual'],['BP','Bienes Personales'],['MONOTRIBUTO','Monotributo'],['SERV_DOM','Servicio doméstico (Casas Particulares)'],['OTRO','Otro']];
+const VENC_DESC={IVA:'IVA: declaración jurada y Libro IVA Digital',CM:'Ingresos Brutos Convenio Multilateral: CM03/CM04',IIBB:'Ingresos Brutos provincial: declaración jurada',F931:'Cargas sociales F.931: declaración jurada de empleadores',GANANCIAS_PH:'Ganancias y Bienes Personales (personas humanas): anticipo',MONOTRIBUTO:'Monotributo: cuota mensual',SERV_DOM:'Servicio doméstico: aportes y contribuciones',OTRO:'Vencimiento',GAN_ANT:'Ganancias: anticipo',GAN_DDJJ:'Ganancias: declaración jurada anual',BP:'Bienes Personales: declaración jurada y pago'};
 const VENC_PRESETS={IVA:['0,1','2,3','4,5','6,7','8,9'],CM:['0,1,2','3,4,5','6,7','8,9'],F931:['0,1,2,3','4,5,6','7,8,9'],GANANCIAS_PH:['0,1,2,3','4,5,6','7,8,9']};
 ui.vcal={imp:'IVA',per:null,rows:null,fte:''};
 /** "0,1,2", "0-2", "0 1 2" -> [0,1,2]; null si hay algo que no es una terminación (0 a 9). */
@@ -791,12 +791,12 @@ async function vcalGuardar(){
   const sin=[0,1,2,3,4,5,6,7,8,9].filter(n=>!usadas.has(n));
   if(sin.length&&!confirm(`No cargaste fecha para la terminación ${sin.join(', ')}. ¿Guardar igual?`))return;
   try{
-    const perDb=imp==='GANANCIAS_PH'?null:per;
+    const perDb=VENC_ANUALES.includes(imp)?null:per;
     let q=sb.from('tax_deadlines').select('id,fecha,terminaciones').eq('impuesto',imp);q=perDb===null?q.is('periodo',null):q.eq('periodo',perDb);
     const ex=await q;if(ex.error)throw ex.error;let cambios=0;
     for(const e of (ex.data||[])){
       const rest=(e.terminaciones||[]).filter(n=>!usadas.has(n));if(rest.length===(e.terminaciones||[]).length)continue;
-      if(imp==='GANANCIAS_PH'&&!nuevos.some(n=>n.f.slice(0,4)===String(e.fecha).slice(0,4)))continue;
+      if(VENC_ANUALES.includes(imp)&&!nuevos.some(n=>n.f.slice(0,4)===String(e.fecha).slice(0,4)))continue;
       cambios++;
       if(!rest.length){const r=await sb.from('tax_deadlines').delete().eq('id',e.id);if(r.error)throw r.error}
       else{const r=await sb.from('tax_deadlines').update({terminaciones:rest}).eq('id',e.id);if(r.error)throw r.error}}
@@ -805,7 +805,7 @@ async function vcalGuardar(){
     const ins=await sb.from('tax_deadlines').insert(filas);if(ins.error)throw ins.error;
     await loadDeadlines();try{await loadCum()}catch(e){}
     V.rows=null;V.fte='';flash(`Calendario guardado: ${filas.length} ${filas.length===1?'fecha':'fechas'} de ${(VENC_IMPS.find(x=>x[0]===imp)||[0,imp])[1]}${cambios?' (se reemplazaron las que había para esas terminaciones)':''}.`);
-  }catch(e){flash(errTxt(e),'err')}
+  }catch(e){flash(vencErr(e),'err')}
   draw();
 }
 async function vencEditar(id){
@@ -2374,6 +2374,59 @@ function cumDdjjCard(){
   return `<div class="card" style="margin-bottom:14px"><b>Cargar declaraciones juradas de IVA e IIBB</b><div style="margin-top:8px">${cuerpo}</div></div>`;
 }
 
+/* ===== Vencimientos: agregar fechas e impuestos (formulario arriba y errores claros) ===== */
+const VENC_ANUALES=['GANANCIAS_PH','GAN_DDJJ','BP','GAN_ANT'];
+const vencErr=e=>{const m=String((e&&e.message)||'');
+  if(/tax_deadlines_impuesto_check|check constraint/i.test(m))return 'Falta ejecutar en Supabase el archivo migracion_vencimientos.sql: la base todavía no permite cargar este impuesto en los vencimientos.';
+  if(/row-level security|permission denied/i.test(m))return 'Solo el usuario administrador puede agregar vencimientos.';
+  return errTxt(e)};
+function vencAgregarCard(){
+  if(!isAdmin())return '<div class="msg info" style="margin-bottom:12px">Para agregar vencimientos nuevos hace falta ingresar con el usuario administrador. Con tu usuario podés cambiar la fecha de los que ya están cargados ("Cambiar fecha").</div>';
+  return `<details class="card" style="margin-bottom:14px" ${ui.vencAbierto===false?'':'open'} ontoggle="ui.vencAbierto=this.open"><summary style="cursor:pointer;font-weight:700">Agregar vencimientos (fecha e impuesto)</summary><div style="margin-top:6px">${formCalendario()}${formVenc()}</div></details>`;
+}
+
+/* ===== Arrastrar y soltar archivos en cualquier recuadro que tenga "elegir archivo" ===== */
+const DZ_AUTO={ifile:()=>previsualizar(),lfile:()=>libroPrevisualizar(),vfile:()=>ventasPrevisualizar(),rfile:()=>retArchivo()};
+(function(){
+  const st=document.createElement('style');
+  st.textContent='.dz-on{outline:2px dashed var(--blut,#3b6fd4)!important;outline-offset:3px;background:rgba(120,160,255,.10)!important}#dz_toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#222;color:#fff;padding:10px 16px;border-radius:10px;z-index:99999;max-width:90vw;font-size:14px}';
+  (document.head||document.documentElement).appendChild(st);
+  let tt=null,on=null;
+  const aviso=m=>{let t=document.getElementById('dz_toast');if(!t){t=document.createElement('div');t.id='dz_toast';document.body.appendChild(t)}t.textContent=m;clearTimeout(tt);tt=setTimeout(()=>{const x=document.getElementById('dz_toast');if(x)x.remove()},4500)};
+  const hayArch=e=>!!(e.dataTransfer&&[...(e.dataTransfer.types||[])].includes('Files'));
+  const tipoOk=(f,acc)=>{const t=String(acc||'').split(',').map(x=>x.trim().toLowerCase()).filter(Boolean);if(!t.length)return true;const n=f.name.toLowerCase(),m=(f.type||'').toLowerCase();return t.some(a=>a[0]==='.'?n.endsWith(a):a.endsWith('/*')?m.startsWith(a.slice(0,-1)):m===a)};
+  /** Recuadro más cercano (label, formulario o tarjeta) que contiene un campo de archivo; ignora los recuadros que ya tienen su propia zona de arrastre. */
+  const zona=t=>{
+    if(!t||!t.closest||t.closest('[ondrop]'))return null;
+    for(let el=t.closest('label,form,.card');el;el=el.parentElement&&el.parentElement.closest('label,form,.card')){
+      const inp=[...el.querySelectorAll('input[type=file]')].filter(i=>!i.hasAttribute('capture')&&!i.disabled);
+      if(inp.length)return {el,inp}}
+    return null};
+  const apagar=()=>{if(on){on.classList.remove('dz-on');on=null}};
+  document.addEventListener('dragover',e=>{
+    if(!hayArch(e)||(e.target.closest&&e.target.closest('[ondrop]')))return;
+    e.preventDefault();const z=zona(e.target),box=z?(z.el.closest('.card')||z.el):null;
+    if(box!==on){apagar();if(box){on=box;on.classList.add('dz-on')}}
+    if(e.dataTransfer)e.dataTransfer.dropEffect=z?'copy':'none'});
+  document.addEventListener('dragleave',e=>{if(on&&(!e.relatedTarget||!on.contains(e.relatedTarget)))apagar()});
+  document.addEventListener('drop',e=>{
+    if(!hayArch(e))return;
+    const propia=e.defaultPrevented||(e.target.closest&&e.target.closest('[ondrop]'));
+    e.preventDefault();apagar();if(propia)return;
+    const z=zona(e.target),fs=[...e.dataTransfer.files];
+    if(!fs.length)return;
+    if(!z){aviso('Soltá los archivos sobre el recuadro de carga de esta pantalla.');return}
+    const cand=z.inp.filter(i=>fs.every(f=>tipoOk(f,i.accept)));
+    if(!cand.length){aviso('Ese tipo de archivo no se puede cargar acá. Se espera: '+(z.inp[0].accept||'cualquiera')+'.');return}
+    const inp=cand.find(i=>{const l=i.closest('label')||i.parentElement;return l&&l.contains(e.target)})||cand[0];
+    let arch=fs;if(!inp.multiple&&fs.length>1){arch=[fs[0]];aviso('Esta carga recibe de a un archivo: se tomó '+fs[0].name+'.')}
+    try{const dt=new DataTransfer();arch.forEach(f=>dt.items.add(f));inp.files=dt.files}catch(x){aviso('Tu navegador no permite arrastrar acá: usá el botón de elegir archivo.');return}
+    const au=inp.id&&DZ_AUTO[inp.id];
+    if(au){aviso('Archivo cargado: '+arch[0].name);try{au()}catch(x){aviso('No se pudo leer el archivo: '+((x&&x.message)||x))}return}
+    if(!inp.getAttribute('onchange'))aviso('Archivo listo: '+arch[0].name+'. Completá el resto y guardá.');
+    inp.dispatchEvent(new Event('change',{bubbles:true}))});
+})();
+
 /** Campo para cargar el WhatsApp del empleador justo donde falta (si no, el recibo no se puede enviar). */
 function sueTelForm(k,T){
   const em=(T&&T.lista||[]).find(t=>t.rol==='empleador'&&!t.ok);if(!em)return '';
@@ -2704,7 +2757,7 @@ function vVentas(){
   return `<h2>Ventas (facturas emitidas)</h2>${exentoAviso(v.cid)}
   <div class="card row" style="margin-bottom:12px"><label>Cliente<br><select onchange="ui.cid=this.value;show('ventas')">${clientOpts()}</select></label>
   <label>Período<br>${mesPick(v.periodo,`ui.vta.periodo=this.value;show('ventas')`)}</label>
-  <label style="flex:1;min-width:230px">Excel de "Mis Comprobantes Emitidos" (.xls / .xlsx)<br><input type="file" id="vfile" accept=".xls,.xlsx" style="width:100%"></label>
+  <label style="flex:1;min-width:230px">Excel de "Mis Comprobantes Emitidos" (.xls / .xlsx), o arrastralo a este recuadro<br><input type="file" id="vfile" accept=".xls,.xlsx" style="width:100%"></label>
   <button class="b" onclick="ventasPrevisualizar()">Ver vista previa</button><button class="g" onclick="ui.vta.form=!ui.vta.form;draw()">Agregar factura a mano</button><button class="g" onclick="liqAbrir()">Cargar liquidación (PDF)</button></div>
   <div class="card row" style="margin-bottom:12px;align-items:center"><b>Exportar</b><button class="b" onclick="ventasExportarIva()">Libro IVA Digital Ventas (2 TXT para ARCA)</button><span class="s"><b>${R.filter(r=>!ui.vtaOut.has(r.id)).length} de ${R.length}</b> comprobantes marcados (tildá o destildá en la primera columna de la tabla).</span></div>
   ${(v.ivdAvisos||[]).length?`<div class="card" style="margin-bottom:12px"><b>Avisos de la última exportación</b>${v.ivdAvisos.map(a=>`<div class="msg warn">${esc(a)}</div>`).join('')}</div>`:''}
@@ -5175,7 +5228,7 @@ function vBancos(){
     ${D.lineas&&D.lineas.length?`<details style="margin-top:8px"><summary class="s">Texto que leyó del archivo (para ajustar el lector si algo salió mal)</summary><pre style="white-space:pre-wrap;font-size:11px;max-height:240px;overflow:auto">${esc(D.lineas.join('\n'))}</pre></details>`:''}</div>`;
   }
   return `<h2>Resúmenes bancarios</h2><div class="card row" style="margin-bottom:12px;align-items:flex-end;flex-wrap:wrap;gap:10px"><label>Cliente<br><select onchange="rsbCliente(this.value)">${clientOpts()}</select></label>
-  <label class="b" style="cursor:pointer;padding:8px 14px;border-radius:10px">Leer resumen (PDF o foto)<input type="file" accept=".pdf,application/pdf,image/*" multiple style="display:none" onchange="rsbLeerArchivos(this.files);this.value=''"></label><span class="s" style="max-width:420px">Podés elegir varios archivos (páginas) a la vez; se leen en orden por nombre. La lectura es asistida: controlá las filas marcadas y los saldos contra el original.</span></div>
+  <label class="b" style="cursor:pointer;padding:8px 14px;border-radius:10px">Leer resumen (PDF o foto)<input type="file" accept=".pdf,application/pdf,image/*" multiple style="display:none" onchange="rsbLeerArchivos(this.files);this.value=''"></label><span class="s" style="max-width:420px">Podés elegir o arrastrar a este recuadro varios archivos (páginas) a la vez; se leen en orden por nombre. La lectura es asistida: controlá las filas marcadas y los saldos contra el original.</span></div>
   ${R.leyendo?`<div class="msg info" style="margin-bottom:12px">${esc(R.leyendo.msg)}</div>`:''}${R.pend&&R.pend.length>1?`<div class="msg info" style="margin-bottom:12px">Este archivo trae ${R.pend.length} cuentas. Revisá y guardá cada una por separado: ${R.pend.map((d,i)=>`<button class="${d===R.draft?'b':'g'} sm" onclick="rsbElegirCuenta(${i})">${esc(d.nombre||'Cuenta')} ${esc(d.cuenta||'')} (${d.movs.length} mov.)</button>`).join(' ')}</div>`:''}${ed}<h3>Resúmenes guardados</h3>${lista}${rsbAnalisisCard()}`;
 }
 /* --- conciliación bancaria del balance: usar un resumen guardado como extracto --- */
@@ -6338,7 +6391,7 @@ function liqForm(){
   return `<div class="card" style="margin-bottom:14px"><b>Cargar liquidación de granos, hacienda o leche (PDF)</b>
   <p class="s" style="margin:4px 0 10px">Se guarda el PDF y se leen los importes del texto del PDF. Siempre revisá los importes contra el documento antes de guardar: la lectura puede equivocarse.</p>
   <div class="fgrid"><label>Tipo de liquidación<select onchange="liqTipo(this.value)">${Object.entries(LIQ).map(([k,v])=>`<option value="${k}" ${L.tipo===k?'selected':''}>${v.nombre}</option>`).join('')}</select></label>
-  <label>Archivo PDF<input type="file" accept="application/pdf,.pdf" onchange="liqPdf(this)"></label></div>
+  <label>Archivo PDF (o arrastralo a este recuadro)<input type="file" accept="application/pdf,.pdf" onchange="liqPdf(this)"></label></div>
   ${L.leyendo?'<div class="msg info" style="margin-top:10px">Leyendo el PDF…</div>':''}
   ${d&&!L.leyendo?`${L.perfil?`<div class="msg info" style="margin-top:10px">Se reconoció: <b>${LIQ[L.perfil].nombre}</b>.</div>`:''}${L.confianza?`<div class="msg ${col[L.confianza]}" style="margin-top:10px">Lectura del PDF: confianza <b>${L.confianza}</b>. ${L.confianza==='alta'?'El IVA coincide con el neto por la alícuota y el total cierra.':L.confianza==='media'?'El IVA coincide con el neto por la alícuota, pero el total no cierra del todo.':'No se pudieron confirmar los importes.'}</div>`:''}
     ${L.avisos.map(a=>`<div class="msg warn">${esc(a)}</div>`).join('')}${L.info.map(a=>`<div class="msg info">${esc(a)}</div>`).join('')}
@@ -6450,7 +6503,7 @@ function planLibro(lib,ex,periodo){
 function libroCard(){
   return `<div class="card" style="max-width:640px;margin-top:16px"><b>Libro IVA Compras (paso 2, opcional)</b>
   <p class="s" style="margin:4px 0 10px">Usa el cliente y el período de arriba. Se agregan solo los comprobantes del Libro que no figuran en "Mis Comprobantes" (por ejemplo, los tickets). Primero importá el Excel de ARCA.</p>
-  <div class="row"><label style="flex:1;min-width:220px">Excel del Libro IVA Compras (.xls / .xlsx)<br><input type="file" id="lfile" accept=".xls,.xlsx" style="width:100%"></label><button class="b" onclick="libroPrevisualizar()">Ver vista previa del Libro</button></div></div>`;
+  <div class="row"><label style="flex:1;min-width:220px">Excel del Libro IVA Compras (.xls / .xlsx), o arrastralo a este recuadro<br><input type="file" id="lfile" accept=".xls,.xlsx" style="width:100%"></label><button class="b" onclick="libroPrevisualizar()">Ver vista previa del Libro</button></div></div>`;
 }
 async function libroPrevisualizar(){
   const f=$('lfile').files[0],cid=$('icl').value,periodo=$('iper').value;ui.cid=cid;ui.periodo=periodo;const bad=m=>{flash(m,'err');draw()};
@@ -6568,14 +6621,13 @@ function vVenc(){
   let rows=ui.dl.filter(d=>{const x=diasHasta(d.fecha);return x>=-7&&(n===0||x<=n)}).map(d=>({d,a:afectados(d)}));
   if(sel)rows=rows.filter(x=>x.a.some(c=>c.id===sel));
   const sinConf=rows.filter(({d})=>!d.verificado);
-  return `<h2>Vencimientos</h2><div class="msg warn">Estas fechas se tomaron de calendarios publicados y se cruzaron entre varias fuentes; ARCA no permite leer su calendario desde la app, así que si una fecha no coincide o falta, la cargás o la cambiás vos (botón "Cambiar fecha" o "Cargar el calendario de un impuesto" más abajo). Confirmá cada fecha contra el calendario oficial y actualizala si ARCA prorroga. "Fecha a confirmar" habla de la fecha, no de si el cliente presentó: eso se ve en la columna de presentación.</div>
+  return `<h2>Vencimientos</h2>${vencAgregarCard()}<div class="msg warn">Estas fechas se tomaron de calendarios publicados y se cruzaron entre varias fuentes; ARCA no permite leer su calendario desde la app, así que si una fecha no coincide o falta, la cargás o la cambiás vos (botón "Cambiar fecha" o "Cargar el calendario de un impuesto" en el recuadro de arriba). Confirmá cada fecha contra el calendario oficial y actualizala si ARCA prorroga. "Fecha a confirmar" habla de la fecha, no de si el cliente presentó: eso se ve en la columna de presentación.</div>
   <div class="card row" style="margin-bottom:12px;align-items:end"><label>Cliente<br><select onchange="ui.vcli=this.value;draw()"><option value="">Todos los clientes</option>${ui.clients.map(c=>`<option value="${c.id}" ${sel===c.id?'selected':''}>${esc(c.razon_social)}</option>`).join('')}</select></label>
   <label>Ver<br><select onchange="ui.vdias=this.value;draw()">${[['30','Próximos 30 días'],['60','Próximos 60 días'],['0','Todo lo cargado']].map(([k,t])=>`<option value="${k}" ${ui.vdias===k?'selected':''}>${t}</option>`).join('')}</select></label>
   ${canEdit()&&sinConf.length?`<button class="b" onclick="verifTodos([${sinConf.map(({d})=>`'${d.id}'`).join(',')}])">${sinConf.length===1?'Confirmar la fecha que se ve':'Confirmar las '+sinConf.length+' fechas que se ven'}</button>`:''}</div>
   <div class="tw"><table><thead><tr><th>Vence</th><th>Obligación</th><th>Terminaciones</th><th>Clientes y presentación</th><th>Fecha</th></tr></thead><tbody>
   ${rows.length?rows.map(({d,a})=>{const x=diasHasta(d.fecha),ps=a.map(c=>({c,p:presDeVenc(c,d)})),mapea=ps.length&&ps[0].p.k!=='na',ok=ps.filter(z=>z.p.k==='ok').length;
-    return `<tr><td style="white-space:nowrap">${fAR(d.fecha)}<span class="s">${diaSem(d.fecha)} · ${cuando(x)}</span></td><td>${esc(d.descripcion)}${d.periodo?`<span class="s">período ${esc(d.periodo)}</span>`:''}</td><td>${d.terminaciones.length===10?'Todas':d.terminaciones.join(', ')}</td><td>${a.length?(mapea?`<span class="s" style="margin-bottom:4px">Presentaron ${ok} de ${a.length}</span>`:'')+ps.map(({c,p})=>`<div>${esc(c.razon_social)} ${presTag(p)}</div>`).join(''):'<span class="s">Ningún cliente con este impuesto</span>'}</td><td>${confTag(d)}${canEdit()?`<br><button class="g sm" style="margin-top:4px" onclick="toggleVerif('${d.id}',${!d.verificado})">${d.verificado?'Desmarcar':'Confirmar fecha'}</button>`:''}${vencAcc(d)}</td></tr>`}).join(''):'<tr><td colspan="5" style="color:var(--mut)">No hay vencimientos en este rango.</td></tr>'}</tbody></table></div>
-  ${isAdmin()?formCalendario()+formVenc():''}`;
+    return `<tr><td style="white-space:nowrap">${fAR(d.fecha)}<span class="s">${diaSem(d.fecha)} · ${cuando(x)}</span></td><td>${esc(d.descripcion)}${d.periodo?`<span class="s">período ${esc(d.periodo)}</span>`:''}</td><td>${d.terminaciones.length===10?'Todas':d.terminaciones.join(', ')}</td><td>${a.length?(mapea?`<span class="s" style="margin-bottom:4px">Presentaron ${ok} de ${a.length}</span>`:'')+ps.map(({c,p})=>`<div>${esc(c.razon_social)} ${presTag(p)}</div>`).join(''):'<span class="s">Ningún cliente con este impuesto</span>'}</td><td>${confTag(d)}${canEdit()?`<br><button class="g sm" style="margin-top:4px" onclick="toggleVerif('${d.id}',${!d.verificado})">${d.verificado?'Desmarcar':'Confirmar fecha'}</button>`:''}${vencAcc(d)}</td></tr>`}).join(''):'<tr><td colspan="5" style="color:var(--mut)">No hay vencimientos en este rango.</td></tr>'}</tbody></table></div>`;
 }
 async function toggleVerif(id,v){
   const {data,error}=await sb.from('tax_deadlines').update({verificado:v,verificado_por:v?me.id:null,verificado_at:v?new Date().toISOString():null}).eq('id',id).select('id');
