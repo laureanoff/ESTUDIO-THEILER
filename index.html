@@ -170,7 +170,7 @@ function planImport(parsed,meta,existing,ctx){
 
 
 /* ===== Supabase ===== */
-const APP_VERSION='30/10/2026, recibos de varios empleados en un solo PDF, WhatsApp de empleadores y envío por WhatsApp corregido';
+const APP_VERSION='02/11/2026, lector de recibos mejorado y carga de boletas de sindicatos (UATRE, OSECAC, FAECYS, IERIC, UOCRA, UTEDYC)';
 const SUPABASE_URL='https://tugdqcoxcpsiynlvnqdu.supabase.co';
 const SUPABASE_KEY='sb_publishable_2-96VeZrsNNftRXkzA1l_A_YG7ThJrL'; // clave pública: los permisos los da la base (RLS)
 const sb=(typeof supabase!=='undefined')?supabase.createClient(SUPABASE_URL,SUPABASE_KEY):null;
@@ -1462,7 +1462,7 @@ function empDeArchivo(nombre,act){
 }
 const SUE_TIPOS={dependencia:'Relación de dependencia',domestico:'Servicio doméstico'};
 const SUE_IMP={dependencia:'F931',domestico:'SERV_DOM'};
-const SUE_BOLETAS=['UATRE','OSECAC','FAECYS','IERIC','AMMA','ACTF','OSPRERA','UOCRA','SEC'];
+const SUE_BOLETAS=['UATRE','OSECAC','FAECYS','IERIC','AMMA','ACTF','OSPRERA','UOCRA','SEC','UTEDYC'];
 const SUE_PAGO=['Transferencia bancaria','Efectivo','Cheque','Débito automático','Otro'];
 /** Tipos de personal que tiene este empleador: los tildados en su ficha (F.931 / Servicio doméstico) o los que ya tienen empleados activos. */
 const sueTiposDe=(c,emp)=>Object.keys(SUE_TIPOS).filter(t=>(c.impuestos||[]).includes(SUE_IMP[t])||(emp||[]).some(e=>e.client_id===c.id&&e.tipo===t&&e.activo));
@@ -1915,6 +1915,32 @@ async function suePdfLib(){
   if(typeof PDFLib==='undefined')await cargarScript('https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js').catch(()=>{});
   if(typeof PDFLib==='undefined')throw new Error('No se pudo cargar la librería para separar el PDF (¿sin conexión a internet?).');
 }
+const SUE_MES_LISTA=SUE_MESES_RX.split('|').filter(m=>m!=='setiembre');
+const sueSinAc=w=>String(w||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+function sueDist(a,b){const d=[];for(let i=0;i<=a.length;i++){d[i]=[i];for(let j=1;j<=b.length;j++)d[i][j]=i?0:j}for(let i=1;i<=a.length;i++)for(let j=1;j<=b.length;j++)d[i][j]=Math.min(d[i-1][j]+1,d[i][j-1]+1,d[i-1][j-1]+(a[i-1]===b[j-1]?0:1));return d[a.length][b.length]}
+/** Reconoce el mes aunque venga con un error de tipeo (p. ej. "OCTUIBRE"). Devuelve el mes en minúscula o null. */
+function sueMesAprox(w){
+  w=sueSinAc(w);if(w.length<4)return null;if(w==='setiembre')return 'septiembre';
+  let mejor=null,md=9;SUE_MES_LISTA.forEach(m=>{const d=sueDist(w,m);if(d<md){md=d;mejor=m}});
+  return md<=2&&md<w.length/2?mejor:null;
+}
+/** Línea "APELLIDO Y NOMBRE · MES AÑO · TIPO · LEGAJO · FECHA PAGO": tolera que el mes tenga errores o que el texto venga partido en varias líneas. */
+function sueNombreLinea(t,lineas,P){
+  const rx=/^(.+?)\s+([A-Za-zÁÉÍÓÚÑáéíóúñ]{3,14})\s+(20\d\d)\s+(.*?)\s*(\d{3,6})\s+(\d{2})\/(\d{2})\/(\d{4})\s*$/;
+  const cand=[];
+  const plano=t.replace(/\s*\n\s*/g,' '),a=plano.search(/FECHA\s+PAGO/i),b=plano.search(/C\.?\s?U\.?\s?I\.?\s?L\.?\s/i);
+  if(a>=0&&b>a)cand.push(plano.slice(a,b).replace(/^FECHA\s+PAGO\s*/i,''));
+  lineas.forEach(ln=>cand.push(String(ln)));
+  for(const c of cand){
+    const m=c.trim().match(rx);if(!m)continue;
+    const mes=sueMesAprox(m[2]);
+    if(!mes&&!/^\d{2}$/.test(m[7]))continue;
+    P.nombre=m[1].trim();P.anio=m[3];P.mes=mes||SUE_MES_LISTA[Number(m[7])-1];P.tipoTxt=m[4].trim();P.legajo=m[5];
+    if(!mes&&m[8]!==m[3])P.anio=m[8];
+    return true;
+  }
+  return false;
+}
 /** Lee los datos de una página de recibo a partir de sus renglones de texto. */
 function sueMultiPagina(lineas,n){
   const t=lineas.join('\n'),P={n,texto:t};
@@ -1923,8 +1949,7 @@ function sueMultiPagina(lineas,n){
   P.cuil=todos.find(x=>x!==P.cuit)||null;
   P.cab=/RECIBO DE HABERES/i.test(t);
   const em=t.match(/^(.+?)\s+RECIBO DE HABERES/im);P.empleador=em?em[1].trim():null;
-  const l=t.match(new RegExp('^(.+?)\\s+('+SUE_MESES_RX+')\\s+(20\\d\\d)\\s+(.*?)\\s*(\\d{3,6})\\s+(\\d{2}/\\d{2}/\\d{4})\\s*$','im'));
-  if(l){P.nombre=l[1].trim();P.mes=l[2].toLowerCase();P.anio=l[3];P.tipoTxt=l[4].trim();P.legajo=l[5]}
+  sueNombreLinea(t,lineas,P);
   const ing=t.match(/(\d{2}-\d{8}-\d)\s+(\d{2}\/\d{2}\/\d{4})\s+(?:(\d+)\s+)?(.*)$/m);
   if(ing){P.ingreso=ing[2];P.cargo=(ing[4]||'').trim()||null}
   const ne=t.match(/SUELDO NETO\s+([\d.]+,\d{2})/i);P.neto=ne?ne[1]:null;
@@ -2005,6 +2030,71 @@ function sueMultiPrev(E){
   return {k,filas};
 }
 const sueMultiBufs=new Map();
+/* ===== Boletas de sindicatos / obras sociales: se reconoce de quién es cada una y se corta por empleador ===== */
+const BOL_NOMBRES={UATRE:'UATRE',UOCRA:'UOCRA',IERIC:'IERIC',FAECYS:'FAECYS',OSECAC:'OSECAC',UTEDYC:'UTEDYC'};
+/** Lee una página de boleta. Devuelve {conc,cuit,per,...} o con conc=null si no se reconoce. */
+function sueBoletaPagina(lineas,n){
+  const t=lineas.join('\n'),P={n,conc:null,cuit:null,per:null},g=(rx,i)=>{const m=t.match(rx);return m?(m[i||1]||'').trim():null};
+  const dig=x=>x?String(x).replace(/\D/g,''):null,cuitOk=x=>x&&x.length===11?x:null;
+  const per=(m,a,b)=>m?m[a]+'-'+m[b]:null;
+  if(/UATRE|TRABAJADORES RURALES Y ESTIBADORES/i.test(t)){
+    P.conc='UATRE';P.cuit=cuitOk(dig(g(/\b(\d{2}-\d{8}-\d)\b/)));
+    P.per=per(t.match(/\b(\d{2})-(20\d\d)\s*\/\s*\d/),2,1);
+    P.total=g(/TOTAL PAGADO\s+([\d.]+,\d{2})/i);P.razon=g(/Raz[oó]n Social:?\s*\n?([^\n]+)/i);P.sub=g(/\(UATRE\)\s*(SINDICAL|SOLIDARIA)/i);
+  }else if(/U\.\s?O\.\s?C\.\s?R\.\s?A\.|UNION OBRERA DE LA\s+CONSTRUCCI/i.test(t)&&/C\.U\.I\.T\./i.test(t)){
+    P.conc='UOCRA';P.cuit=cuitOk(dig(g(/C\.U\.I\.T\.:?\s*(\d{2}-?\d{8}-?\d)/i)));
+    P.per=per(t.match(/PERIODO:?\s*(\d{2})\/(20\d\d)/i),2,1);P.total=g(/\bTOTAL:\s*\$\s*([\d.,]+)/i);P.razon=g(/RAZON SOCIAL:\s*(.+)/i);
+  }else if(/REGISTRO DE LA INDUSTRIA DE LA CONSTRUCCI|\bIERIC\b/i.test(t)){
+    P.conc='IERIC';P.cuit=cuitOk(dig(g(/CUIT:?\s*(\d{2}-?\d{8}-?\d)/i)));
+    P.per=per(t.match(/\b(20\d\d)\/(\d{2})\b/),1,2);P.total=g(/TOTAL A PAGAR\s*\$?\s*([\d.]+,\d{2})/i);
+  }else if(/FAECYS|FEDERACI[OÓ]N ARGENTINA\s+DE EMPLEADOS/i.test(t)){
+    P.conc='FAECYS';const c=t.match(/CUIT:?\s*([\d\s-]{11,30}?)\s*RAZ/i);P.cuit=c?cuitOk(dig(c[1])):null;
+    P.per=per(t.match(/PER[IÍ]ODO:?\s*(\d{2})\/(20\d\d)/i),2,1);P.razon=g(/RAZ[OÓ]N SOCIAL:?\s*(.+?)\s+PER[IÍ]ODO/i);
+    const v=t.match(/Primer Vto\.?\s*:?\s*(\d{2}\/\d{2}\/\d{4})\s*\$\s*([\d.,]+)/i);P.total=v?v[2]:null;
+  }else if(/Contribuci[oó]n Adicional y Solidaria|OSECAC/i.test(t)){
+    P.conc='OSECAC';P.cuit=cuitOk(dig(g(/C\.U\.I\.T\.:?\s*(\d{2}-?\d{8}-?\d)/i)));
+    P.per=per(t.match(/Per[ií]odo:?\s*(20\d\d)\s*\/\s*(\d{2})/i),1,2);P.total=g(/TOTAL A PAGAR:?\s*([\d.,]+)/i);P.razon=g(/Raz[oó]n Social:?\s*(.+?)\s+Per[ií]odo/i);
+  }else if(/RECUERDE SUBIR EL COMPROBANTE AL SISTEMA|UTEDYC/i.test(t)){
+    P.conc='UTEDYC';P.cuit=cuitOk(dig(g(/\bCUIT:\s*(\d{2}-?\d{8}-?\d)/i)));
+    P.per=per(t.match(/Per[ií]odo:?\s*(\d{2})\/(20\d\d)/i),2,1);P.total=g(/\$\s*([\d.]+,\d{2})\s+\d{2}\/\d{2}\/\d{4}/);
+  }
+  if(P.per&&!/^20\d\d-(0[1-9]|1[0-2])$/.test(P.per))P.per=null;
+  return P;
+}
+/** Junta las páginas por (empleador, sindicato, período). Las páginas sin datos (instrucciones, etc.) se pegan a la boleta anterior. */
+function sueBolAnalizar(pb){
+  const R={pags:pb.length,boletas:[],sinId:[],bloqueo:null},mapa=new Map();let ult=null;
+  for(const P of pb){
+    if(P.conc&&P.cuit){
+      const per=P.per||workPeriod(),key=P.cuit+'|'+P.conc+'|'+per;let B=mapa.get(key);
+      if(!B){B={cuit:P.cuit,conc:P.conc,per,perLeido:!!P.per,razon:P.razon||null,total:null,subs:[],pags:[],omitir:false};mapa.set(key,B);R.boletas.push(B)}
+      B.pags.push(P.n);if(P.sub&&!B.subs.includes(P.sub))B.subs.push(P.sub);if(P.razon&&!B.razon)B.razon=P.razon;
+      if(P.total)B.total=(B.total&&B.subs.length>1)?B.total+' + '+P.total:P.total;
+      ult=B;
+    }else if(ult&&!P.conc)ult.pags.push(P.n);else R.sinId.push(P.n);
+  }
+  if(!R.boletas.length)R.bloqueo='No se encontró ninguna boleta que se pueda identificar.';
+  return R;
+}
+function sueBolSet(i,j,k,v){ui.sueMulti.items[i].res.boletas[j][k]=v;draw()}
+/** Cruza una boleta con lo ya cargado: empleador, si ya hay boleta del mismo sindicato y período. */
+function sueBolPrev(B,M){
+  const k=sueClientes().find(c=>String(c.cuit)===B.cuit)||null;
+  const nuevoPorRecibos=!k&&M.items.some(it=>it.kind==='recibos'&&it.res&&it.res.emps&&it.res.emps.some(E=>!E.omitir&&E.cuit===B.cuit));
+  const ex=k?(ui.sdAll.pf||[]).find(x=>x.client_id===k.id&&x.categoria==='sindicato'&&x.concepto===B.conc&&x.periodo.slice(0,7)===B.per):null;
+  return {k,ex,ya:!!ex,nuevoPorRecibos,ok:!!k||nuevoPorRecibos};
+}
+function sueBolHtml(it,i,M,cab,sinId){
+  const R=it.res;let n=0;
+  const tarjetas=R.boletas.map((B,j)=>{
+    const P=sueBolPrev(B,M),k=P.k;if(!B.omitir&&P.ok&&(!P.ya||B.reemplazar))n++;
+    return `<div class="card" style="margin:8px 0;${B.omitir?'opacity:.55':''}"><div class="row" style="gap:10px;align-items:center;flex-wrap:wrap"><b>${esc(k?k.razon_social:(B.razon||'CUIT '+cuitF(B.cuit)))}</b><span class="s">CUIT ${cuitF(B.cuit)}</span><span class="tag" style="background:var(--blu);color:var(--blut)">${esc(B.conc)}${B.subs.length?' '+esc(B.subs.join(' + ').toLowerCase()):''}</span>${k?'<span class="tag" style="background:var(--grn);color:var(--grnt)">Empleador cargado</span>':P.nuevoPorRecibos?'<span class="tag" style="background:var(--blu);color:var(--blut)">Se crea con los recibos de este mismo envío</span>':'<span class="tag" style="background:var(--red);color:var(--redt)">Empleador no cargado: no se puede guardar esta boleta</span>'}<label class="row" style="gap:5px;align-items:center;margin-left:auto"><input type="checkbox" ${B.omitir?'checked':''} onchange="sueBolSet(${i},${j},'omitir',this.checked)"> No cargar esta boleta</label></div>
+     <div class="s" style="margin-top:4px">Páginas ${B.pags.join(', ')}${B.total?' · Total $ '+esc(B.total):''}</div>
+     ${!B.perLeido?'<div class="msg warn" style="margin-top:6px">No se leyó el período: revisalo.</div>':''}
+     <div class="row" style="gap:14px;flex-wrap:wrap;align-items:flex-end;margin:8px 0"><label>Período<br>${mesPick(B.per,`sueBolSet(${i},${j},'per',this.value)`)}</label></div>
+     ${P.ya?`<div class="msg warn" style="margin-top:6px"><b>Ya hay una boleta de ${esc(B.conc)} de este período cargada</b> (archivo: ${esc(P.ex.nombre_archivo||'')}${P.ex.subido_at?', subido el '+fAR(isoLocal(new Date(P.ex.subido_at))):''}${P.ex.enviado_at?', ya marcada como enviada':''}).${B.reemplazar?' Se va a reemplazar.':' Se va a omitir.'} <label class="row" style="gap:5px;align-items:center;display:inline-flex"><input type="checkbox" ${B.reemplazar?'checked':''} onchange="sueBolSet(${i},${j},'reemplazar',this.checked)"> Reemplazar la que ya estaba</label></div>`:''}</div>`}).join('');
+  return {html:cab+sinId+tarjetas,n};
+}
 /** Lee uno o varios PDF (arrastrados o elegidos): recibos de sueldo (de uno o más empleadores) o VEP de ARCA. */
 async function sueMultiLeer(files){
   files=[...files];if(!files.length)return;
@@ -2020,8 +2110,9 @@ async function sueMultiLeer(files){
       const buf=await f.arrayBuffer(),doc=await pdfjsLib.getDocument({data:new Uint8Array(buf.slice(0))}).promise,lin=[];
       if(doc.numPages>400)throw new Error('Tiene demasiadas páginas (máximo 400).');
       for(let n=1;n<=doc.numPages;n++){const pg=await doc.getPage(n),tc=await pg.getTextContent();lin.push(liqLineas(tc.items))}
-      const pr=lin.map((l,i)=>sueMultiPagina(l,i+1)),pv=lin.map((l,i)=>sueVepPagina(l,i+1));
-      if(pr.some(P=>P.cab||P.cuil)){it.kind='recibos';it.res=sueMultiAnalizar(pr)}
+      const pr=lin.map((l,i)=>sueMultiPagina(l,i+1)),pv=lin.map((l,i)=>sueVepPagina(l,i+1)),pb=lin.map((l,i)=>sueBoletaPagina(l,i+1));
+      if(!pr.some(P=>P.cab)&&!pv.some(P=>P.esVep)&&pb.some(P=>P.conc)){it.kind='boleta';it.res=sueBolAnalizar(pb)}
+      else if(pr.some(P=>P.cab||P.cuil)){it.kind='recibos';it.res=sueMultiAnalizar(pr)}
       else if(pv.some(P=>P.esVep)){it.kind='vep';it.res=sueVepAnalizar(pv)}
       else{const dt=ddjjTipo(lin.flat().map(String));throw new Error(dt?'Esto es una declaración jurada de '+(dt==='IVA'?'IVA':'Ingresos Brutos')+': cargala desde la pestaña Cumplimiento.':'No se reconoció el documento: tiene que ser un recibo de sueldo o un VEP de ARCA en PDF con texto (no una imagen escaneada).')}
       sueMultiBufs.set(it.id,buf);
@@ -2042,13 +2133,14 @@ async function sueGuardarPdf(cid,e,file,per,tipo){
 }
 async function sueMultiConfirmar(){
   const M=ui.sueMulti;if(!M||M.fase!=='previa')return;
-  const tr=[],tv=[];
+  const tr=[],tv=[],tb=[];
   M.items.forEach(it=>{if(!it.res||it.res.bloqueo)return;
     if(it.kind==='vep')it.res.veps.forEach(V=>{if(!V.omitir&&V.cuit)tv.push({it,V})});
+    else if(it.kind==='boleta')it.res.boletas.forEach(B=>{if(!B.omitir&&B.cuit)tb.push({it,B})});
     else it.res.emps.forEach(E=>{if(!E.omitir)tr.push({it,E})})});
-  if(!tr.length&&!tv.length){flash('No hay nada para cargar: todo está omitido.','warn');return draw()}
-  const mal=[],porEmpl=[],nuevosEmpl=[],vepOk=[],avisos=[],todosOk=[],todosMal=[],omit=[];let ok=0,creados=0,ult=null;
-  const total=tr.reduce((a,t)=>a+t.E.grupos.length,0)+tv.length,srcs=new Map();
+  if(!tr.length&&!tv.length&&!tb.length){flash('No hay nada para cargar: todo está omitido.','warn');return draw()}
+  const mal=[],porEmpl=[],nuevosEmpl=[],vepOk=[],bolOk=[],avisos=[],todosOk=[],todosMal=[],omit=[];let ok=0,creados=0,ult=null;
+  const total=tr.reduce((a,t)=>a+t.E.grupos.length,0)+tv.length+tb.length,srcs=new Map();
   M.fase='guardando';M.prog=0;M.total=total;draw();
   try{
     const getSrc=async it=>{if(!srcs.has(it.id)){await suePdfLib();srcs.set(it.id,await PDFLib.PDFDocument.load(sueMultiBufs.get(it.id).slice(0),{ignoreEncryption:true}))}return srcs.get(it.id)};
@@ -2121,25 +2213,46 @@ async function sueMultiConfirmar(){
       }catch(x){mal.push(etqV+' ('+((x&&x.message)||x)+')')}
       M.prog++;draw();
     }
+    for(const {it,B} of tb){
+      const k=sueClientes().find(c=>String(c.cuit)===B.cuit),etqB='Boleta '+B.conc+(k?' de '+k.razon_social:'');
+      try{
+        if(!k)throw new Error('el empleador '+cuitF(B.cuit)+' no está cargado');
+        const ex=(ui.sdAll.pf||[]).find(x=>x.client_id===k.id&&x.categoria==='sindicato'&&x.concepto===B.conc&&x.periodo.slice(0,7)===B.per);
+        if(ex&&!B.reemplazar){omit.push(etqB+' '+B.per.slice(5)+'/'+B.per.slice(0,4));M.prog++;draw();continue}
+        const nom=`Boleta ${B.conc} - ${MESES[Number(B.per.slice(5,7))-1]} ${B.per.slice(0,4)}.pdf`;
+        const todas=it.res.boletas.length===1&&!it.res.sinId.length&&B.pags.length===it.res.pags;
+        let file;
+        if(todas)file=new File([sueMultiBufs.get(it.id)],nom,{type:'application/pdf'});
+        else{const src=await getSrc(it),out=await PDFLib.PDFDocument.create(),cp=await out.copyPages(src,B.pags.map(n=>n-1));cp.forEach(p=>out.addPage(p));file=new File([await out.save()],nom,{type:'application/pdf'})}
+        const path=`${k.id}/sueldos/${B.per}/sindicato-${cgSlug(B.conc)}.pdf`;
+        const up=await sb.storage.from('clientes').upload(path,file,{contentType:'application/pdf',upsert:true});if(up.error)throw new Error('No se pudo subir: '+errTxt(up.error));
+        const {error}=await sb.from('payroll_files').upsert({client_id:k.id,periodo:B.per+'-01',categoria:'sindicato',concepto:B.conc,nombre_archivo:file.name,path,size_bytes:file.size,subido_by:me.id,subido_at:new Date().toISOString(),enviado_at:null,enviado_by:null},{onConflict:'client_id,periodo,categoria,concepto'});
+        if(error)throw error;
+        bolOk.push(`${B.conc} ${B.per.slice(5)}/${B.per.slice(0,4)} de ${k.razon_social}`);
+      }catch(x){mal.push(etqB+' ('+((x&&x.message)||x)+')')}
+      M.prog++;draw();
+    }
     await loadClients();await loadSueldosAll();
     if(ult){ui.sueCfg=ui.sueCfg||{periodo:ult.per,tipo:ult.tipo,horas:24,msg:MSG_REC,editEmp:null};ui.sueCfg.periodo=ult.per;ui.sueCfg.tipo=ult.tipo;setSd(ult.k.id)}
     ui.sueMulti=null;sueMultiBufs.clear();
     const partes=[];
     if(tr.length)partes.push(`Se cargaron ${ok} de ${tr.reduce((a,t)=>a+t.E.grupos.length,0)} recibo(s): ${porEmpl.join(', ')}.${creados?` Se crearon ${creados} empleado(s) nuevo(s).`:''}${nuevosEmpl.length?' Empleadores que no existían (creados como "solo Sueldos"): '+nuevosEmpl.join(', ')+'.':''}${todosOk.length?' Archivo con todos los recibos guardado: '+todosOk.join(', ')+'.':''}${todosMal.length?' No se pudo guardar el archivo con todos los recibos: '+todosMal.join('; ')+'.':''}`);
     if(tv.length)partes.push(`VEP cargados: ${vepOk.length} de ${tv.length}${vepOk.length?' ('+vepOk.join('; ')+')':''}.${avisos.length?' Ojo: '+avisos.join('; ')+'.':''}`);
+    if(tb.length)partes.push(`Boletas cargadas: ${bolOk.length} de ${tb.length}${bolOk.length?' ('+bolOk.join('; ')+')':''}.`);
     if(omit.length)partes.push('Ya estaban cargados y se omitieron: '+omit.join('; ')+'. Para reemplazarlos marcá "Reemplazar" en la vista previa.');
     if(mal.length)partes.push('No se cargaron: '+mal.join('; ')+'.');
-    flash(partes.join(' '),(mal.length||todosMal.length)?((ok+vepOk.length)?'warn':'err'):((omit.length&&!(ok+vepOk.length))?'warn':'ok'));
+    flash(partes.join(' '),(mal.length||todosMal.length)?((ok+vepOk.length+bolOk.length)?'warn':'err'):((omit.length&&!(ok+vepOk.length+bolOk.length))?'warn':'ok'));
   }catch(x){M.fase='error';M.items=[{nombre:'Carga interrumpida',err:errTxt(x)+((ok+vepOk.length)?` (Antes de fallar se cargaron ${ok} recibo(s) y ${vepOk.length} VEP.)`:'')}];try{await loadSueldosAll()}catch(y){}}
   draw();
 }
 function sueMultiPrevHtml(M){
-  let nRec=0,nVep=0;
+  let nRec=0,nVep=0,nBol=0;
   const bloques=M.items.map((it,i)=>{
-    const cab=`<div style="margin-top:12px"><b>${esc(it.nombre)}</b>${it.res?`<span class="s">${it.kind==='vep'?'VEP de ARCA':'Recibos de sueldo'} · ${it.res.pags} página(s)</span>`:''}</div>`;
+    const cab=`<div style="margin-top:12px"><b>${esc(it.nombre)}</b>${it.res?`<span class="s">${it.kind==='vep'?'VEP de ARCA':it.kind==='boleta'?'Boletas de sindicatos':'Recibos de sueldo'} · ${it.res.pags} página(s)</span>`:''}</div>`;
     if(it.err)return cab+`<div class="msg err">${esc(it.err)} Este archivo no se carga.</div>`;
     const R=it.res;if(R.bloqueo)return cab+`<div class="msg err">${esc(R.bloqueo)}</div>`;
     const sinId=R.sinId.length?`<div class="msg warn">Páginas que no se pudieron asignar (no se cargan): ${R.sinId.join(', ')}.</div>`:'';
+    if(it.kind==='boleta'){const h=sueBolHtml(it,i,M,cab,sinId);nBol+=h.n;return h.html}
     if(it.kind==='vep')return cab+sinId+R.veps.map((V,j)=>{
       const P=sueVepPrev(V,M),k=P.k;if(!V.omitir&&P.ok&&(!P.ya||V.reemplazar))nVep++;
       return `<div class="card" style="margin:8px 0;${V.omitir?'opacity:.55':''}"><div class="row" style="gap:10px;align-items:center;flex-wrap:wrap"><b>${esc(k?k.razon_social:(V.cuit?'CUIT '+cuitF(V.cuit):'(no se leyó el CUIT)'))}</b>${V.cuit?`<span class="s">CUIT ${cuitF(V.cuit)}</span>`:''}${k?'<span class="tag" style="background:var(--grn);color:var(--grnt)">Empleador cargado</span>':P.nuevoPorRecibos?'<span class="tag" style="background:var(--blu);color:var(--blut)">Se crea con los recibos de este mismo envío</span>':'<span class="tag" style="background:var(--red);color:var(--redt)">Empleador no cargado: no se puede guardar este VEP</span>'}<label class="row" style="gap:5px;align-items:center;margin-left:auto"><input type="checkbox" ${V.omitir?'checked':''} onchange="sueVepSet(${i},${j},'omitir',this.checked)"> No cargar este VEP</label></div>
@@ -2161,13 +2274,13 @@ function sueMultiPrevHtml(M){
         <label>Tipo de recibo<br><select onchange="sueMultiSet(${i},${j},'tipo',this.value)">${TIPOS_REC.map(t=>`<option ${E.tipo===t?'selected':''}>${t}</option>`).join('')}</select></label></div>
        <div class="tw"><table><thead><tr><th>Empleado</th><th>CUIL</th><th>Categoría</th><th>Páginas</th><th>Estado</th></tr></thead><tbody>${lista}</tbody></table></div></div>`}).join('');
   }).join('');
-  const txt=[nRec?nRec+' recibo(s)':'',nVep?nVep+' VEP':''].filter(Boolean).join(' y ');
+  const txt=[nRec?nRec+' recibo(s)':'',nVep?nVep+' VEP':'',nBol?nBol+' boleta(s)':''].filter(Boolean).join(', ');
   return `${bloques}
   <div class="row" style="gap:8px;margin-top:10px"><button class="b" onclick="sueMultiConfirmar()" ${txt?'':'disabled'}>Confirmar y cargar ${txt||'nada'}</button><button class="g" onclick="sueMultiCancelar()">Cancelar</button></div>
   <p class="s" style="margin-top:6px">Cada empleado recibe un PDF con sus propias páginas (original y duplicado), y además se puede guardar el archivo completo; cada VEP queda en el empleador y período que indica. Los empleadores y empleados de recibos que no estén cargados se crean con los datos del recibo. Podés arrastrar más archivos arriba antes de confirmar.</p>`;
 }
 function sueMultiZona(){
-  return `<div ondragover="event.preventDefault();this.style.background='rgba(120,160,255,.14)';this.style.borderColor='var(--blut,#3b6fd4)'" ondragleave="this.style.background='';this.style.borderColor=''" ondrop="sueMultiDrop(event)" style="border:2px dashed var(--bd,#cbd5e1);border-radius:12px;padding:18px;text-align:center"><div><b>Arrastrá acá los recibos de sueldo y los VEP</b> (uno o varios PDF, de cualquier empleador)</div><div class="s" style="margin:4px 0 10px">La app reconoce si cada archivo es un recibo o un VEP, identifica el empleador por su CUIT, separa los recibos por empleado y crea lo que falte. Antes de guardar vas a ver una vista previa.</div><label class="b" style="cursor:pointer;display:inline-block">O elegí los archivos<input type="file" accept="application/pdf,.pdf" multiple hidden onchange="sueMultiLeer([...this.files]);this.value=''"></label></div>`;
+  return `<div ondragover="event.preventDefault();this.style.background='rgba(120,160,255,.14)';this.style.borderColor='var(--blut,#3b6fd4)'" ondragleave="this.style.background='';this.style.borderColor=''" ondrop="sueMultiDrop(event)" style="border:2px dashed var(--bd,#cbd5e1);border-radius:12px;padding:18px;text-align:center"><div><b>Arrastrá acá los recibos de sueldo, los VEP y las boletas de sindicatos</b> (uno o varios PDF, de cualquier empleador)</div><div class="s" style="margin:4px 0 10px">La app reconoce si cada archivo es un recibo, un VEP o una boleta (UATRE, OSECAC, FAECYS, IERIC, UOCRA, UTEDYC), identifica el empleador por su CUIT, separa los recibos por empleado, corta las boletas que traen varios empleadores y crea lo que falte. Antes de guardar vas a ver una vista previa.</div><label class="b" style="cursor:pointer;display:inline-block">O elegí los archivos<input type="file" accept="application/pdf,.pdf" multiple hidden onchange="sueMultiLeer([...this.files]);this.value=''"></label></div>`;
 }
 function sueMultiCard(){
   const M=ui.sueMulti,L=ui.sueWaLink;
@@ -2178,7 +2291,7 @@ function sueMultiCard(){
   else if(M.fase==='guardando')cuerpo=`<p><b>Guardando…</b> ${M.prog||0} de ${M.total||0}. No cierres esta página.</p>`;
   else if(M.fase==='error')cuerpo=M.items.map(it=>`<div class="msg err"><b>${esc(it.nombre)}:</b> ${esc(it.err||(it.res&&it.res.bloqueo)||'No se pudo leer.')}</div>`).join('')+`<button class="g" onclick="sueMultiCancelar()">Cerrar</button>`;
   else cuerpo=sueMultiZona()+sueMultiPrevHtml(M);
-  return rw+`<div class="card" style="margin-bottom:14px"><b>Cargar recibos de sueldo y VEP (varios empleados o empleadores)</b><div style="margin-top:8px">${cuerpo}</div></div>`;
+  return rw+`<div class="card" style="margin-bottom:14px"><b>Cargar recibos de sueldo, VEP y boletas (varios empleados o empleadores)</b><div style="margin-top:8px">${cuerpo}</div></div>`;
 }
 /* ===== Archivo con todos los recibos juntos: se guarda al separar y se puede enviar completo al empleador ===== */
 const MSG_PDF_TODOS='Hola {nombre}, ¿cómo estás? Te enviamos los recibos de sueldo de {periodo} de {empleador}, todos juntos en un solo archivo. Cualquier duda, avisanos. Estudio Theiler.';
@@ -2445,7 +2558,7 @@ async function sueGuardarTel(cid,inp){
 
 /* ===== Carga de sueldos: perfil "liquidador" (recibos, VEP y boletas de sindicatos) ===== */
 const isLiq=()=>prof&&prof.role==='liquidador';
-const CG_SIND=['UATRE','OSECAC','FAECYS','IERIC','AMMA','ACTF','UOCRA','OSPRERA','SEC'];
+const CG_SIND=['UATRE','OSECAC','FAECYS','IERIC','AMMA','ACTF','UOCRA','OSPRERA','SEC','UTEDYC'];
 const CG_VEP={dependencia:['F931','VEP F.931 (cargas sociales)'],domestico:['SERV_DOM','VEP servicio doméstico']};
 const cgSt=()=>ui.cg||(ui.cg={tipo:'',q:'',est:'',arch:'',extra:{},tab:{}});
 const cgSlug=s=>String(s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
