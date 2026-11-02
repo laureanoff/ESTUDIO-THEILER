@@ -170,7 +170,7 @@ function planImport(parsed,meta,existing,ctx){
 
 
 /* ===== Supabase ===== */
-const APP_VERSION='02/11/2026, lector de recibos mejorado y carga de boletas de sindicatos (UATRE, OSECAC, FAECYS, IERIC, UOCRA, UTEDYC)';
+const APP_VERSION='02/11/2026, boletas de sindicatos, lector de recibos mejorado y anticipos de Ganancias por arrastre y tickets de la cooperativa';
 const SUPABASE_URL='https://tugdqcoxcpsiynlvnqdu.supabase.co';
 const SUPABASE_KEY='sb_publishable_2-96VeZrsNNftRXkzA1l_A_YG7ThJrL'; // clave pública: los permisos los da la base (RLS)
 const sb=(typeof supabase!=='undefined')?supabase.createClient(SUPABASE_URL,SUPABASE_KEY):null;
@@ -284,7 +284,7 @@ function dashRows(){
   return ui.clients.filter(c=>c.active!==false).map(c=>{
     const cur=ui.pst.find(r=>r.client_id===c.id&&r.periodo.slice(0,7)===wp),nxt=ui.dl.filter(d=>diasHasta(d.fecha)>=0&&delC(d,c)).sort((a,b)=>a.fecha<b.fecha?-1:1)[0];
     const pend=cur?cur.sin_pasar:0,fal=cur?cur.faltan:0;
-    return {c,cur,nxt,pend,fal,fil:aplica(c).filter(k=>OBLIG[k].t==='m').map(imp=>({imp,ok:!!ui.fil.find(f=>f.client_id===c.id&&f.periodo.slice(0,7)===wp&&f.impuesto===imp)})),state:esExento(c)?'exento':!cur?'sin_importar':pend>0?'pendiente':fal>0?'faltan':'al_dia'};
+    return {c,cur,nxt,pend,fal,fil:aplica(c).filter(k=>OBLIG[k].t==='m').map(imp=>({imp,ok:!!ui.fil.find(f=>f.client_id===c.id&&f.periodo.slice(0,7)===wp&&f.impuesto===imp&&!(f.datos&&f.datos.estado==='vep_enviado'))})),state:esExento(c)?'exento':!cur?'sin_importar':pend>0?'pendiente':fal>0?'faltan':'al_dia'};
   }).sort((a,b)=>ord[a.state]-ord[b.state]||(a.nxt&&b.nxt?(a.nxt.fecha<b.nxt.fecha?-1:1):a.nxt?-1:b.nxt?1:0));
 }
 function _vInicioViejo(){return vInicio0()+vProx()}
@@ -311,6 +311,7 @@ function vImportar(){
   <button class="b" onclick="previsualizar()">Ver vista previa</button></div>
   <p style="color:var(--mut);font-size:12px">El archivo se lee en tu navegador; solo se guardan los comprobantes en la base.</p>
   ${libroCard()}
+  ${coopCard()}
   <h3>Historial de importaciones</h3><div class="tw"><table><thead><tr><th>Fecha</th><th>Cliente</th><th>Archivo</th><th>Leídos</th><th>Nuevos</th><th>Repetidos</th><th>Rechazados</th></tr></thead><tbody>
   ${ui.batches.length?ui.batches.map(b=>`<tr><td>${new Date(b.imported_at).toLocaleString('es-AR')}</td><td>${esc(b.clients&&b.clients.razon_social)}</td><td>${esc(b.file_name)}${b.kind==='libro_iva'?' <span class="tag" style="background:var(--blu);color:var(--blut)">Libro IVA</span>':''}</td><td>${b.rows_read}</td><td>${b.rows_new}</td><td>${b.rows_duplicate}</td><td>${b.rows_rejected}</td></tr>`).join(''):'<tr><td colspan="7" style="color:var(--mut)">Todavía no hay importaciones.</td></tr>'}</tbody></table></div>`;
 }
@@ -1110,7 +1111,7 @@ function cel(c,imp,per){
   if(!x)return `<div class="cel"><input type="date" class="sm" id="pf_${k}" value="${hoyISO()}" title="Fecha">${imp==='GAN_ANT'?antSel(c.id,per,k)+`<input class="sm" id="pi_${k}" inputmode="decimal" placeholder="Importe $" title="Importe del anticipo (opcional)" style="width:110px">`:''}<select class="sm" id="pc_${k}" title="Cómo se canceló">${opts('')}</select><button class="b sm" onclick="marcarPres(${A},${Z})">Marcar ${ob.v}</button></div>`;
   const fd=x.presentado_at?isoLocal(new Date(x.presentado_at)):'',files=ui.ffil.filter(f=>f.filing_id===x.id);
   const slots=ADJ.map(([t,et])=>{const f=files.find(z=>z.tipo===t);return f?`<span class="row" style="gap:2px"><button class="g sm" onclick="verArchivo('${f.path}')" title="${esc(f.nombre_archivo)}">${et}</button><button class="g sm" onclick="quitarArch('${f.id}')" title="Quitar">×</button></span>`:`<label class="g sm">+ ${et}<input type="file" accept="application/pdf,.pdf" hidden onchange="adjArch('${t}',${A},this,${Z})"></label>`}).join('');
-  return `<div class="cel"><span class="tag" style="background:var(--grn);color:var(--grnt)">${ob.v==='pagado'?'Pagado':'Presentado'}${imp==='GAN_ANT'&&x.numero_anticipo?' · anticipo '+x.numero_anticipo:''}</span>
+  return `<div class="cel">${imp==='GAN_ANT'&&filEnviado(x)?`<span class="tag" style="background:var(--amb);color:var(--ambt)">VEP enviado${x.numero_anticipo?' · anticipo '+x.numero_anticipo:''}</span><button class="b sm" onclick="antMarcarPagado('${per}','${c.id}')">Marcar pagado</button>`:`<span class="tag" style="background:var(--grn);color:var(--grnt)">${ob.v==='pagado'?'Pagado':'Presentado'}${imp==='GAN_ANT'&&x.numero_anticipo?' · anticipo '+x.numero_anticipo:''}</span>`}
   <input type="date" class="sm" value="${fd}" title="Fecha (se puede cambiar)" onchange="cambiarFechaPres(${A},this.value,${Z})">
   ${imp==='GAN_ANT'?`<input class="sm" inputmode="decimal" title="Importe del anticipo" placeholder="Importe $" style="width:110px" value="${x.importe===null||x.importe===undefined?'':String(x.importe).replace('.',',')}" onchange="cambiarImporteAnt(${A},this.value,${Z})">`:''}${imp==='GAN_ANT'?`<select class="sm" title="Número de anticipo" onchange="cambiarNumAnt(${A},this.value,${Z})">${antNumOpts(x.numero_anticipo,null)}</select>`:''}<select class="sm" title="Cómo se canceló" onchange="cambiarCancel(${A},this.value,${Z})">${opts(x.cancelacion||'')}</select>
   ${x.nota?`<span class="s">${esc(x.nota)}</span>`:''}
@@ -2487,6 +2488,319 @@ function cumDdjjCard(){
   return `<div class="card" style="margin-bottom:14px"><b>Cargar declaraciones juradas de IVA e IIBB</b><div style="margin-top:8px">${cuerpo}</div></div>`;
 }
 
+
+/* ===== Anticipos de Ganancias: arrastrar el VEP (queda "VEP enviado") o la compensación F.1151 (queda "Pagado") ===== */
+const antFiles=new Map();
+const filEnviado=x=>!!(x&&x.datos&&x.datos.estado==='vep_enviado');
+const antSinAc=s=>String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'');
+/** VEP de anticipo de Ganancias (consolidado o no): CUIT, número, importe de Ganancias y vencimiento. */
+function antVepLeer(lineas){
+  const t=lineas.join('\n'),n=antSinAc(t);
+  if(!/Volante Electr[oó]nico de Pago|Nro\.?\s*VEP/i.test(t)||!/GANANCIAS\s+PERSONAS\s+F[IÍ]SICAS/i.test(n))return null;
+  const c=t.match(/\bCUIT:?\s*(\d{2})-?(\d{8})-?(\d)/i),m=t.match(/GANANCIAS\s+PERSONAS\s+F[IÍ]SICAS[^\n$]*\$\s*([\d.]+,\d{2})/i);
+  const tot=t.match(/Importe total a pagar:?\s*\$?\s*([\d.]+,\d{2})/i),v=t.match(/D[ií]a de Expiraci[oó]n:?\s*(\d{4})-(\d{2})-(\d{2})/i),nro=t.match(/Nro\.?\s*VEP(?:\s+Consolidado)?:?\s*(\d+)/i);
+  const det=[...t.matchAll(/^([^\n$]{3,80}?)\s*\$\s*([\d.]+,\d{2})\s*$/gm)].map(x=>x[1].trim()+' $ '+x[2]).filter(x=>!/Importe total/i.test(x));
+  const num=s=>s?Number(s.replace(/\./g,'').replace(',','.')):null;
+  return {kind:'vep',cuit:c?c[1]+c[2]+c[3]:null,nro:nro?nro[1]:null,importe:num(m?m[1]:(tot?tot[1]:null)),total:tot?num(tot[1]):null,det,vence:v?v[1]+'-'+v[2]+'-'+v[3]:null,per:v?v[1]+'-'+v[2]:null,num:null};
+}
+/** Compensación F.1151 con destino "Ganancias personas físicas / Anticipos". El texto de estos PDF suele venir sin espacios. */
+function antCompLeer(lineas){
+  const t=lineas.join('\n'),s=antSinAc(t).replace(/\s+/g,'').toUpperCase();
+  if(!/F\.?1151|TIPODECOMPENSACION/.test(s)||!/DATOSDELDESTINO/.test(s))return null;
+  const dest=s.split('DATOSDELDESTINO')[1]||'';
+  if(!/GANANCIAS/.test(dest)||!/ANTICIPO/.test(dest))return {kind:'comp',noAnt:true,cuit:null};
+  const c=s.match(/CUITN[º°O]?:?(\d{2})-?(\d{8})-?(\d)/),imp=s.match(/IMPORTE\$?([\d.]+,\d{2})/),f=s.match(/FECHADESOLICITUD:?(\d{2})\/(\d{2})\/(\d{4})/);
+  const an=dest.match(/ANTICIPON[º°O]?(\d{1,2})(\d?)(\d{2})?(20\d\d)?/),num=s=>s?Number(s.replace(/\./g,'').replace(',','.')):null;
+  const an2=t.match(/Anticipo\s*N[º°o]\s*(\d{1,2})/i);
+  return {kind:'comp',cuit:c?c[1]+c[2]+c[3]:null,importe:num(imp?imp[1]:null),fecha:f?f[3]+'-'+f[2]+'-'+f[1]:null,per:f?f[3]+'-'+f[2]:null,num:an2?Number(an2[1]):(an?Number(an[1]):null),nro:(s.match(/TRANSACCION:?(\d+)/)||[])[1]||null};
+}
+async function antDropLeer(files){
+  files=[...files];if(!files.length)return;
+  const M=ui.antDrop=(ui.antDrop&&ui.antDrop.fase==='previa')?ui.antDrop:{fase:'leyendo',items:[]};
+  M.fase='leyendo';M.leyendo=0;M.nLeer=files.length;draw();
+  for(const f of files){
+    const it={nombre:f.name,id:uid()+uid()};
+    try{
+      const err=await esPdf(f);if(err)throw new Error(err);
+      const lin=Array.from(await pdfTexto(f)).map(String),R=antVepLeer(lin)||antCompLeer(lin);
+      if(!R){const t=lin.join('\n');throw new Error(/RECIBO DE HABERES/i.test(t)?'Esto es un recibo de sueldo: cargalo desde Sueldos.':/Volante Electr[oó]nico de Pago|Nro\.?\s*VEP/i.test(t)?'Es un VEP, pero no es de Ganancias personas físicas (anticipos).':'No se reconoció: tiene que ser el VEP del anticipo de Ganancias o la compensación (F.1151) con destino Anticipos, en PDF con texto.')}
+      if(R.noAnt)throw new Error('Es una compensación, pero su destino no es un anticipo de Ganancias.');
+      Object.assign(it,R);
+      const cl=R.cuit?ui.clients.find(c=>String(c.cuit)===R.cuit):null;it.cid=cl?cl.id:null;
+      if(!it.per)it.per=workPeriod();
+      /* La compensación se pega al anticipo con el mismo número que ya esté marcado para ese cliente. */
+      if(cl&&R.kind==='comp'&&R.num){const x=ui.fil.filter(z=>z.client_id===cl.id&&z.impuesto==='GAN_ANT'&&z.numero_anticipo===R.num).sort((a,b)=>a.periodo<b.periodo?1:-1)[0];if(x){it.per=x.periodo.slice(0,7);it.perDeFiling=true}}
+      if(cl&&R.kind==='vep'&&!it.num){const prev=filDe(cl.id,'GAN_ANT',antPrevPer(it.per));if(prev&&prev.numero_anticipo&&prev.numero_anticipo<10)it.num=prev.numero_anticipo+1}
+      antFiles.set(it.id,f);
+    }catch(e){it.err=(e&&e.message)||String(e)}
+    M.items.push(it);M.leyendo++;draw();
+  }
+  M.fase=M.items.some(i=>!i.err)?'previa':'error';draw();
+}
+function antDropDrop(e){e.preventDefault();const z=e.currentTarget;z.style.background='';z.style.borderColor='';antDropLeer(e.dataTransfer?e.dataTransfer.files:[])}
+function antDropSet(i,k,v){ui.antDrop.items[i][k]=v;draw()}
+function antDropCancelar(){ui.antDrop=null;antFiles.clear();draw()}
+function antPrev(it){
+  const c=it.cid?ui.clients.find(x=>x.id===it.cid):null,x=c?filDe(c.id,'GAN_ANT',it.per):null,tipo=it.kind==='vep'?'VEP':'COMPENSACION';
+  const ex=x?ui.ffil.find(f=>f.filing_id===x.id&&f.tipo===tipo):null;
+  return {c,x,ex,pagado:!!x&&!filEnviado(x),sinAnt:!!c&&!aplica(c).includes('GAN_ANT'),ok:!!c};
+}
+function antDropHtml(M){
+  let n=0;
+  const b=M.items.map((it,i)=>{
+    const cab=`<div style="margin-top:12px"><b>${esc(it.nombre)}</b><span class="s">${it.kind==='vep'?'VEP de anticipo de Ganancias':'Compensación F.1151'}</span></div>`;
+    if(it.err)return cab+`<div class="msg err">${esc(it.err)} Este archivo no se carga.</div>`;
+    const P=antPrev(it),c=P.c;if(!it.omitir&&P.ok&&(!P.ex||it.reemplazar))n++;
+    const est=it.kind==='vep'?(P.pagado?'El anticipo ya figura pagado: solo se adjunta el VEP, el estado no cambia.':'Va a quedar como <b>VEP enviado</b>.'):'Va a quedar como <b>Pagado</b>'+(P.x&&filEnviado(P.x)?' (tenía el VEP enviado: se suma la compensación).':'.');
+    return `<div class="card" style="margin:8px 0;${it.omitir?'opacity:.55':''}"><div class="row" style="gap:10px;align-items:center;flex-wrap:wrap"><b>${esc(c?c.razon_social:(it.cuit?'CUIT '+cuitF(it.cuit):'(no se leyó el CUIT)'))}</b>${it.cuit?`<span class="s">CUIT ${cuitF(it.cuit)}</span>`:''}${c?'<span class="tag" style="background:var(--grn);color:var(--grnt)">Cliente cargado</span>':'<span class="tag" style="background:var(--red);color:var(--redt)">Cliente no cargado: no se puede guardar</span>'}<label class="row" style="gap:5px;align-items:center;margin-left:auto"><input type="checkbox" ${it.omitir?'checked':''} onchange="antDropSet(${i},'omitir',this.checked)"> No cargar</label></div>
+     <div class="s" style="margin-top:4px">${it.nro?(it.kind==='vep'?'VEP Nro ':'Transacción ')+esc(it.nro)+' · ':''}${it.importe!=null?'Importe $ '+esc(money(it.importe))+' · ':''}${it.kind==='vep'?(it.vence?'Vence '+fAR(it.vence):''):(it.fecha?'Solicitada el '+fAR(it.fecha):'')}${it.det&&it.det.length>1?' · '+esc(it.det.join('; ')):''}</div>
+     ${it.kind==='vep'&&it.det&&it.det.length>1?'<div class="msg warn" style="margin-top:6px">Este VEP trae más de un concepto: el importe del anticipo se tomó solo de Ganancias personas físicas.</div>':''}
+     <div class="row" style="gap:14px;flex-wrap:wrap;align-items:flex-end;margin:8px 0"><label>Período del anticipo<br>${mesPick(it.per,`antDropSet(${i},'per',this.value)`)}</label>
+      <label>Número de anticipo<br><select onchange="antDropSet(${i},'num',this.value?Number(this.value):null)">${antNumOpts(it.num,null)}</select></label></div>
+     ${it.kind==='comp'&&!it.num?'<div class="msg warn">No se leyó el número de anticipo: elegilo.</div>':''}${it.kind==='vep'&&!it.num?'<div class="msg warn">El VEP no dice qué número de anticipo es: elegilo (podés dejarlo vacío).</div>':''}
+     ${it.kind==='comp'&&!it.perDeFiling&&c?'<div class="msg info">No había un anticipo marcado con ese número: revisá el período en el que se va a cargar.</div>':''}
+     ${P.sinAnt?'<div class="msg warn">Este cliente no tiene tildado "Ganancias: anticipos" en Datos: se carga igual, pero no aparece en esta tabla hasta que lo tildes.</div>':''}
+     <div class="s">${est}</div>
+     ${P.ex?`<div class="msg warn" style="margin-top:6px"><b>Ya hay ${it.kind==='vep'?'un VEP':'una compensación'} cargado para este anticipo</b> (archivo: ${esc(P.ex.nombre_archivo||'')}).${it.reemplazar?' Se va a reemplazar.':' Se va a omitir.'} <label class="row" style="gap:5px;align-items:center;display:inline-flex"><input type="checkbox" ${it.reemplazar?'checked':''} onchange="antDropSet(${i},'reemplazar',this.checked)"> Reemplazar</label></div>`:''}</div>`}).join('');
+  return `${b}<div class="row" style="gap:8px;margin-top:10px"><button class="b" onclick="antDropConfirmar()" ${n?'':'disabled'}>Confirmar y cargar ${n||'nada'}</button><button class="g" onclick="antDropCancelar()">Cancelar</button></div>`;
+}
+async function antDropConfirmar(){
+  const M=ui.antDrop;if(!M||M.fase!=='previa')return;
+  const L=M.items.filter(it=>!it.err&&!it.omitir&&it.cid);
+  if(!L.length){flash('No hay nada para cargar.','warn');return draw()}
+  const ok=[],omit=[],mal=[];M.fase='guardando';M.prog=0;M.total=L.length;draw();
+  for(const it of L){
+    const c=ui.clients.find(z=>z.id===it.cid),tipo=it.kind==='vep'?'VEP':'COMPENSACION',etq=(it.kind==='vep'?'VEP':'Compensación')+' de '+c.razon_social;
+    try{
+      const f=antFiles.get(it.id);let x=filDe(c.id,'GAN_ANT',it.per);
+      const ex=x?ui.ffil.find(z=>z.filing_id===x.id&&z.tipo===tipo):null;
+      if(ex&&!it.reemplazar){omit.push(etq+' '+it.per.slice(5)+'/'+it.per.slice(0,4));M.prog++;draw();continue}
+      const hoy=new Date().toISOString(),fecha=it.fecha?nuevaFecha(it.fecha):hoy;
+      if(!x){
+        const r=await sb.from('tax_filings').insert({client_id:c.id,periodo:it.per+'-01',impuesto:'GAN_ANT',presentado_by:me.id,presentado_at:it.kind==='vep'?hoy:fecha,numero_anticipo:it.num||null,importe:it.importe!=null?it.importe:null,cancelacion:it.kind==='vep'?'VEP':'COMP',datos:it.kind==='vep'?{estado:'vep_enviado',vep_nro:it.nro||null,vep_vence:it.vence||null}:null}).select('*').single();
+        if(r.error)throw r.error;x=r.data;
+      }
+      const path=`${c.id}/ddjj/GAN_ANT-${it.per}-${tipo.toLowerCase()}.pdf`;
+      const up=await sb.storage.from('clientes').upload(path,f,{contentType:'application/pdf',upsert:true});if(up.error)throw new Error('No se pudo subir: '+errTxt(up.error));
+      const fr=await sb.from('tax_filing_files').upsert({filing_id:x.id,client_id:c.id,tipo,nombre_archivo:f.name,path,size_bytes:f.size,subido_by:me.id},{onConflict:'filing_id,tipo'});if(fr.error)throw fr.error;
+      /* Si el anticipo ya estaba marcado, se actualiza el estado según el archivo que llegó. */
+      const prev=filDe(c.id,'GAN_ANT',it.per);
+      if(prev){
+        const ca={modificado_by:me.id,modificado_at:hoy},datos={...(prev.datos||{})},hayVep=tipo==='VEP'||ui.ffil.some(z=>z.filing_id===prev.id&&z.tipo==='VEP'),hayComp=tipo==='COMPENSACION'||ui.ffil.some(z=>z.filing_id===prev.id&&z.tipo==='COMPENSACION');
+        if(!prev.numero_anticipo&&it.num)ca.numero_anticipo=it.num;
+        if(it.kind==='comp'){
+          if(filEnviado(prev)){delete datos.estado;ca.datos=datos;ca.presentado_at=fecha;if(it.importe!=null)ca.importe=(Number(prev.importe)||0)+(ex?0:it.importe)}
+          else if(prev.importe==null&&it.importe!=null)ca.importe=it.importe;
+          ca.cancelacion=hayVep?'VEP_COMP':'COMP';
+        }else{
+          if(filEnviado(prev)){datos.vep_nro=it.nro||datos.vep_nro||null;datos.vep_vence=it.vence||datos.vep_vence||null;ca.datos=datos;if(it.importe!=null)ca.importe=it.importe}
+          ca.cancelacion=hayComp?'VEP_COMP':'VEP';
+        }
+        if(Object.keys(ca).length>2){const u=await sb.from('tax_filings').update(ca).eq('id',prev.id).select('id');if(u.error)throw u.error;if(!u.data||!u.data.length)throw new Error('sin permiso para actualizar el anticipo')}
+      }
+      await loadFil();
+      ok.push(etq+' ('+it.per.slice(5)+'/'+it.per.slice(0,4)+(it.kind==='vep'?': VEP enviado':': pagado')+')');
+    }catch(e){mal.push(etq+' ('+errTxt(e)+')')}
+    M.prog++;draw();
+  }
+  ui.antDrop=null;antFiles.clear();
+  const per=(L.find(it=>it.per)||{}).per;if(per)ui.antPer=per;
+  const p=[];if(ok.length)p.push('Cargado: '+ok.join('; ')+'.');if(omit.length)p.push('Ya estaban cargados y se omitieron: '+omit.join('; ')+'. Para reemplazarlos marcá "Reemplazar".');if(mal.length)p.push('No se cargó: '+mal.join('; ')+'.');
+  flash(p.join(' '),mal.length?(ok.length?'warn':'err'):(omit.length&&!ok.length?'warn':'ok'));draw();
+}
+async function antMarcarPagado(per,cid){
+  const x=filDe(cid,'GAN_ANT',per);if(!x||!filEnviado(x))return;
+  const datos={...(x.datos||{})};delete datos.estado;
+  const u=await sb.from('tax_filings').update({datos,presentado_at:new Date().toISOString(),modificado_by:me.id,modificado_at:new Date().toISOString()}).eq('id',x.id).select('id');
+  if(u.error||!u.data||!u.data.length)flash(u.error?errTxt(u.error):'No tenés permiso para actualizar este anticipo.','err');
+  else{try{await loadFil();flash('Anticipo marcado como pagado.')}catch(e){flash(errTxt(e),'err')}}
+  draw();
+}
+function antDropZona(){
+  return `<div ondragover="event.preventDefault();this.style.background='rgba(120,160,255,.14)';this.style.borderColor='var(--blut,#3b6fd4)'" ondragleave="this.style.background='';this.style.borderColor=''" ondrop="antDropDrop(event)" style="border:2px dashed var(--bd,#cbd5e1);border-radius:12px;padding:18px;text-align:center"><div><b>Arrastrá acá los VEP de anticipos y las compensaciones</b> (uno o varios PDF, de cualquier cliente)</div><div class="s" style="margin:4px 0 10px">El VEP del anticipo de Ganancias deja el anticipo como <b>VEP enviado</b>; la compensación (F.1151) lo deja como <b>Pagado</b>. La app identifica el cliente por su CUIT y adjunta el PDF. Antes de guardar vas a ver una vista previa.</div><label class="b" style="cursor:pointer;display:inline-block">O elegí los archivos<input type="file" accept="application/pdf,.pdf" multiple hidden onchange="antDropLeer([...this.files]);this.value=''"></label></div>`;
+}
+function antDropCard(){
+  const M=ui.antDrop;let cuerpo;
+  if(!M)cuerpo=antDropZona();
+  else if(M.fase==='leyendo')cuerpo=`<p><b>Leyendo los archivos…</b> ${M.leyendo||0} de ${M.nLeer||0}</p>`;
+  else if(M.fase==='guardando')cuerpo=`<p><b>Guardando…</b> ${M.prog||0} de ${M.total||0}. No cierres esta página.</p>`;
+  else if(M.fase==='error')cuerpo=M.items.map(it=>`<div class="msg err"><b>${esc(it.nombre)}:</b> ${esc(it.err||'No se pudo leer.')}</div>`).join('')+`<button class="g" onclick="antDropCancelar()">Cerrar</button>`;
+  else cuerpo=antDropZona()+antDropHtml(M);
+  return `<div class="card" style="margin-bottom:14px"><b>Cargar VEP de anticipos y compensaciones</b><div style="margin-top:8px">${cuerpo}</div></div>`;
+}
+
+
+/* ===== Importar compras: Excel de tickets de la Cooperativa (el cliente sale de la columna CUENTA / DETALLE) ===== */
+const COOP_POLIZA=/p[oó]liza|propuesta|seguro|granizo|endoso|cobertura|siniestro|asegur/i;
+const coopCuentas=()=>{try{return JSON.parse(localStorage.getItem('coop_cuentas')||'{}')||{}}catch(e){return {}}};
+const coopGuardarCuenta=(cuenta,cid)=>{try{const m=coopCuentas();m[cuenta]=cid;localStorage.setItem('coop_cuentas',JSON.stringify(m))}catch(e){}};
+const coopTxt=s=>String(s||'').replace(/&#(\d+);/g,(m,n)=>String.fromCharCode(+n)).replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&apos;/g,"'").replace(/&amp;/g,'&');
+/** Excel 2003 en XML (el que baja la cooperativa con extensión .xls): se lee a mano porque trae acentos en ISO-8859-1. */
+function coopXmlFilas(txt){
+  const filas=[];
+  for(const rm of txt.matchAll(/<Row\b[^>]*>([\s\S]*?)<\/Row>/gi)){
+    const v=[];
+    for(const cm of rm[1].matchAll(/<Cell\b([^>]*?)(?:\/>|>([\s\S]*?)<\/Cell>)/gi)){
+      const ix=cm[1].match(/ss:Index=['"](\d+)['"]/i);if(ix)while(v.length<Number(ix[1])-1)v.push(null);
+      const d=(cm[2]||'').match(/<Data\b[^>]*>([\s\S]*?)<\/Data>/i);v.push(d?coopTxt(d[1]):null);
+    }
+    filas.push(v);
+  }
+  return filas;
+}
+async function coopLeerFilas(f){
+  const buf=await f.arrayBuffer(),u8=new Uint8Array(buf),ini=new TextDecoder('latin1').decode(u8.slice(0,300));
+  if(/^\s*<\?xml/i.test(ini)||/<Workbook/i.test(ini)){
+    const enc=(ini.match(/encoding=['"]([^'"]+)['"]/i)||[])[1]||'utf-8';let txt;try{txt=new TextDecoder(enc).decode(u8)}catch(e){txt=new TextDecoder('windows-1252').decode(u8)}
+    return coopXmlFilas(txt);
+  }
+  if(typeof XLSX==='undefined')throw new Error('No se pudo cargar el lector de Excel (¿sin conexión a internet?).');
+  const wb=XLSX.read(buf,{type:'array'});return XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,raw:true,defval:null});
+}
+/** Tipo de comprobante de ARCA a partir del texto de la cooperativa ("Factura A Electronica", "Nota de Credito B"…). */
+function coopTipo(det){
+  const n=norm(det),m=n.match(/(factura|nota de credito|nota de debito)\s+([abcm])\b/);
+  if(m){const L=m[2],k=m[1];
+    const cod=k==='factura'?{a:1,b:6,c:11,m:51}[L]:k==='nota de credito'?{a:3,b:8,c:13,m:53}[L]:{a:2,b:7,c:12,m:52}[L];
+    if(cod)return {cmp:cod,nota:k==='nota de credito'}}
+  if(/\b(ticket|tique|tiquet)\b/.test(n))return {cmp:83,nota:false};
+  return null;
+}
+const coopTipoNom=c=>c===83?'Tique':tipoNombre(c);
+/** Lee el Excel: devuelve los comprobantes agrupados por cuenta (cliente de la cooperativa). */
+function coopAnalizar(rows){
+  let h=-1;const FB=['cuenta','detalle','fecha','numero','total comp'];
+  for(let i=0;i<Math.min(rows.length,15);i++){const s=new Set((rows[i]||[]).map(c=>norm(c)));if(FB.every(x=>s.has(x))){h=i;break}}
+  if(h<0)return {ok:false,error:'No se reconoció el formato de la cooperativa. Se esperan las columnas CUENTA, DETALLE, FECHA, NUMERO y TOTAL COMP.'};
+  const idx={};(rows[h]||[]).forEach((c,i)=>{const k=norm(c);if(k&&!(k in idx))idx[k]=i});
+  const g=(r,k)=>{const i=idx[k];return i===undefined?null:r[i]};
+  const gruposM=new Map(),errores=[],vistos=new Set();let leidas=0;
+  for(let i=h+1;i<rows.length;i++){
+    const r=rows[i];if(!r||r.every(c=>String(c??'').trim()===''))continue;leidas++;
+    const cuenta=String(g(r,'cuenta')??'').trim(),det=String(g(r,'det comp')||'').trim(),den=String(g(r,'denominacion')||'').trim(),detalle=String(g(r,'detalle')||'').trim();
+    const fecha=pDate(g(r,'fecha')),dig=String(g(r,'numero')??'').replace(/\D/g,''),tot=pNum(g(r,'total comp')),cuit=String(g(r,'cuit emisor')??'').replace(/\D/g,'');
+    const p=[];if(!cuenta)p.push('sin cuenta');if(!fecha)p.push('fecha inválida');if(!dig)p.push('sin número');if(tot===null)p.push('importe inválido');if(cuit.length!==11)p.push('CUIT del emisor inválido');
+    if(p.length){errores.push({fila:i+1,msg:p.join(', ')});continue}
+    const t=coopTipo(det),poliza=COOP_POLIZA.test(det)||COOP_POLIZA.test(den);
+    const numero=dig.length>=9?+dig.slice(-8):+dig,pv=dig.length>=9?+dig.slice(0,-8):0,n=x=>pNum(g(r,x))||0;
+    const sg=t&&t.nota?-1:1,ab=x=>Math.round(Math.abs(x)*100)/100;
+    const g21=n('gravada 21'),i21=n('iva 21'),g105=n('gravada 10 5'),i105=n('iva 10 5'),exe=n('exento'),otr=n('i interno')+n('imp vial');
+    const totA=ab(tot),neto=ab(g21+g105),iva=ab(i21+i105),nog=Math.max(0,Math.round((totA-neto-iva-ab(exe)-ab(otr))*100)/100);
+    const R={fila:i+1,cuenta,fecha,dig,pv,numero,cuit,emisor:String(g(r,'razon social')||'').trim()||'Cooperativa',det,den,poliza,cmp:t?t.cmp:null,
+      g21:ab(g21),i21:ab(i21),g105:ab(g105),i105:ab(i105),exe:ab(exe),otr:ab(otr),nog,neto,iva,total:totA,sel:false,motivo:''};
+    R.sel=!poliza&&!!t;R.motivo=poliza?'Póliza: no se carga':t?'':'Tipo no reconocido: elegilo para poder cargarlo';
+    if(dig.length<9&&!poliza)R.aviso='Número sin punto de venta: se carga con punto de venta 0.';
+    const k=[cuenta,cuit,t?t.cmp:'?',pv,numero].join('|');if(!poliza&&vistos.has(k)){R.sel=false;R.motivo='Repetido dentro del archivo';R.rep=true}vistos.add(k);
+    let G=gruposM.get(cuenta);if(!G){G={cuenta,nombres:[],filas:[],cid:null,auto:false,exist:null};gruposM.set(cuenta,G)}
+    if(detalle&&!G.nombres.includes(detalle))G.nombres.push(detalle);G.filas.push(R);
+  }
+  const grupos=[...gruposM.values()];
+  grupos.forEach(G=>{G.nombre=G.nombres.slice().sort((a,b)=>b.length-a.length)[0]||('Cuenta '+G.cuenta)});
+  if(!grupos.length)return {ok:false,error:'El archivo no tiene comprobantes que se puedan leer.'+(errores.length?' Filas con problemas: '+errores.slice(0,5).map(e=>'fila '+e.fila+' ('+e.msg+')').join(', ')+'.':'')};
+  return {ok:true,grupos,errores,leidas};
+}
+/** Busca el cliente por la cuenta recordada o por el nombre (completo o cortado). */
+function coopBuscarCliente(G){
+  const act=ui.clients.filter(c=>c.active!==false),m=coopCuentas()[G.cuenta];
+  if(m&&act.some(c=>c.id===m))return act.find(c=>c.id===m);
+  const nn=G.nombres.map(norm).filter(Boolean);
+  const ex=act.filter(c=>nn.includes(norm(c.razon_social)));if(ex.length===1)return ex[0];
+  const pf=act.filter(c=>{const cn=norm(c.razon_social);return nn.some(x=>(x.length>=12&&cn.startsWith(x))||(cn.length>=12&&x.startsWith(cn)))});
+  return pf.length===1?pf[0]:null;
+}
+async function coopExistentes(G){
+  G.exist=null;if(!G.cid)return;
+  try{const ex=await fetchAll((a,b)=>sb.from('vouchers').select('emisor_cuit,tipo_cmp,punto_venta,numero,importe_total').eq('client_id',G.cid).range(a,b));G.exist=new Set(ex.map(vkey))}catch(e){G.exist=null}
+}
+function coopDup(G,R){return !!(G.exist&&R.cmp&&G.exist.has(vkey({emisor_cuit:R.cuit,tipo_cmp:R.cmp,punto_venta:R.pv,numero:R.numero})))}
+async function coopLeer(files){
+  files=[...files];if(!files.length)return;
+  const f=files[0];if(files.length>1)flash('Se carga de a un archivo: se tomó '+f.name+'.','warn');
+  ui.coop={fase:'leyendo'};draw();
+  try{
+    if(!/\.xlsx?$/i.test(f.name))throw new Error('El archivo debe ser .xls o .xlsx.');
+    if(f.size>10*1048576)throw new Error('El archivo supera los 10 MB.');
+    const rows=await coopLeerFilas(f),R=coopAnalizar(rows);if(!R.ok)throw new Error(R.error);
+    const hash=[...new Uint8Array(await crypto.subtle.digest('SHA-256',await f.arrayBuffer()))].map(x=>x.toString(16).padStart(2,'0')).join('');
+    R.grupos.forEach(G=>{const c=coopBuscarCliente(G);G.cid=c?c.id:null;G.auto=!!c});
+    await Promise.all(R.grupos.map(coopExistentes));
+    ui.coop={fase:'previa',file:f.name,hash,estado:'pendiente',...R};
+  }catch(e){ui.coop={fase:'error',err:(e&&e.message)||String(e)}}
+  draw();
+}
+function coopDrop(e){e.preventDefault();const z=e.currentTarget;z.style.background='';z.style.borderColor='';coopLeer(e.dataTransfer?e.dataTransfer.files:[])}
+async function coopCliente(gi,cid){const G=ui.coop.grupos[gi];G.cid=cid||null;G.auto=false;if(cid)coopGuardarCuenta(G.cuenta,cid);await coopExistentes(G);draw()}
+function coopSel(gi,fi,v){const R=ui.coop.grupos[gi].filas[fi];R.sel=!!v;draw()}
+function coopTipoSet(gi,fi,v){const R=ui.coop.grupos[gi].filas[fi];R.cmp=v?Number(v):null;if(R.cmp&&!R.poliza){R.motivo='';R.sel=true}else if(!R.cmp)R.sel=false;draw()}
+function coopTodos(gi,modo){const G=ui.coop.grupos[gi];G.filas.forEach(R=>{if(!R.cmp)return;R.sel=modo==='sin'?!R.poliza&&!R.rep:modo==='todos'})
+  draw()}
+function coopCancelar(){ui.coop=null;draw()}
+const coopElegidos=G=>G.filas.filter(R=>R.sel&&R.cmp&&!coopDup(G,R));
+function coopHtml(){
+  const C=ui.coop;
+  const gh=C.grupos.map((G,gi)=>{
+    const el=coopElegidos(G),dup=G.filas.filter(R=>R.sel&&R.cmp&&coopDup(G,R)).length,pol=G.filas.filter(R=>R.poliza).length;
+    const filas=G.filas.map((R,fi)=>{
+      const d=coopDup(G,R),es=R.cmp&&!d,est=d?'<span class="tag" style="background:var(--grn);color:var(--grnt)">Ya estaba cargado</span>':R.poliza?'<span class="tag" style="background:var(--vio);color:var(--viot)">Póliza: no se carga</span>':R.rep?'<span class="tag" style="background:var(--amb);color:var(--ambt)">Repetido en el archivo</span>':!R.cmp?'<span class="tag" style="background:var(--amb);color:var(--ambt)">Tipo no reconocido</span>':'';
+      return `<tr style="${!R.sel||d?'opacity:.6':''}"><td><input type="checkbox" ${R.sel&&es?'checked':''} ${es?'':'disabled'} onchange="coopSel(${gi},${fi},this.checked)"></td><td>${fAR(R.fecha)}</td><td>${R.cmp?esc(coopTipoNom(R.cmp)):`<select onchange="coopTipoSet(${gi},${fi},this.value)"><option value="">Elegir tipo…</option>${[...TIPOS_CMP.map(x=>x),[83,'Tique']].map(([c,t])=>`<option value="${c}">${esc(t)}</option>`).join('')}</select>`}<span class="s">${esc(R.det)}</span></td><td>${R.pv}-${String(R.numero).padStart(8,'0')}</td><td>${esc(R.den)}</td><td>${money(R.neto)}</td><td>${money(R.iva)}</td><td>${money(R.total)}</td><td>${est}${R.aviso?`<span class="s">${esc(R.aviso)}</span>`:''}</td></tr>`}).join('');
+    const opts=ui.clients.filter(c=>c.active!==false).map(c=>`<option value="${c.id}" ${c.id===G.cid?'selected':''}>${esc(c.razon_social)}</option>`).join('');
+    const cli=G.cid?ui.clients.find(c=>c.id===G.cid):null;
+    return `<div class="card" style="margin:10px 0"><div class="row" style="gap:12px;align-items:flex-end;flex-wrap:wrap"><div><b>${esc(G.nombre)}</b><span class="s">Cuenta ${esc(G.cuenta)} de la cooperativa · ${G.filas.length} comprobante(s)</span></div>
+     <label>Cliente en la app<br><select onchange="coopCliente(${gi},this.value)"><option value="">Elegir cliente…</option>${opts}</select></label>
+     ${cli?(G.auto?'<span class="tag" style="background:var(--grn);color:var(--grnt)">Reconocido por el nombre</span>':'<span class="tag" style="background:var(--blu);color:var(--blut)">Elegido a mano (se recuerda esta cuenta)</span>'):'<span class="tag" style="background:var(--red);color:var(--redt)">Elegí el cliente para poder cargar</span>'}</div>
+     <div class="row" style="gap:8px;margin:8px 0;flex-wrap:wrap"><button class="g sm" onclick="coopTodos(${gi},'sin')">Marcar todos menos pólizas</button><button class="g sm" onclick="coopTodos(${gi},'todos')">Marcar todos</button><button class="g sm" onclick="coopTodos(${gi},'ninguno')">Desmarcar todos</button><span class="s">${pol?pol+' póliza(s) sin marcar. ':''}${dup?dup+' ya estaban cargados. ':''}Se cargan ${el.length}.</span></div>
+     <div class="tw"><table><thead><tr><th></th><th>Fecha</th><th>Tipo</th><th>Número</th><th>Concepto</th><th>Neto</th><th>IVA</th><th>Total</th><th>Estado</th></tr></thead><tbody>${filas}</tbody></table></div></div>`;
+  }).join('');
+  const n=C.grupos.reduce((a,G)=>a+(G.cid?coopElegidos(G).length:0),0),sinCli=C.grupos.some(G=>!G.cid&&G.filas.some(R=>R.sel&&R.cmp));
+  return `${C.errores.length?`<div class="msg warn">Filas que no se pudieron leer: ${C.errores.slice(0,6).map(e=>`fila ${e.fila} (${esc(e.msg)})`).join(' · ')}</div>`:''}${gh}
+   <div class="card row" style="align-items:end;gap:14px;flex-wrap:wrap"><label>Estado con el que se agregan<br><select onchange="ui.coop.estado=this.value"><option value="pendiente" ${C.estado==='pendiente'?'selected':''}>Pendientes de pasar al sistema</option><option value="ya_pasados" ${C.estado==='ya_pasados'?'selected':''}>Ya pasados al sistema</option></select></label>
+   <button class="b" onclick="coopConfirmar()" ${n&&!sinCli?'':'disabled'}>Confirmar y cargar ${n} comprobante(s)</button><button class="g" onclick="coopCancelar()">Cancelar</button>${sinCli?'<span class="s">Falta elegir el cliente de alguna cuenta (o desmarcar sus comprobantes).</span>':''}</div>`;
+}
+async function coopConfirmar(){
+  if(ui.busy)return;const C=ui.coop;if(!C||C.fase!=='previa')return;
+  const trabajos=C.grupos.filter(G=>G.cid).map(G=>({G,E:coopElegidos(G)})).filter(t=>t.E.length);
+  if(!trabajos.length)return;
+  ui.busy=true;const res=[],mal=[];let ultimo=null;
+  for(const {G,E} of trabajos){
+    const cli=ui.clients.find(c=>c.id===G.cid),porMes=new Map();E.forEach(R=>{const m=R.fecha.slice(0,7);if(!porMes.has(m))porMes.set(m,[]);porMes.get(m).push(R)});
+    let n=0;
+    for(const [mes,L] of porMes){
+      let batchId=null;
+      try{
+        const {data:per,error:e1}=await sb.from('client_periods').upsert({client_id:G.cid,periodo:mes+'-01'},{onConflict:'client_id,periodo'}).select('id').single();if(e1)throw e1;
+        const {data:b,error:e2}=await sb.from('import_batches').insert({client_id:G.cid,period_id:per.id,file_name:'Cooperativa: '+C.file,file_sha256:C.hash,imported_by:me.id,kind:'compras',rows_read:G.filas.length,rows_new:L.length,rows_duplicate:0,rows_rejected:0,errors:[]}).select('id').single();if(e2)throw e2;batchId=b.id;
+        const ahora=new Date().toISOString(),proc=C.estado==='pendiente'?'pendiente':'liquidado_con_documentacion';
+        const rows=L.map(R=>{
+          const raw={Tipo:`${R.cmp} - ${coopTipoNom(R.cmp)}`,fuente:'cooperativa',_cooperativa:{cuenta:G.cuenta,cliente:G.nombre,detalle:R.det,denominacion:R.den,numero_original:R.dig,archivo:C.file}};
+          if(R.g21||R.i21){raw['Neto Grav. IVA 21%']=R.g21;raw['IVA 21%']=R.i21}
+          if(R.g105||R.i105){raw['Neto Grav. IVA 10,5%']=R.g105;raw['IVA 10,5%']=R.i105}
+          return {client_id:G.cid,period_id:per.id,batch_id:batchId,fecha:R.fecha,tipo_cmp:R.cmp,punto_venta:R.pv,numero:R.numero,emisor_cuit:R.cuit,emisor_nombre:R.emisor,moneda:'PES',tipo_cambio:1,importe_total:R.total,neto_gravado:R.neto,no_gravado:R.nog,exento:R.exe,otros_tributos:R.otr,iva:R.iva,raw,origen:'libro_iva',doc_status:'recibida_fisica',proc_status:proc,received_at:ahora,notes:'Cargado desde el Excel de la cooperativa',updated_by:me.id}});
+        let ins=0;
+        for(let i=0;i<rows.length;i+=300){const {data,error}=await sb.from('vouchers').upsert(rows.slice(i,i+300),{onConflict:'client_id,emisor_cuit,tipo_cmp,punto_venta,numero',ignoreDuplicates:true}).select('id');if(error)throw error;ins+=data.length}
+        if(ins!==L.length)await sb.from('import_batches').update({rows_new:ins,rows_duplicate:L.length-ins}).eq('id',batchId);
+        n+=ins;ultimo={cid:G.cid,mes};
+      }catch(e){if(batchId)await sb.from('import_batches').update({rows_new:0}).eq('id',batchId);mal.push((cli?cli.razon_social:G.nombre)+' '+mes.slice(5)+'/'+mes.slice(0,4)+' ('+errTxt(e)+')')}
+    }
+    res.push(`${cli?cli.razon_social:G.nombre}: ${n}`);
+  }
+  ui.busy=false;ui.coop=null;
+  if(ultimo){ui.cid=ultimo.cid;ui.periodo=ultimo.mes}
+  flash(`Cooperativa: se cargaron ${res.join('; ')}.${mal.length?' No se pudo cargar: '+mal.join('; ')+'. Podés repetir la carga: no se duplica nada.':''}`,mal.length?'warn':'ok');
+  if(ultimo&&!mal.length){await show('comprobantes');return}
+  draw();
+}
+function coopZona(){
+  return `<div ondragover="event.preventDefault();this.style.background='rgba(120,160,255,.14)';this.style.borderColor='var(--blut,#3b6fd4)'" ondragleave="this.style.background='';this.style.borderColor=''" ondrop="coopDrop(event)" style="border:2px dashed var(--bd,#cbd5e1);border-radius:12px;padding:18px;text-align:center"><div><b>Arrastrá acá el Excel de la cooperativa</b> (el de comprobantes de facturación emitidos por cuenta)</div><div class="s" style="margin:4px 0 10px">La app reconoce el cliente por la cuenta y el nombre, y no carga las pólizas. Si algo no se puede distinguir, lo ves en la vista previa y elegís vos.</div><label class="b" style="cursor:pointer;display:inline-block">O elegí el archivo<input type="file" accept=".xls,.xlsx" hidden onchange="coopLeer([...this.files]);this.value=''"></label></div>`;
+}
+function coopCard(){
+  const C=ui.coop;let cuerpo;
+  if(!C)cuerpo=coopZona();
+  else if(C.fase==='leyendo')cuerpo='<p><b>Leyendo el archivo…</b></p>';
+  else if(C.fase==='error')cuerpo=`<div class="msg err">${esc(C.err)}</div><button class="g" onclick="coopCancelar()">Cerrar</button>`;
+  else cuerpo=coopZona()+coopHtml();
+  return `<div class="card" style="margin-top:16px"><b>Tickets de la cooperativa (Unión de Justiniano Posse)</b><p class="s" style="margin:4px 0 10px">No usa el cliente ni el período de arriba: los toma del archivo. Cada comprobante queda en el mes de su fecha, listo para exportar con el Excel de "Comprobantes de compras".</p>${cuerpo}</div>`;
+}
+
 /* ===== Vencimientos: agregar fechas e impuestos (formulario arriba y errores claros) ===== */
 const VENC_ANUALES=['GANANCIAS_PH','GAN_DDJJ','BP','GAN_ANT'];
 const vencErr=e=>{const m=String((e&&e.message)||'');
@@ -2825,11 +3139,12 @@ function vSueldosPage(){
 function irAnticipos(per){ui.antPer=per;show('anticipos')}
 function vAnticipos(){
   const per=ui.antPer||workPeriod(),act=ui.clients.filter(c=>c.active!==false&&aplica(c).includes('GAN_ANT'));
-  const hechos=act.filter(c=>filDe(c.id,'GAN_ANT',per)).length;
+  const hechos=act.filter(c=>{const x=filDe(c.id,'GAN_ANT',per);return x&&!filEnviado(x)}).length,envs=act.filter(c=>filEnviado(filDe(c.id,'GAN_ANT',per))).length;
   const prox=c=>{const d=ui.dl.filter(x=>x.impuesto==='GANANCIAS_PH'&&diasHasta(x.fecha)>=0&&delC(x,c)).sort((a,b)=>a.fecha<b.fecha?-1:1)[0];return d?`${fAR(d.fecha)}<span class="s">${cuando(diasHasta(d.fecha))}${d.verificado?'':', a confirmar'}</span>`:'<span class="s">sin fecha cargada</span>'};
   return `<h2>Anticipos de Ganancias</h2>
+  ${antDropCard()}
   <div class="card row" style="margin-bottom:14px;align-items:center"><label>Período<br>${mesPick(per,`ui.antPer=this.value;draw()`)}</label>
-   <div class="grid" style="flex:1;min-width:260px"><div class="card kpi"><b>${act.length}</b><span>Clientes con anticipos</span></div><div class="card kpi"><b>${hechos}</b><span>Pagados</span></div><div class="card kpi"><b>${act.length-hechos}</b><span>Pendientes</span></div></div></div>
+   <div class="grid" style="flex:1;min-width:260px"><div class="card kpi"><b>${act.length}</b><span>Clientes con anticipos</span></div><div class="card kpi"><b>${hechos}</b><span>Pagados</span></div><div class="card kpi"><b>${envs}</b><span>VEP enviados</span></div><div class="card kpi"><b>${act.length-hechos-envs}</b><span>Pendientes</span></div></div></div>
   <p class="s" style="margin-bottom:12px">Marcá cada anticipo cuando quede pagado: elegí el número de anticipo (1, 2, 3...), si fue con VEP completo, compensación o VEP + compensación, y adjuntá los comprobantes. La app solo guarda tu marca; no verifica nada con ARCA.</p>
   <div class="tw"><table><thead><tr><th>Cliente</th><th>Próximo vencimiento cargado</th><th>Anticipo ${per.slice(5)}/${per.slice(0,4)}</th></tr></thead><tbody>
   ${act.length?act.map(c=>`<tr><td>${esc(c.razon_social)}<span class="s">CUIT ${cuitF(c.cuit)}, termina en ${c.cuit.slice(-1)}</span></td><td>${prox(c)}</td><td>${cel(c,'GAN_ANT',per)}</td></tr>`).join(''):'<tr><td colspan="3" style="color:var(--mut)">Ningún cliente tiene anticipos de Ganancias. Marcá "Ganancias: anticipos" en la pestaña Datos de cada cliente.</td></tr>'}</tbody></table></div>`;
