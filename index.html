@@ -170,7 +170,7 @@ function planImport(parsed,meta,existing,ctx){
 
 
 /* ===== Supabase ===== */
-const APP_VERSION='02/11/2026, boletas de sindicatos, lector de recibos mejorado y anticipos de Ganancias por arrastre y tickets de la cooperativa';
+const APP_VERSION='02/11/2026, boletas de sindicatos, lector de recibos mejorado y anticipos de Ganancias por arrastre y tickets de la cooperativa, bandeja de archivos, buscador global y control de comprobantes';
 const SUPABASE_URL='https://tugdqcoxcpsiynlvnqdu.supabase.co';
 const SUPABASE_KEY='sb_publishable_2-96VeZrsNNftRXkzA1l_A_YG7ThJrL'; // clave pública: los permisos los da la base (RLS)
 const sb=(typeof supabase!=='undefined')?supabase.createClient(SUPABASE_URL,SUPABASE_KEY):null;
@@ -250,7 +250,7 @@ async function loadVouchers(){
   ui.vs=await fetchAll((a,b)=>sb.from('vouchers').select('*').eq('period_id',p.id).order('fecha').order('numero').range(a,b));
 }
 function draw(){
-  $('nav').innerHTML='<h1>Estudio Theiler</h1>'+(isLiq()?TABS.filter(x=>x[0]==='carga'):TABS).concat(isAdmin()&&!isLiq()?[['admin','Administración']]:[]).map(([k,t])=>`<button class="${ui.tab===k?'on':''}" onclick="show('${k}')">${t}${navBadge(k)}</button>`).join('')+
+  $('nav').innerHTML='<h1>Estudio Theiler</h1>'+(isLiq()?'':'<button class="g" style="margin:0 0 10px;width:100%" onclick="busqAbrir()">Buscar (Ctrl+K)</button>')+(isLiq()?TABS.filter(x=>x[0]==='carga'):TABS).concat(isAdmin()&&!isLiq()?[['admin','Administración']]:[]).map(([k,t])=>`<button class="${ui.tab===k?'on':''}" onclick="show('${k}')">${t}${navBadge(k)}</button>`).join('')+
    `<div class="me">${esc(prof.username||prof.full_name||me.email)}<br>${esc(prof.role)}<br><button class="g" onclick="logout()">Cerrar sesión</button><br><span style="display:block;margin-top:10px;font-size:11px;opacity:.7">Versión: ${APP_VERSION}</span></div>`;
   const m=ui.msg?`<div class="msg ${ui.msg.k}">${esc(ui.msg.t)}</div>`:'';ui.msg=null;window._fm=m;
   $('main').innerHTML=(ui.ficha?'':m)+({inicio:vInicio,clientes:vClientes,importar:vImportar,escanear:vEscanear,comprobantes:vComp,vencimientos:vVenc,anticipos:vAnticipos,sueldos:vSueldosPage,carga:vCarga,ventas:vVentas,iva:vIva,admin:vAdmin,balances:vBalances,bancos:vBancos,cumplimiento:vCumplimiento,avisos:vAvisos,reclamos:vReclamos})[ui.tab]()+vFicha();
@@ -264,7 +264,7 @@ function vInicio(){
   const SH={IVA:'IVA',IVA_EXENTO:'IVA Exento',CM:'IIBB CM',F931:'F.931',GANANCIAS_PH:'Ganancias',GAN_ANT:'Anticipos Gcias.',GAN_DDJJ:'Ganancias',BP:'B. Personales',MONOTRIBUTO:'Monotributo',SERV_DOM:'Serv. doméstico',OTRO:'Otro'};
   const urg=n=>n<=2?'var(--redt)':n<=7?'var(--ambt)':'var(--mut)';
   const prox=R.filter(r=>r.nxt&&diasHasta(r.nxt.fecha)<=14).sort((a,b)=>a.nxt.fecha<b.nxt.fecha?-1:1);
-  return `<h2>Inicio</h2>${bkRecordatorio()}${avisosResumen()}
+  return `<h2>Inicio</h2>${bkRecordatorio()}${avisosResumen()}${bandejaCard()}
   <div class="row" style="margin-bottom:14px;align-items:center"><label>Período de trabajo<br>${mesPick(wp,`ui.wp=this.value;draw()`)}</label><span class="s" style="max-width:420px">Por defecto es el mes anterior, que es el que se declara ahora. Los totales de la tabla corresponden a ${lab}.</span></div>
   <div class="grid" style="margin-bottom:22px">${K.map(([t,n])=>`<div class="card kpi"><b>${n}</b><span>${t}</span></div>`).join('')}</div>
   <div class="row" style="align-items:flex-start;gap:20px">
@@ -390,7 +390,7 @@ function vComp(){
   <label>Período<br>${mesPick(ui.periodo,`ui.periodo=this.value;show('comprobantes')`)}</label>
   <label>Buscar<br><input value="${esc(ui.q)}" placeholder="CUIT, proveedor o número" oninput="ui.q=this.value;redrawTable()"></label>
   <label>Filtro<br><select onchange="ui.filtro=this.value;ui.sel.clear();draw()">${F.map(([k,t])=>`<option value="${k}" ${ui.filtro===k?'selected':''}>${t}</option>`).join('')}</select></label>
-  <button class="g" onclick="copiarFaltantes()">Copiar lista de faltantes</button><button class="b" onclick="abrirFicha(ui.cid,'pedir',ui.periodo)">Pedir faltantes por WhatsApp</button><button class="g" onclick="comprasExportarExcel()">Exportar Excel para importar al sistema</button><button class="g" onclick="caratulaAbrir()">Carátula libro IVA</button></div>${(ui.cmpAvisos||[]).length?`<div class="card" style="margin-bottom:12px"><b>Avisos de la última exportación</b>${ui.cmpAvisos.slice(0,30).map(a=>`<div class="msg warn">${esc(a)}</div>`).join('')}${ui.cmpAvisos.length>30?`<div class="s">y ${ui.cmpAvisos.length-30} más</div>`:''}</div>`:''}${resumenIvaCompras()}<div id="tabla">${tabla(filtered())}</div>${caratulaModal()}`;
+  <button class="g" onclick="copiarFaltantes()">Copiar lista de faltantes</button><button class="b" onclick="abrirFicha(ui.cid,'pedir',ui.periodo)">Pedir faltantes por WhatsApp</button><button class="g" onclick="comprasExportarExcel()">Exportar Excel para importar al sistema</button><button class="g" onclick="caratulaAbrir()">Carátula libro IVA</button></div>${(ui.cmpAvisos||[]).length?`<div class="card" style="margin-bottom:12px"><b>Avisos de la última exportación</b>${ui.cmpAvisos.slice(0,30).map(a=>`<div class="msg warn">${esc(a)}</div>`).join('')}${ui.cmpAvisos.length>30?`<div class="s">y ${ui.cmpAvisos.length-30} más</div>`:''}</div>`:''}${resumenIvaCompras()}${ctrlNumHtml('compras')}<div id="tabla">${tabla(filtered())}</div>${caratulaModal()}`;
 }
 function redrawTable(){$('tabla').innerHTML=tabla(filtered())}
 function tabla(vs){
@@ -2898,7 +2898,7 @@ const DZ_AUTO={ifile:()=>previsualizar(),lfile:()=>libroPrevisualizar(),vfile:()
     if(!hayArch(e)||(e.target.closest&&e.target.closest('[ondrop]')))return;
     e.preventDefault();const z=zona(e.target),box=z?(z.el.closest('.card')||z.el):null;
     if(box!==on){apagar();if(box){on=box;on.classList.add('dz-on')}}
-    if(e.dataTransfer)e.dataTransfer.dropEffect=z?'copy':'none'});
+    if(e.dataTransfer)e.dataTransfer.dropEffect='copy'});
   document.addEventListener('dragleave',e=>{if(on&&(!e.relatedTarget||!on.contains(e.relatedTarget)))apagar()});
   document.addEventListener('drop',e=>{
     if(!hayArch(e))return;
@@ -2906,7 +2906,7 @@ const DZ_AUTO={ifile:()=>previsualizar(),lfile:()=>libroPrevisualizar(),vfile:()
     e.preventDefault();apagar();if(propia)return;
     const z=zona(e.target),fs=[...e.dataTransfer.files];
     if(!fs.length)return;
-    if(!z){aviso('Soltá los archivos sobre el recuadro de carga de esta pantalla.');return}
+    if(!z){bandejaSoltar(fs);return}
     const cand=z.inp.filter(i=>fs.every(f=>tipoOk(f,i.accept)));
     if(!cand.length){aviso('Ese tipo de archivo no se puede cargar acá. Se espera: '+(z.inp[0].accept||'cualquiera')+'.');return}
     const inp=cand.find(i=>{const l=i.closest('label')||i.parentElement;return l&&l.contains(e.target)})||cand[0];
@@ -2934,6 +2934,196 @@ async function sueGuardarTel(cid,inp){
   draw();
 }
 
+
+/* ===== Control de comprobantes: posibles dobles cargas y saltos de numeración ===== */
+const ctrlIgn=()=>{try{return JSON.parse(localStorage.getItem('ctrl_ignorados')||'{}')||{}}catch(e){return {}}};
+function ctrlIgnorar(k){try{const m=ctrlIgn();m[k]=1;localStorage.setItem('ctrl_ignorados',JSON.stringify(m))}catch(e){}draw()}
+function ctrlRestaurar(){try{localStorage.removeItem('ctrl_ignorados')}catch(e){}draw()}
+const ctrlPad=n=>String(n).padStart(8,'0');
+/** Devuelve los avisos de un conjunto de comprobantes. modo 'compras' (duplicados) o 'ventas' (duplicados y números salteados). prev: último número del mes anterior por tipo|punto de venta. */
+function ctrlAnalizar(rows,modo,prev){
+  const out=[],num=x=>Number(x),dig=s=>String(s||'').replace(/\D/g,'');
+  const parte=r=>modo==='ventas'?dig(r.receptor_cuit):dig(r.emisor_cuit);
+  const nom=r=>modo==='ventas'?(r.receptor_nombre||'consumidor final'):(r.emisor_nombre||'proveedor');
+  const grp=(arr,kf)=>{const m=new Map();arr.forEach(r=>{const k=kf(r);if(k===null)return;if(!m.has(k))m.set(k,[]);m.get(k).push(r)});return m};
+  grp(rows,r=>[modo==='ventas'?'':parte(r),num(r.tipo_cmp),num(r.punto_venta),num(r.numero)].join('|')).forEach(g=>{
+    if(g.length>1)out.push({k:'r|'+g.map(x=>x.id).sort().join(','),t:'rep',ids:g.map(x=>x.id),txt:`El comprobante ${nroF(g[0].punto_venta,g[0].numero)} (${tipoNombre(g[0].tipo_cmp)}) está cargado ${g.length} veces.`})});
+  grp(rows,r=>{const p=parte(r),t=Math.abs(Number(r.importe_total)||0);return !p||!t?null:[p,r.fecha,t.toFixed(2),esNC(r.tipo_cmp)?'nc':'f'].join('|')}).forEach(g=>{
+    const d=new Map();g.forEach(x=>d.set(num(x.tipo_cmp)+'|'+num(x.punto_venta)+'|'+num(x.numero),x));
+    if(d.size>1){const L=[...d.values()];out.push({k:'d|'+L.map(x=>x.id).sort().join(','),t:'dup',ids:L.map(x=>x.id),txt:`Posible doble carga: ${nom(L[0])}, ${fAR(L[0].fecha)}, ${money(Math.abs(Number(L[0].importe_total)))}, figura con ${L.map(x=>nroF(x.punto_venta,x.numero)).join(' y ')}.`})}});
+  if(modo==='ventas'){
+    grp(rows,r=>num(r.tipo_cmp)+'|'+num(r.punto_venta)).forEach((g,k)=>{
+      const ns=[...new Set(g.map(r=>num(r.numero)))].sort((a,b)=>a-b),[t,pv]=k.split('|').map(Number),falt=[],pu=prev&&prev[k];
+      if(pu&&ns[0]>pu+1)falt.push([pu+1,ns[0]-1,true]);
+      for(let i=1;i<ns.length;i++)if(ns[i]>ns[i-1]+1)falt.push([ns[i-1]+1,ns[i]-1,false]);
+      falt.forEach(([a,b,ant])=>{const n=b-a+1;if(n>2000)return;
+        out.push({k:`f|${k}|${a}-${b}`,t:'falta',txt:`${tipoNombre(t)}, punto de venta ${String(pv).padStart(5,'0')}: ${n===1?'falta el número '+ctrlPad(a):'faltan '+n+' números, del '+ctrlPad(a)+' al '+ctrlPad(b)}${ant?' (a continuación del último del mes anterior)':''}.`})})})}
+  return out;
+}
+async function ctrlCargarPrev(cid,per){
+  const key=cid+'|'+per;if(ui.ctrlPrev&&ui.ctrlPrev.k===key)return;
+  ui.ctrlPrev={k:key,m:null};
+  try{
+    const d=new Date(Number(per.slice(0,4)),Number(per.slice(5,7))-2,1),ini=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-01';
+    const {data}=await sb.from('sales_invoices').select('tipo_cmp,punto_venta,numero').eq('client_id',cid).gte('fecha',ini).lt('fecha',per+'-01').limit(3000);
+    const m={};(data||[]).forEach(r=>{const k=Number(r.tipo_cmp)+'|'+Number(r.punto_venta),n=Number(r.numero);if(!(m[k]>=n))m[k]=n});
+    ui.ctrlPrev={k:key,m};
+  }catch(e){ui.ctrlPrev={k:key,m:{}}}
+  if(ui.tab==='ventas')draw();
+}
+function ctrlNumHtml(modo){
+  const v=ui.vta,rows=modo==='ventas'?v.rows:ui.vs,cid=modo==='ventas'?v.cid:ui.cid,per=modo==='ventas'?v.periodo:ui.periodo;
+  if(!rows||!rows.length||!cid)return '';
+  let prev=null;
+  if(modo==='ventas'){const P=ui.ctrlPrev;if(!P||P.k!==cid+'|'+per)setTimeout(()=>ctrlCargarPrev(cid,per),0);else prev=P.m}
+  const ign=ctrlIgn(),pf=cid+'|'+per+'|',todos=ctrlAnalizar(rows,modo,prev),A=todos.filter(a=>!ign[pf+a.k]),nIgn=todos.length-A.length;
+  const que=modo==='ventas'?'duplicados y numeración':'duplicados';
+  const rest=nIgn?` <a href="#" class="s" onclick="ctrlRestaurar();return false">Ver ${nIgn} ignorado(s)</a>`:'';
+  if(!A.length)return `<div class="s" style="margin-bottom:10px">Control de ${que}: sin avisos.${rest}</div>`;
+  const quitar=a=>a.t==='falta'?'':(modo==='ventas'?`<button class="dng sm" onclick="ventasQuitar('${a.ids[a.ids.length-1]}')">Quitar el último</button>`:`<button class="dng sm" onclick="compQuitar(['${a.ids[a.ids.length-1]}'])">Quitar el último</button>`);
+  return `<details class="card" style="margin-bottom:12px" open><summary style="cursor:pointer;font-weight:700">Control de ${que}: ${A.length} aviso(s)</summary><div style="margin-top:8px">${A.map(a=>`<div class="msg ${a.t==='falta'?'info':'warn'}" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span style="flex:1;min-width:240px">${esc(a.txt)}</span>${quitar(a)}<button class="g sm" title="No volver a avisar esto en este período" onclick="ctrlIgnorar('${pf.replace(/'/g,'')}${a.k.replace(/'/g,'')}')">Ignorar</button></div>`).join('')}<span class="s">${modo==='ventas'?'Los números salteados pueden ser facturas anuladas o de otro sistema: si es así, tocá Ignorar. ':''}"Ignorar" se guarda en este navegador.${rest}</span></div></details>`;
+}
+
+/* ===== Buscador global (Ctrl+K): clientes, empleados, comprobantes de compra y ventas ===== */
+const BQ={seq:0,t:null,items:[],sel:0};
+(function(){
+  const st=document.createElement('style');
+  st.textContent='#bq_ov{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9000;display:none;align-items:flex-start;justify-content:center;padding-top:10vh}#bq_box{background:var(--bg,#070d1f);border:1px solid var(--bd,#444);border-radius:12px;width:min(680px,94vw);max-height:76vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.5)}#bq_in{margin:12px;padding:12px 14px;font-size:16px;width:auto}#bq_res{overflow:auto;padding:0 8px 10px}.bq_h{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--mut);margin:10px 8px 4px}.bq_i{padding:8px 10px;border-radius:8px;cursor:pointer;display:flex;flex-direction:column;gap:1px}.bq_i:hover,.bq_i.on{background:var(--card2,rgba(255,255,255,.12))}.bq_i small{color:var(--mut)}';
+  (document.head||document.documentElement).appendChild(st);
+  document.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&String(e.key).toLowerCase()==='k'){if(typeof me==='undefined'||!me)return;e.preventDefault();busqAbrir()}else if(e.key==='Escape')busqCerrar()});
+})();
+function busqAbrir(){
+  let o=document.getElementById('bq_ov');
+  if(!o){o=document.createElement('div');o.id='bq_ov';o.innerHTML='<div id="bq_box"><input id="bq_in" placeholder="Buscar cliente, CUIT, empleado, proveedor o número de comprobante…" autocomplete="off" oninput="busqEscribir(this.value)" onkeydown="busqTecla(event)"><div id="bq_res"></div></div>';o.onclick=e=>{if(e.target===o)busqCerrar()};document.body.appendChild(o)}
+  o.style.display='flex';const i=document.getElementById('bq_in');i.focus();i.select();busqEscribir(i.value);
+}
+function busqCerrar(){const o=document.getElementById('bq_ov');if(o)o.style.display='none'}
+function busqTecla(e){
+  if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();const n=BQ.items.length;if(!n)return;BQ.sel=(BQ.sel+(e.key==='ArrowDown'?1:n-1))%n;busqPintar(BQ.hint);const el=document.querySelector('.bq_i.on');if(el)el.scrollIntoView({block:'nearest'})}
+  else if(e.key==='Enter'){e.preventDefault();if(BQ.items[BQ.sel])busqIr(BQ.sel)}
+}
+function busqEscribir(v){
+  clearTimeout(BQ.t);const q=String(v||'').trim();
+  if(q.length<2){BQ.items=[];BQ.sel=0;busqPintar('Escribí al menos 2 letras o 4 números.');return}
+  BQ.t=setTimeout(()=>busqBuscar(q,++BQ.seq),250);
+}
+const busqLimpio=s=>String(s).replace(/[,()%*\\"']/g,' ').replace(/\s+/g,' ').trim();
+async function busqBuscar(q,seq){
+  const ql=norm(q),dg=q.replace(/\D/g,''),qs=busqLimpio(q),items=[];
+  const cname=id=>{const c=(ui.clientsAll||ui.clients).find(x=>x.id===id);return c?c.razon_social:''};
+  (ui.clientsAll||ui.clients).forEach(c=>{
+    if(norm(c.razon_social||'').includes(ql)||norm(c.nombre_comercial||'').includes(ql)||(dg.length>=4&&String(c.cuit||'').includes(dg)))
+      items.push({g:'Clientes',t:c.razon_social,s:(c.cuit?cuitF(c.cuit):'')+(c.active===false?' · inactivo':''),go:()=>abrirFicha(c.id)})});
+  const letras=/[a-zA-ZáéíóúñÁÉÍÓÚÑ]{2,}/.test(q),conds=(arr)=>arr.filter(Boolean).join(',');
+  const tareas=[];
+  tareas.push(sb.from('employees').select('id,client_id,nombre,cuil').or(conds([letras&&qs.length>=2?`nombre.ilike.%${qs}%`:'',dg.length>=4?`cuil.like.%${dg}%`:''])||'nombre.eq.__nada__').limit(8).then(r=>{(r.data||[]).forEach(e=>items.push({g:'Empleados',t:e.nombre,s:(e.cuil?cuitF(e.cuil)+' · ':'')+cname(e.client_id),go:async()=>{ui.cid=e.client_id;ui.ficha=null;await show('sueldos');if(ui.sdAll)setSd(e.client_id);draw()}}))}).catch(()=>{}));
+  const nroC=dg.length>=1&&dg.length<=8?Number(dg):null;
+  const cV=conds([letras&&qs.length>=2?`emisor_nombre.ilike.%${qs}%`:'',dg.length>=4?`emisor_cuit.like.%${dg}%`:'',nroC!==null&&dg.length>=3?`numero.eq.${nroC}`:'']);
+  if(cV)tareas.push(sb.from('vouchers').select('id,client_id,fecha,emisor_nombre,emisor_cuit,tipo_cmp,punto_venta,numero,importe_total,client_periods(periodo)').or(cV).order('fecha',{ascending:false}).limit(10).then(r=>{(r.data||[]).forEach(v=>items.push({g:'Comprobantes de compra',t:`${v.emisor_nombre||'(sin nombre)'}  ${nroF(v.punto_venta,v.numero)}`,s:`${cname(v.client_id)} · ${fAR(v.fecha)} · ${money(Number(v.importe_total))}`,go:()=>{ui.cid=v.client_id;ui.periodo=((v.client_periods&&v.client_periods.periodo)||v.fecha).slice(0,7);ui.q=String(v.numero);ui.filtro='';show('comprobantes')}}))}).catch(()=>{}));
+  const cS=conds([letras&&qs.length>=2?`receptor_nombre.ilike.%${qs}%`:'',dg.length>=4?`receptor_cuit.like.%${dg}%`:'',nroC!==null&&dg.length>=3?`numero.eq.${nroC}`:'']);
+  if(cS)tareas.push(sb.from('sales_invoices').select('id,client_id,fecha,receptor_nombre,receptor_cuit,tipo_cmp,punto_venta,numero,importe_total,client_periods(periodo)').or(cS).order('fecha',{ascending:false}).limit(10).then(r=>{(r.data||[]).forEach(v=>items.push({g:'Ventas (facturas emitidas)',t:`${v.receptor_nombre||'Consumidor final'}  ${nroF(v.punto_venta,v.numero)}`,s:`${cname(v.client_id)} · ${fAR(v.fecha)} · ${money(Number(v.importe_total))}`,go:()=>{ui.cid=v.client_id;ui.vta.periodo=((v.client_periods&&v.client_periods.periodo)||v.fecha).slice(0,7);show('ventas')}}))}).catch(()=>{}));
+  busqPintar('Buscando…');
+  await Promise.all(tareas);
+  if(seq!==BQ.seq)return;
+  const ord=['Clientes','Empleados','Comprobantes de compra','Ventas (facturas emitidas)'];
+  BQ.items=ord.flatMap(g=>items.filter(x=>x.g===g));BQ.sel=0;busqPintar(BQ.items.length?'':'Sin resultados.');
+}
+function busqPintar(hint){
+  BQ.hint=hint;const r=document.getElementById('bq_res');if(!r)return;
+  let g='',h='';BQ.items.forEach((x,i)=>{if(x.g!==g){g=x.g;h+=`<div class="bq_h">${esc(g)}</div>`}h+=`<div class="bq_i ${i===BQ.sel?'on':''}" onclick="busqIr(${i})"><span>${esc(x.t)}</span><small>${esc(x.s||'')}</small></div>`});
+  r.innerHTML=h+(hint?`<div class="s" style="padding:10px 12px">${esc(hint)}</div>`:'');
+}
+function busqIr(i){const x=BQ.items[i];if(!x)return;busqCerrar();try{Promise.resolve(x.go()).catch(e=>{flash(errTxt(e),'err');draw()})}catch(e){flash(errTxt(e),'err');draw()}}
+
+/* ===== Bandeja de archivos: soltás cualquier archivo y el sistema reconoce qué es y lo manda a su pantalla ===== */
+const BAN={log:[],cola:[],busy:'',tm:null};
+const BAN_DEST={cumplimiento:'Cumplimiento',anticipos:'Anticipos',sueldos:'Sueldos',bancos:'Resúmenes bancarios',importar:'Importar compras',ventas:'Ventas'};
+async function banClasificar(f){
+  const ext=(f.name.split('.').pop()||'').toLowerCase();
+  if(ext==='pdf'||f.type==='application/pdf'){
+    const err=await esPdf(f);if(err)return {err};
+    const lin=Array.from(await pdfTexto(f)).map(String),t=lin.join('\n');
+    if(ddjjTipo(lin))return {dest:'cumplimiento',lbl:'Declaración jurada'};
+    const av=antVepLeer(lin)||antCompLeer(lin);
+    if(av&&!av.noAnt)return {dest:'anticipos',lbl:av.kind==='vep'?'VEP de anticipo de Ganancias':'Compensación F.1151'};
+    try{const r=rsbParse(lin);if(r&&r.movs&&r.movs.length>=8)return {dest:'bancos',lbl:'Resumen bancario'}}catch(e){}
+    let sue=null;
+    try{
+      if(sueBoletaPagina(lin,1).conc)sue='Boleta de sindicato / cargas sociales';
+      else{const p=sueMultiPagina(lin,1);if(p.cab||p.cuil)sue='Recibo de sueldo';else if(sueVepPagina(lin,1).esVep)sue='VEP'}
+    }catch(e){}
+    if(!sue&&/RECIBO DE HABERES/i.test(t))sue='Recibo de sueldo';
+    if(!sue&&/Volante Electr[oó]nico de Pago|Nro\.?\s*VEP/i.test(t))sue='VEP';
+    if(sue)return {dest:'sueldos',lbl:sue};
+    try{const r=rsbParse(lin);if(r&&r.movs&&r.movs.length>=3)return {dest:'bancos',lbl:'Resumen bancario'}}catch(e){}
+    return {err:'No se reconoció qué documento es: cargalo desde su pantalla.'};
+  }
+  if(/^image\//.test(f.type)||/\.(jpe?g|png|webp|heic)$/i.test(f.name))return {err:'Las fotos se cargan desde Escanear QR (tickets) o desde Resúmenes bancarios.'};
+  if(ext==='xls'||ext==='xlsx'){
+    let rows;try{rows=await coopLeerFilas(f)}catch(e){return {err:'No se pudo abrir el Excel: '+((e&&e.message)||e)}}
+    try{const co=coopAnalizar(rows);if(co&&co.ok)return {dest:'importar',lbl:'Tickets de la cooperativa',tipo:'coop'}}catch(e){}
+    let r=null;try{r=parseArca(rows)}catch(e){}
+    if(r&&r.ok){
+      const em=r.meta.kind==='emitidos',cl=r.meta.cuit?ui.clients.find(c=>String(c.cuit)===r.meta.cuit):null;
+      const cnt={};(r.vs||[]).forEach(x=>{const m=String(x.fecha||'').slice(0,7);if(m)cnt[m]=(cnt[m]||0)+1});
+      const per=Object.keys(cnt).sort((a,b)=>cnt[b]-cnt[a])[0]||null;
+      return {dest:em?'ventas':'importar',lbl:em?'Excel de comprobantes emitidos (ventas)':'Excel de comprobantes recibidos (compras)',tipo:'arca',cid:cl?cl.id:null,per};
+    }
+    return {err:'Este Excel no se reconoció (ni es de ARCA ni son tickets de la cooperativa).'};
+  }
+  return {err:'Tipo de archivo no admitido (se aceptan PDF y Excel .xls / .xlsx).'};
+}
+function banPonerArchivo(id,f){const i=$(id);if(!i)throw new Error('No se encontró el recuadro de carga.');const dt=new DataTransfer();dt.items.add(f);i.files=dt.files}
+async function banIr(g){
+  try{
+    if(g.cid)ui.cid=g.cid;
+    if(g.per){ui.periodo=g.per;if(ui.vta)ui.vta.periodo=g.per}
+    await show(g.dest);
+    const F=g.files;
+    if(g.dest==='cumplimiento')await cumDdjjLeer(F);
+    else if(g.dest==='anticipos')await antDropLeer(F);
+    else if(g.dest==='sueldos')await sueMultiLeer(F);
+    else if(g.dest==='bancos')await rsbLeerArchivos(F);
+    else if(g.dest==='importar'){if(g.tipo==='coop')await coopLeer(F);else{banPonerArchivo('ifile',F[0]);await previsualizar()}}
+    else if(g.dest==='ventas'){banPonerArchivo('vfile',F[0]);await ventasPrevisualizar()}
+  }catch(e){flash('No se pudo abrir '+BAN_DEST[g.dest]+': '+errTxt(e),'err');draw()}
+}
+async function bandejaSoltar(files){
+  files=[...files];if(!files.length)return;
+  if(typeof isLiq==='function'&&isLiq()){flash('Esta función no está disponible para tu usuario.','err');return draw()}
+  BAN.log=[];BAN.busy='Reconociendo '+files.length+' archivo(s)…';banRender();
+  const gr=[];
+  for(const f of files){
+    let c;try{c=await banClasificar(f)}catch(e){c={err:(e&&e.message)||String(e)}}
+    if(c.err){BAN.log.push({ok:false,n:f.name,t:c.err});continue}
+    const solo=c.dest==='importar'||c.dest==='ventas';
+    let g=solo?null:gr.find(x=>x.dest===c.dest);
+    if(!g){g={dest:c.dest,files:[],cid:c.cid,per:c.per,tipo:c.tipo};gr.push(g)}
+    g.files.push(f);
+    BAN.log.push({ok:true,n:f.name,t:c.lbl+' → '+BAN_DEST[c.dest]});
+  }
+  BAN.busy='';
+  if(!gr.length){banRender();return}
+  const [primero,...resto]=gr;
+  resto.forEach(g=>BAN.cola.push(g));
+  banRender();
+  await banIr(primero);
+}
+function banCola(i){const g=BAN.cola.splice(i,1)[0];banRender();if(g)banIr(g)}
+function banDescartar(i){BAN.cola.splice(i,1);banRender()}
+function banCerrar(){BAN.log=[];BAN.cola=[];BAN.busy='';banRender()}
+function banRender(){
+  let p=document.getElementById('ban_panel');
+  const vacio=!BAN.busy&&!BAN.log.length&&!BAN.cola.length;
+  if(vacio){if(p)p.remove();return}
+  if(!p){p=document.createElement('div');p.id='ban_panel';p.style.cssText='position:fixed;right:16px;bottom:16px;z-index:8000;width:min(420px,92vw);max-height:60vh;overflow:auto;background:var(--bg,#070d1f);border:1px solid var(--bd,#444);border-radius:12px;padding:12px 14px;box-shadow:0 12px 40px rgba(0,0,0,.5);font-size:13px';document.body.appendChild(p)}
+  p.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><b>Bandeja de archivos</b><button class="g sm" onclick="banCerrar()">Cerrar</button></div>${BAN.busy?`<div class="s">${esc(BAN.busy)}</div>`:''}${BAN.log.map(l=>`<div style="margin:4px 0;color:${l.ok?'var(--grnt,#7bd88f)':'var(--redt,#ff8a8a)'}">${l.ok?'✓':'✗'} <b>${esc(l.n)}</b><br><span style="color:var(--mut)">${esc(l.t)}</span></div>`).join('')}${BAN.cola.length?`<div style="margin-top:8px;border-top:1px solid var(--bd,#444);padding-top:8px"><b>Esperando su turno</b><span class="s"> (se cargan de a una pantalla por vez)</span>${BAN.cola.map((g,i)=>`<div style="margin:6px 0;display:flex;gap:6px;align-items:center;flex-wrap:wrap"><span style="flex:1;min-width:150px">${esc(BAN_DEST[g.dest])}: ${g.files.length} archivo(s)</span><button class="b sm" onclick="banCola(${i})">Cargar ahora</button><button class="g sm" onclick="banDescartar(${i})">Descartar</button></div>`).join('')}</div>`:''}`;
+  clearTimeout(BAN.tm);if(!BAN.cola.length&&!BAN.busy)BAN.tm=setTimeout(()=>{if(!BAN.cola.length&&!BAN.busy)banCerrar()},20000);
+}
+function bandejaCard(){
+  if(typeof isLiq==='function'&&isLiq())return '';
+  return `<div class="card" ondragover="event.preventDefault();this.style.outline='2px dashed var(--blut,#3b6fd4)'" ondragleave="this.style.outline=''" ondrop="event.preventDefault();this.style.outline='';bandejaSoltar(event.dataTransfer.files)" style="margin-bottom:14px"><div class="row" style="gap:10px;align-items:center;flex-wrap:wrap"><div style="flex:1;min-width:240px"><b>Bandeja de archivos</b><span class="s">Soltá acá cualquier archivo (recibos, boletas, VEP, declaraciones juradas, resúmenes bancarios, Excel de ARCA, tickets de la cooperativa). El sistema reconoce qué es, abre la pantalla que corresponde y lo deja listo para revisar. También funciona soltándolo en cualquier parte de una pantalla que no tenga su propio recuadro.</span></div><label class="b" style="cursor:pointer">Elegir archivos<input type="file" multiple accept=".pdf,.xls,.xlsx" style="display:none" onchange="bandejaSoltar(this.files);this.value=''"></label></div></div>`;
+}
 /* ===== Carga de sueldos: perfil "liquidador" (recibos, VEP y boletas de sindicatos) ===== */
 const isLiq=()=>prof&&prof.role==='liquidador';
 const CG_SIND=['UATRE','OSECAC','FAECYS','IERIC','AMMA','ACTF','UOCRA','OSPRERA','SEC','UTEDYC'];
@@ -3254,7 +3444,7 @@ function vVentas(){
   <div class="card row" style="margin-bottom:12px;align-items:center"><b>Exportar</b><button class="b" onclick="ventasExportarIva()">Libro IVA Digital Ventas (2 TXT para ARCA)</button><span class="s"><b>${R.filter(r=>!ui.vtaOut.has(r.id)).length} de ${R.length}</b> comprobantes marcados (tildá o destildá en la primera columna de la tabla).</span></div>
   ${(v.ivdAvisos||[]).length?`<div class="card" style="margin-bottom:12px"><b>Avisos de la última exportación</b>${v.ivdAvisos.map(a=>`<div class="msg warn">${esc(a)}</div>`).join('')}</div>`:''}
   ${v.form?ventaForm():''}${v.edit?ventaEditForm():''}${v.erp?erpForm():''}${liqForm()}
-  <div class="grid" style="margin-bottom:12px"><div class="card kpi"><b>${R.length}</b><span>Facturas del período</span></div><div class="card kpi"><b>${money(neto)}</b><span>Neto gravado</span></div><div class="card kpi"><b>${money(deb)}</b><span>IVA débito fiscal (las notas de crédito restan)</span></div><div class="card kpi"><b>${money(tot)}</b><span>Total facturado</span></div></div>
+  ${ctrlNumHtml('ventas')}<div class="grid" style="margin-bottom:12px"><div class="card kpi"><b>${R.length}</b><span>Facturas del período</span></div><div class="card kpi"><b>${money(neto)}</b><span>Neto gravado</span></div><div class="card kpi"><b>${money(deb)}</b><span>IVA débito fiscal (las notas de crédito restan)</span></div><div class="card kpi"><b>${money(tot)}</b><span>Total facturado</span></div></div>
   <div class="tw"><table><thead><tr><th><input type="checkbox" title="Incluir en el TXT" onchange="ventasTodos(this.checked)" ${R.length&&R.every(r=>!ui.vtaOut.has(r.id))?'checked':''}></th><th>Fecha</th><th>Comprobante</th><th>Cliente de la venta</th><th>Neto gravado</th><th>IVA</th><th>Total</th><th>Origen</th><th></th></tr></thead><tbody>
   ${R.length?R.map(x=>{const nc=esNC(x.tipo_cmp),m=n=>n===null||n===undefined?'-':money(sgnVal(x.tipo_cmp,n));return `<tr><td><input type="checkbox" title="Incluir en el TXT" ${ui.vtaOut.has(x.id)?'':'checked'} onchange="ventasMarcar('${x.id}',this.checked)"></td><td>${fAR(x.fecha)}</td><td>${esc(tipoNombre(x.tipo_cmp))}${nc?' <span class="tag" style="background:var(--org);color:var(--orgt)">resta</span>':''}<span class="s">${nroF(x.punto_venta,x.numero)}</span></td><td>${esc(x.receptor_nombre||'')}<span class="s">${esc(x.receptor_cuit||'')}</span></td><td>${m(x.neto_gravado)}</td><td>${m(x.iva)}</td><td>${m(x.importe_total)}</td><td>${x.origen==='manual'?'A mano':'Excel'}</td><td style="white-space:nowrap">${x.archivo_path?`<button class="g sm" onclick="verArchivo('${x.archivo_path}')">Ver PDF</button> `:''}${CLASE_DE_TIPO[Number(x.tipo_cmp)]?`<button class="g sm" onclick="erpAbrir('${x.id}')">Datos ERP</button> `:''}<button class="g sm" onclick="ventasEditar('${x.id}')">Editar</button> <button class="dng sm" onclick="ventasQuitar('${x.id}')">Quitar</button></td></tr>`}).join(''):'<tr><td colspan="9" style="color:var(--mut)">Todavía no hay facturas emitidas en este período. Subí el Excel de emitidos o agregalas a mano.</td></tr>'}</tbody></table></div>`;
 }
