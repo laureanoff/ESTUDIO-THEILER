@@ -235,7 +235,7 @@ async function show(t){
     if(t==='anticipos'||t==='vencimientos'){await loadDeadlines();await loadFil()}
     if(t==='sueldos'){await loadSueldosAll();setSd(sueClientes().find(c=>c.id===(ui.sd&&ui.sd.id||ui.cid)&&c.active!==false)?(ui.sd&&ui.sd.id||ui.cid):(sueClientes().find(c=>c.active!==false)||{}).id)}
     if(t==='carga'){await loadSueldosAll();setSd(sueClientes().find(c=>c.id===(ui.sd&&ui.sd.id)&&c.active!==false&&sueEsEmpleador(c))?ui.sd.id:(sueClientes().find(c=>c.active!==false&&sueEsEmpleador(c))||{}).id)}
-    if(t==='inicio')await loadDash();
+    if(t==='inicio'){await loadDash();try{await loadInicioExtra()}catch(e){ui.ini=null}}
     if(t==='importar'){const {data,error}=await sb.from('import_batches').select('*, clients(razon_social)').order('imported_at',{ascending:false}).limit(50);if(error)throw error;ui.batches=data}
     if(t==='comprobantes')await loadVouchers();
     if(t==='balances'){ui.bal=ui.bal||balNuevo();await loadBal()}
@@ -256,7 +256,7 @@ function draw(){
   $('main').innerHTML=(ui.ficha?'':m)+({inicio:vInicio,clientes:vClientes,importar:vImportar,escanear:vEscanear,comprobantes:vComp,vencimientos:vVenc,anticipos:vAnticipos,sueldos:vSueldosPage,carga:vCarga,ventas:vVentas,iva:vIva,admin:vAdmin,balances:vBalances,bancos:vBancos,cumplimiento:vCumplimiento,avisos:vAvisos,reclamos:vReclamos})[ui.tab]()+vFicha();
   document.body.style.overflow=ui.ficha?'hidden':'';
 }
-function vInicio(){
+function vInicioAnterior(){
   const R=dashRows(),wp=workPeriod(),lab=wp.slice(5)+'/'+wp.slice(0,4);
   const sum=k=>R.reduce((a,r)=>a+r[k],0),venc7=R.filter(r=>r.nxt&&diasHasta(r.nxt.fecha)<=7).length;
   const K=[['Clientes activos',R.length],['Sin importar el Excel',R.filter(r=>r.state==='sin_importar').length],['Comprobantes sin pasar',sum('pend')],['Facturas faltantes',sum('fal')],['Vencen en 7 días',venc7],['Declaraciones sin presentar',R.reduce((a,r)=>a+r.fil.filter(x=>!x.ok).length,0)]];
@@ -264,7 +264,7 @@ function vInicio(){
   const SH={IVA:'IVA',IVA_EXENTO:'IVA Exento',CM:'IIBB CM',F931:'F.931',GANANCIAS_PH:'Ganancias',GAN_ANT:'Anticipos Gcias.',GAN_DDJJ:'Ganancias',BP:'B. Personales',MONOTRIBUTO:'Monotributo',SERV_DOM:'Serv. doméstico',OTRO:'Otro'};
   const urg=n=>n<=2?'var(--redt)':n<=7?'var(--ambt)':'var(--mut)';
   const prox=R.filter(r=>r.nxt&&diasHasta(r.nxt.fecha)<=14).sort((a,b)=>a.nxt.fecha<b.nxt.fecha?-1:1);
-  return `<h2>Inicio</h2>${bkRecordatorio()}${avisosResumen()}${bandejaCard()}
+  return `<h2>Inicio</h2>${bkRecordatorio()}${avisosResumen()}
   <div class="row" style="margin-bottom:14px;align-items:center"><label>Período de trabajo<br>${mesPick(wp,`ui.wp=this.value;draw()`)}</label><span class="s" style="max-width:420px">Por defecto es el mes anterior, que es el que se declara ahora. Los totales de la tabla corresponden a ${lab}.</span></div>
   <div class="grid" style="margin-bottom:22px">${K.map(([t,n])=>`<div class="card kpi"><b>${n}</b><span>${t}</span></div>`).join('')}</div>
   <div class="row" style="align-items:flex-start;gap:20px">
@@ -3124,6 +3124,105 @@ function bandejaCard(){
   if(typeof isLiq==='function'&&isLiq())return '';
   return `<div class="card" ondragover="event.preventDefault();this.style.outline='2px dashed var(--blut,#3b6fd4)'" ondragleave="this.style.outline=''" ondrop="event.preventDefault();this.style.outline='';bandejaSoltar(event.dataTransfer.files)" style="margin-bottom:14px"><div class="row" style="gap:10px;align-items:center;flex-wrap:wrap"><div style="flex:1;min-width:240px"><b>Bandeja de archivos</b><span class="s">Soltá acá cualquier archivo (recibos, boletas, VEP, declaraciones juradas, resúmenes bancarios, Excel de ARCA, tickets de la cooperativa). El sistema reconoce qué es, abre la pantalla que corresponde y lo deja listo para revisar. También funciona soltándolo en cualquier parte de una pantalla que no tenga su propio recuadro.</span></div><label class="b" style="cursor:pointer">Elegir archivos<input type="file" multiple accept=".pdf,.xls,.xlsx" style="display:none" onchange="bandejaSoltar(this.files);this.value=''"></label></div></div>`;
 }
+
+/* ===== Inicio rediseñado: resumen por cliente en recuadros chicos ===== */
+const INI_SH={IVA:'IVA',CM:'IIBB CM',F931:'F.931',GANANCIAS_PH:'Ganancias',GAN_ANT:'Anticipo',GAN_DDJJ:'Ganancias',BP:'B. Personales',MONOTRIBUTO:'Monotributo',SERV_DOM:'Serv. doméstico',IVA_EXENTO:'IVA exento',OTRO:'Otro'};
+(function(){
+  const st=document.createElement('style');
+  st.textContent='.ini-g{display:grid;grid-template-columns:repeat(auto-fill,minmax(262px,1fr));gap:10px;margin-bottom:18px}.ini-c{padding:11px 13px!important;font-size:13px;display:flex;flex-direction:column;gap:6px}.ini-h{display:flex;justify-content:space-between;align-items:flex-start;gap:6px}.ini-n{color:var(--tx);font-weight:700;text-decoration:none;line-height:1.2;cursor:pointer}.ini-r{display:flex;gap:6px;align-items:baseline;flex-wrap:wrap}.ini-l{color:var(--mut);font-size:11px;min-width:64px;text-transform:uppercase;letter-spacing:.04em}.ini-c .tag{font-size:11px;padding:1px 7px;margin:0}.ini-k{cursor:pointer;transition:outline .1s}.ini-k.on{outline:2px solid var(--blut,#3b6fd4)}#ini_toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#222;color:#fff;padding:9px 15px;border-radius:8px;z-index:9500;font-size:13px}';
+  (document.head||document.documentElement).appendChild(st);
+})();
+async function loadInicioExtra(){
+  const wp=workPeriod(),d=new Date(Number(wp.slice(0,4)),Number(wp.slice(5,7)),1),sig=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-01';
+  const [iv,em,ps]=await Promise.all([
+    sb.from('v_iva_periodo').select('*').eq('periodo',wp+'-01'),
+    sb.from('employees').select('id,client_id,activo'),
+    sb.from('payslips').select('employee_id,client_id,tipo,periodo').gte('periodo',wp+'-01').lt('periodo',sig)]);
+  ui.ini={per:wp,iva:(!iv.error&&iv.data)||[],emp:(!em.error&&em.data)||[],pay:(!ps.error&&ps.data)||[],okIva:!iv.error,okSue:!em.error&&!ps.error};
+}
+function iniToast(m){let t=document.getElementById('ini_toast');if(!t){t=document.createElement('div');t.id='ini_toast';document.body.appendChild(t)}t.textContent=m;clearTimeout(iniToast.t);iniToast.t=setTimeout(()=>{const x=document.getElementById('ini_toast');if(x)x.remove()},1800)}
+function iniCopiar(id){
+  const c=ui.clients.find(x=>x.id===id);if(!c)return;
+  const ok=()=>iniToast('CUIT copiado: '+c.cuit),mal=()=>iniToast('No se pudo copiar: '+cuitF(c.cuit));
+  try{navigator.clipboard.writeText(String(c.cuit)).then(ok,mal)}catch(e){mal()}
+}
+function iniArca(){window.open('https://auth.afip.gob.ar/contribuyente_/login.xhtml','_blank','noopener')}
+function iniFiltro(k){ui.iniF=ui.iniF===k?'':k;draw()}
+function iniBuscar(v){ui.iniQ=v;const g=document.getElementById('ini_grid');if(g)g.innerHTML=iniGrid()}
+/** Datos de un cliente para su recuadro. */
+function iniDatos(r){
+  const c=r.c,wp=workPeriod(),X=ui.ini&&ui.ini.per===wp?ui.ini:null,ex=esExento(c);
+  let iva=null;
+  if(ex)iva={ex:true};
+  else if(X&&X.okIva&&(aplica(c).includes('IVA')||X.iva.some(q=>q.client_id===c.id))){
+    const q=X.iva.find(z=>z.client_id===c.id);
+    iva=q&&(Number(q.cant_ventas)||Number(q.cant_compras))?{s:Number(q.iva_ventas||0)-Number(q.iva_compras||0),sinV:!Number(q.cant_ventas),sinC:!Number(q.cant_compras)}:{vacio:true};
+  }
+  let sue=null;
+  if(X&&X.okSue){const em=X.emp.filter(e=>e.client_id===c.id&&e.activo);if(em.length){const ok=em.filter(e=>X.pay.some(p=>p.employee_id===e.id&&p.tipo==='Mensual')).length;sue={n:em.length,ok}}}
+  let ant=null;
+  if(aplica(c).includes('GAN_ANT')){const x=filDe(c.id,'GAN_ANT',wp);ant=!x?'pend':filEnviado(x)?'env':'ok'}
+  const venc=ui.dl.filter(d=>diasHasta(d.fecha)>=0&&delC(d,c)).sort((a,b)=>a.fecha<b.fecha?-1:1),vistos=new Set(),v2=[];
+  venc.forEach(d=>{const k=d.impuesto;if(!vistos.has(k)&&v2.length<2){vistos.add(k);v2.push(d)}});
+  const pend=r.fil.filter(x=>!x.ok&&x.imp!=='GAN_ANT'&&!(ex&&x.imp==='IVA'));
+  return {iva,sue,ant,venc:v2,pend,pron:venc[0]&&diasHasta(venc[0].fecha)<=7};
+}
+function iniPasa(r,D){
+  const f=ui.iniF||'',q=norm(ui.iniQ||'');
+  if(q&&!norm(r.c.razon_social+' '+(r.c.nombre_comercial||'')+' '+r.c.cuit).includes(q))return false;
+  return !f||(f==='trajeron'&&r.cur&&r.fal===0&&r.state!=='exento')||(f==='notraj'&&r.cur&&r.fal>0&&r.state!=='exento')||(f==='sin'&&r.state==='sin_importar')||(f==='venc'&&D.pron)||(f==='decl'&&D.pend.length>0)||(f==='sue'&&D.sue&&D.sue.ok<D.sue.n)||(f==='ant'&&D.ant&&D.ant!=='ok');
+}
+function iniCard(r,D,wp){
+  const c=r.c,tg=(t,k)=>`<span class="tag" style="background:var(--${k});color:var(--${k}t)">${t}</span>`;
+  const est=r.state==='exento'?tg('IVA exento','blu'):r.state==='sin_importar'?tg('Sin Excel','amb'):r.fal>0?tg('No trajo todo','org'):tg('Trajo todo','grn');
+  const iva=!D.iva?'':D.iva.ex?'<b>En cero</b> <span class="s">(exento)</span>':D.iva.vacio?'<span class="s">sin compras ni ventas</span>':`<b style="color:var(--${D.iva.s>0.5?'ambt':D.iva.s<-0.5?'grnt':'mut'})">${money(Math.abs(D.iva.s))}</b> <span class="s">${D.iva.s>0.5?'a pagar':D.iva.s<-0.5?'a favor':'sin saldo'}${D.iva.sinV?' · sin ventas':''}${D.iva.sinC?' · sin compras':''}</span>`;
+  const venc=D.venc.length?D.venc.map(d=>{const n=diasHasta(d.fecha);return `<span class="tag" style="background:var(--card2);color:var(--tx)" title="${esc(INI_SH[d.impuesto]||d.impuesto)}">${esc(INI_SH[d.impuesto]||'')} ${fAR(d.fecha).slice(0,5)} <b style="color:${n<=2?'var(--redt)':n<=7?'var(--ambt)':'var(--mut)'}">${cuando(n)}</b></span>`}).join(' '):'<span class="s">sin fechas cargadas</span>';
+  const decl=r.fil.length?(D.pend.length?D.pend.map(x=>`<a href="#" onclick="${x.imp==='GAN_ANT'?`irAnticipos('${wp}')`:x.imp==='F931'?`irSueldos('${c.id}','${wp}')`:`abrirFicha('${c.id}','present')`};return false" class="tag" style="text-decoration:none;background:var(--amb);color:var(--ambt)">${esc((OBLIG[x.imp]||{}).s||x.imp)}</a>`).join(' '):tg('Todo presentado','grn')):'<span class="s">ninguna</span>';
+  const sue=D.sue?(D.sue.ok>=D.sue.n?tg('Recibos '+D.sue.ok+'/'+D.sue.n,'grn'):`<a href="#" onclick="irSueldos('${c.id}','${wp}');return false" class="tag" style="text-decoration:none;background:var(--amb);color:var(--ambt)">Recibos ${D.sue.ok}/${D.sue.n}</a>`):'';
+  const ant=D.ant?(D.ant==='ok'?tg('Anticipo pagado','grn'):D.ant==='env'?`<a href="#" onclick="irAnticipos('${wp}');return false" class="tag" style="text-decoration:none;background:var(--blu);color:var(--blut)">VEP enviado</a>`:`<a href="#" onclick="irAnticipos('${wp}');return false" class="tag" style="text-decoration:none;background:var(--amb);color:var(--ambt)">Anticipo pendiente</a>`):'';
+  const acc=r.state==='exento'?`<button class="g sm" onclick="abrirFicha('${c.id}','present')">Presentaciones</button>`:r.state==='sin_importar'?`<button class="g sm" onclick="ui.cid='${c.id}';ui.periodo='${wp}';show('importar')">Importar</button>`:r.fal>0?`<button class="b sm" onclick="abrirFicha('${c.id}','pedir','${wp}')">Pedir facturas</button>`:`<button class="g sm" onclick="abrirComp('${c.id}','${wp}')">Comprobantes</button>`;
+  return `<div class="card ini-c"><div class="ini-h"><a class="ini-n" onclick="abrirFicha('${c.id}')">${esc(c.razon_social)}</a>${est}</div>
+  <div class="ini-r"><span style="font-variant-numeric:tabular-nums">${cuitF(c.cuit)}</span><button class="g sm" title="Copiar el CUIT" onclick="iniCopiar('${c.id}')">Copiar</button><button class="g sm" title="Abrir el ingreso a ARCA" onclick="iniArca()">ARCA</button></div>
+  ${iva?`<div class="ini-r"><span class="ini-l">IVA aprox.</span><span>${iva}</span></div>`:''}
+  <div class="ini-r"><span class="ini-l">Vence</span>${venc}</div>
+  <div class="ini-r"><span class="ini-l">Falta</span>${decl}</div>
+  ${sue||ant?`<div class="ini-r"><span class="ini-l">Otros</span>${sue} ${ant}</div>`:''}
+  <div style="display:flex;gap:6px;margin-top:2px">${acc}<button class="g sm" onclick="abrirFicha('${c.id}')">Ficha</button></div></div>`;
+}
+function iniGrid(){
+  const wp=workPeriod(),R=dashRows(),L=R.map(r=>({r,D:iniDatos(r)})).filter(x=>iniPasa(x.r,x.D));
+  return L.length?L.map(x=>iniCard(x.r,x.D,wp)).join(''):'<div class="card" style="color:var(--mut);grid-column:1/-1">Ningún cliente coincide con el filtro.</div>';
+}
+function vInicio(){
+  const R=dashRows(),wp=workPeriod(),lab=wp.slice(5)+'/'+wp.slice(0,4),D=R.map(r=>({r,D:iniDatos(r)}));
+  const noEx=D.filter(x=>x.r.state!=='exento');
+  const K=[['Clientes activos',R.length,''],['Ya trajeron comprobantes',noEx.filter(x=>x.r.cur&&x.r.fal===0).length,'trajeron'],['Todavía no trajeron',noEx.filter(x=>x.r.cur&&x.r.fal>0).length,'notraj'],['Sin Excel importado',R.filter(r=>r.state==='sin_importar').length,'sin'],['Vencen en 7 días',D.filter(x=>x.D.pron).length,'venc'],['Con declaraciones pendientes',D.filter(x=>x.D.pend.length).length,'decl'],['Sueldos pendientes',D.filter(x=>x.D.sue&&x.D.sue.ok<x.D.sue.n).length,'sue'],['Anticipos pendientes',D.filter(x=>x.D.ant&&x.D.ant!=='ok').length,'ant']];
+  return `<h2>Inicio</h2>${bkRecordatorio()}${avisosResumen()}${bandejaCard()}
+  <div class="row" style="margin-bottom:14px;align-items:flex-end;gap:14px;flex-wrap:wrap"><label>Período a liquidar<br>${mesPick(wp,`ui.wp=this.value;show('inicio')`)}</label><label style="flex:1;min-width:200px;max-width:340px">Buscar cliente<br><input value="${esc(ui.iniQ||'')}" placeholder="Nombre o CUIT" oninput="iniBuscar(this.value)"></label><span class="s" style="max-width:420px">Todo lo que ves corresponde a ${lab}, el mes que se declara ahora. Tocá un número para filtrar los clientes.</span></div>
+  <div class="grid" style="margin-bottom:16px;grid-template-columns:repeat(auto-fit,minmax(128px,1fr))">${K.map(([t,n,k])=>`<div class="card kpi ${k?'ini-k':''} ${k&&ui.iniF===k?'on':''}" ${k?`onclick="iniFiltro('${k}')"`:''}><b>${n}</b><span>${t}</span></div>`).join('')}</div>
+  <div class="ini-g" id="ini_grid">${iniGrid()}</div>
+  <p class="s">"Trajo todo" significa que ya recibió todas las facturas que figuran en ARCA. El IVA aproximado es IVA de ventas menos IVA de compras cargados, sin saldos a favor ni retenciones: el cálculo completo está en "IVA aproximado". Las fechas están "A confirmar" hasta que las verifiques en Vencimientos.</p>`;
+}
+
+/* ===== Resúmenes bancarios: reconocer los que ya están cargados ===== */
+/** Devuelve el resumen guardado del cliente que coincide con el leído (mismo período, cuenta y saldo final, o el mismo archivo para el mismo cierre). */
+function rsbYaCargado(D){
+  const R=RB();if(!D||D.id)return null;
+  const dg=s=>String(s||'').replace(/\D/g,''),sf=v=>v===null||v===undefined||v===''?null:Number(v);
+  const nombres=(D.files||[]).map(f=>f&&f.name).filter(Boolean);
+  return (R.list||[]).find(s=>{
+    const c1=dg(s.cuenta),c2=dg(D.cuenta);if(c1&&c2&&c1!==c2)return false;
+    if(nombres.length&&D.hasta&&s.periodo_hasta===D.hasta&&(s.archivos||[]).some(a=>a&&nombres.includes(a.nombre)))return true;
+    if(!D.desde||!D.hasta||s.periodo_desde!==D.desde||s.periodo_hasta!==D.hasta)return false;
+    const a=sf(s.saldo_final),b=sf(D.saldo_final);
+    return a===b||(a!==null&&b!==null&&Math.abs(a-b)<0.005);
+  })||null;
+}
+const rsbDupTxt=s=>`${s.banco||'banco'}${s.cuenta?', cuenta '+s.cuenta:''}, del ${fAR(s.periodo_desde)} al ${fAR(s.periodo_hasta)}`;
+function rsbDupHtml(D){
+  const s=rsbYaCargado(D);if(!s)return '';
+  return `<div class="msg err" style="margin-bottom:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span style="flex:1;min-width:240px"><b>Este resumen ya está cargado.</b> Coincide con el guardado: ${esc(rsbDupTxt(s))}${s.created_at?', subido el '+esc(fAR(String(s.created_at).slice(0,10))):''}. No se puede guardar de nuevo.</span><button class="g sm" onclick="rsbAbrir('${s.id}')">Abrir el que ya está guardado</button><button class="g sm" onclick="rsbDescartar()">Descartar este</button></div>`;
+}
 /* ===== Carga de sueldos: perfil "liquidador" (recibos, VEP y boletas de sindicatos) ===== */
 const isLiq=()=>prof&&prof.role==='liquidador';
 const CG_SIND=['UATRE','OSECAC','FAECYS','IERIC','AMMA','ACTF','UOCRA','OSPRERA','SEC','UTEDYC'];
@@ -5855,7 +5954,7 @@ async function rsbGuardar(){
   const sinFecha=D.movs.filter(m=>!m.fecha).length;if(sinFecha){flash(`${sinFecha} movimiento(s) no tienen fecha. Completalas antes de guardar.`,'err');return draw()}
   rsbRecalcular(D);
   if(D.res.rev&&!confirm(`Hay ${D.res.rev} fila(s) marcadas para revisar (el saldo no cierra). ¿Guardar igual?`))return;
-  if(!D.id&&R.list.some(s=>s.periodo_desde===D.desde&&s.periodo_hasta===D.hasta&&Number(s.saldo_final)===Number(D.saldo_final)&&(s.cuenta||'')===(D.cuenta||''))&&!confirm('Ya hay un resumen guardado con el mismo período, cuenta y saldo final. ¿Guardarlo de nuevo?'))return;
+  {const dup=rsbYaCargado(D);if(dup){flash('Este resumen ya está cargado ('+rsbDupTxt(dup)+'). No se puede guardar de nuevo.','err');return draw()}}
   R.busy=true;draw();
   try{
     const arch=[...(D.archivos||[])];
@@ -5916,11 +6015,11 @@ function vBancos(){
   if(D){
     const res=D.res||rsbRecalcular(D),cat=rsbPorCategoria(D.movs);
     ed=`<div class="card" style="margin:14px 0;border:1px solid var(--blut)"><h3 style="margin-top:0">${D.id?'Resumen guardado':'Resumen leído'} ${D.dirty?'<span class="tag" style="background:var(--amb);color:var(--ambt)">Sin guardar</span>':''}</h3>
-    ${D.avisos.map(a=>`<div class="msg warn" style="margin-bottom:6px">${esc(a)}</div>`).join('')}
+    ${rsbDupHtml(D)}${D.avisos.map(a=>`<div class="msg warn" style="margin-bottom:6px">${esc(a)}</div>`).join('')}
     <div class="fgrid" style="margin-bottom:10px"><label>Banco<input value="${esc(D.banco||'')}" onchange="rsbMeta('banco',this.value)"></label><label>Cuenta<input value="${esc(D.cuenta||'')}" onchange="rsbMeta('cuenta',this.value)"></label><label>Moneda<select onchange="rsbMeta('moneda',this.value)">${['ARS','USD','EUR'].map(m=>`<option ${D.moneda===m?'selected':''}>${m}</option>`).join('')}</select></label><label>Desde<input type="date" value="${D.desde||''}" onchange="rsbMeta('desde',this.value||null)"></label><label>Hasta<input type="date" value="${D.hasta||''}" onchange="rsbMeta('hasta',this.value||null)"></label><label>Saldo inicial<input inputmode="decimal" value="${D.saldo_inicial===''?'':String(D.saldo_inicial).replace('.',',')}" onchange="rsbMeta('saldo_inicial',this.value)"></label><label>Saldo final<input inputmode="decimal" value="${D.saldo_final===''?'':String(D.saldo_final).replace('.',',')}" onchange="rsbMeta('saldo_final',this.value)"></label></div>
     <div class="grid" style="margin-bottom:10px"><div class="card kpi"><b>${res.n}</b><span>Movimientos</span></div><div class="card kpi"><b>${esc(money(res.deb))}</b><span>Débitos</span></div><div class="card kpi"><b>${esc(money(res.cre))}</b><span>Créditos</span></div><div class="card kpi"><b style="color:${res.rev?'var(--redt)':'var(--grnt)'}">${res.rev}</b><span>Filas para revisar</span></div></div>
     ${res.dif===null?'<div class="msg info" style="margin-bottom:8px">Cargá el saldo inicial y el final para controlar que los movimientos cierren.</div>':Math.abs(res.dif)<0.011?'<div class="msg ok" style="margin-bottom:8px">Control de saldos: saldo inicial + créditos − débitos coincide con el saldo final.</div>':`<div class="msg warn" style="margin-bottom:8px">Control de saldos: saldo inicial + créditos − débitos da ${esc(money(res.esperado))} y el saldo final es ${esc(money(Number(D.saldo_final)))} (diferencia ${esc(money(res.dif))}). Falta o sobra algún movimiento, o hay un importe mal leído.</div>`}
-    <div class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:8px"><button class="b" onclick="rsbGuardar()" ${R.busy?'disabled':''}>${R.busy?'Guardando…':'Guardar resumen'}</button><button class="g" onclick="rsbExcel()">Exportar a Excel</button><button class="g" onclick="rsbAgregarFila()">+ Movimiento</button><button class="g" onclick="rsbDescartar()">${D.id?'Cerrar':'Descartar'}</button>${(D.archivos||[]).map(a=>`<button class="g sm" onclick="rsbVerArchivo('${esc(a.path)}')">Ver ${esc(a.nombre)}</button>`).join('')}</div>
+    <div class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:8px"><button class="b" onclick="rsbGuardar()" ${R.busy||rsbYaCargado(D)?'disabled':''}>${R.busy?'Guardando…':'Guardar resumen'}</button><button class="g" onclick="rsbExcel()">Exportar a Excel</button><button class="g" onclick="rsbAgregarFila()">+ Movimiento</button><button class="g" onclick="rsbDescartar()">${D.id?'Cerrar':'Descartar'}</button>${(D.archivos||[]).map(a=>`<button class="g sm" onclick="rsbVerArchivo('${esc(a.path)}')">Ver ${esc(a.nombre)}</button>`).join('')}</div>
     <div class="tw" style="max-height:520px;overflow:auto"><table style="min-width:980px"><thead><tr><th>Fecha</th><th>Descripción</th><th>Débito</th><th>Crédito</th><th>Saldo</th><th>Categoría</th><th></th></tr></thead><tbody>${D.movs.map((m,i)=>`<tr style="${m.revisar?'background:var(--amb)':''}"><td><input type="date" class="sm" value="${m.fecha||''}" onchange="rsbEdit(${i},'fecha',this.value)"></td><td><input style="width:100%;min-width:260px" value="${esc(m.desc)}" onchange="rsbEdit(${i},'desc',this.value)">${m.revisar?'<span class="s">revisar: el saldo no cierra</span>':''}</td><td><input style="width:110px;text-align:right" value="${m.debito?String(m.debito).replace('.',','):''}" onchange="rsbEdit(${i},'debito',this.value)"></td><td><input style="width:110px;text-align:right" value="${m.credito?String(m.credito).replace('.',','):''}" onchange="rsbEdit(${i},'credito',this.value)"></td><td><input style="width:120px;text-align:right" value="${m.saldo===null||m.saldo===undefined||m.saldo===''?'':String(m.saldo).replace('.',',')}" onchange="rsbEdit(${i},'saldo',this.value)"></td><td><select class="sm" onchange="rsbEdit(${i},'cat',this.value)">${Object.entries(RSB_CAT).map(([k,t])=>`<option value="${k}" ${m.cat===k?'selected':''}>${esc(t)}</option>`).join('')}</select></td><td><button class="g sm" onclick="rsbQuitarFila(${i})">✕</button></td></tr>`).join('')}</tbody></table></div>
     <h4>Por categoría</h4><div class="tw"><table style="min-width:520px"><thead><tr><th>Categoría</th><th>Cant.</th><th>Débitos</th><th>Créditos</th></tr></thead><tbody>${cat.map(x=>`<tr><td>${esc(rsbCatNombre(x.cat))}</td><td>${x.n}</td><td>${x.deb?esc(money(x.deb)):''}</td><td>${x.cre?esc(money(x.cre)):''}</td></tr>`).join('')}</tbody></table></div>
     ${D.lineas&&D.lineas.length?`<details style="margin-top:8px"><summary class="s">Texto que leyó del archivo (para ajustar el lector si algo salió mal)</summary><pre style="white-space:pre-wrap;font-size:11px;max-height:240px;overflow:auto">${esc(D.lineas.join('\n'))}</pre></details>`:''}</div>`;
