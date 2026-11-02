@@ -261,7 +261,7 @@ function vInicio(){
   const sum=k=>R.reduce((a,r)=>a+r[k],0),venc7=R.filter(r=>r.nxt&&diasHasta(r.nxt.fecha)<=7).length;
   const K=[['Clientes activos',R.length],['Sin importar el Excel',R.filter(r=>r.state==='sin_importar').length],['Comprobantes sin pasar',sum('pend')],['Facturas faltantes',sum('fal')],['Vencen en 7 días',venc7],['Declaraciones sin presentar',R.reduce((a,r)=>a+r.fil.filter(x=>!x.ok).length,0)]];
   const ST={sin_importar:['Sin importar','amb'],pendiente:['Sin pasar','blu'],faltan:['Faltan facturas','org'],al_dia:['Al día','grn'],exento:['IVA exento (en 0)','blu']};
-  const SH={IVA:'IVA',CM:'IIBB CM',F931:'F.931',GANANCIAS_PH:'Ganancias',GAN_ANT:'Anticipos Gcias.',GAN_DDJJ:'Ganancias',BP:'B. Personales',MONOTRIBUTO:'Monotributo',SERV_DOM:'Serv. doméstico',OTRO:'Otro'};
+  const SH={IVA:'IVA',IVA_EXENTO:'IVA Exento',CM:'IIBB CM',F931:'F.931',GANANCIAS_PH:'Ganancias',GAN_ANT:'Anticipos Gcias.',GAN_DDJJ:'Ganancias',BP:'B. Personales',MONOTRIBUTO:'Monotributo',SERV_DOM:'Serv. doméstico',OTRO:'Otro'};
   const urg=n=>n<=2?'var(--redt)':n<=7?'var(--ambt)':'var(--mut)';
   const prox=R.filter(r=>r.nxt&&diasHasta(r.nxt.fecha)<=14).sort((a,b)=>a.nxt.fecha<b.nxt.fecha?-1:1);
   return `<h2>Inicio</h2>${bkRecordatorio()}${avisosResumen()}
@@ -746,8 +746,8 @@ async function saveImps(id){
 }
 
 /* ===== Calendario de vencimientos cargado a mano ===== */
-const VENC_IMPS=[['IVA','IVA'],['CM','IIBB Convenio Multilateral'],['IIBB','IIBB provincial (fuera de CM)'],['F931','Cargas sociales F.931'],['GANANCIAS_PH','Ganancias y Bienes Personales (personas humanas)'],['GAN_ANT','Ganancias: anticipos'],['GAN_DDJJ','Ganancias: declaración jurada anual'],['BP','Bienes Personales'],['MONOTRIBUTO','Monotributo'],['SERV_DOM','Servicio doméstico (Casas Particulares)'],['OTRO','Otro']];
-const VENC_DESC={IVA:'IVA: declaración jurada y Libro IVA Digital',CM:'Ingresos Brutos Convenio Multilateral: CM03/CM04',IIBB:'Ingresos Brutos provincial: declaración jurada',F931:'Cargas sociales F.931: declaración jurada de empleadores',GANANCIAS_PH:'Ganancias y Bienes Personales (personas humanas): anticipo',MONOTRIBUTO:'Monotributo: cuota mensual',SERV_DOM:'Servicio doméstico: aportes y contribuciones',OTRO:'Vencimiento',GAN_ANT:'Ganancias: anticipo',GAN_DDJJ:'Ganancias: declaración jurada anual',BP:'Bienes Personales: declaración jurada y pago'};
+const VENC_IMPS=[['IVA','IVA'],['IVA_EXENTO','IVA Exento (vence distinto al IVA)'],['CM','IIBB Convenio Multilateral'],['IIBB','IIBB provincial (fuera de CM)'],['F931','Cargas sociales F.931'],['GANANCIAS_PH','Ganancias y Bienes Personales (personas humanas)'],['GAN_ANT','Ganancias: anticipos'],['GAN_DDJJ','Ganancias: declaración jurada anual'],['BP','Bienes Personales'],['MONOTRIBUTO','Monotributo'],['SERV_DOM','Servicio doméstico (Casas Particulares)'],['OTRO','Otro']];
+const VENC_DESC={IVA:'IVA: declaración jurada y Libro IVA Digital',IVA_EXENTO:'IVA Exento: declaración jurada',CM:'Ingresos Brutos Convenio Multilateral: CM03/CM04',IIBB:'Ingresos Brutos provincial: declaración jurada',F931:'Cargas sociales F.931: declaración jurada de empleadores',GANANCIAS_PH:'Ganancias y Bienes Personales (personas humanas): anticipo',MONOTRIBUTO:'Monotributo: cuota mensual',SERV_DOM:'Servicio doméstico: aportes y contribuciones',OTRO:'Vencimiento',GAN_ANT:'Ganancias: anticipo',GAN_DDJJ:'Ganancias: declaración jurada anual',BP:'Bienes Personales: declaración jurada y pago'};
 const VENC_PRESETS={IVA:['0,1','2,3','4,5','6,7','8,9'],CM:['0,1,2','3,4,5','6,7','8,9'],F931:['0,1,2,3','4,5,6','7,8,9'],GANANCIAS_PH:['0,1,2,3','4,5,6','7,8,9']};
 ui.vcal={imp:'IVA',per:null,rows:null,fte:''};
 /** "0,1,2", "0-2", "0 1 2" -> [0,1,2]; null si hay algo que no es una terminación (0 a 9). */
@@ -1089,11 +1089,11 @@ async function saveEncargado(e){
 const ARCA_URL='https://www.arca.gob.ar/';
 async function loadFil(){const [a,b]=await Promise.all([sb.from('tax_filings').select('*'),sb.from('tax_filing_files').select('*')]);if(a.error)throw a.error;if(b.error)throw b.error;ui.fil=a.data;ui.ffil=b.data}
 /** Qué declaraciones se controlan para un cliente: IVA, y IIBB (provincial o Convenio Multilateral). */
-const OBLIG={IVA:{n:'IVA',s:'IVA',t:'m',v:'presentado'},IIBB:{n:'IIBB',s:'IIBB',t:'m',v:'presentado'},F931:{n:'Cargas sociales F.931',s:'F.931',t:'m',v:'presentado'},GAN_ANT:{n:'Anticipos de Ganancias',s:'Anticipos',t:'m',v:'pagado'},GAN_DDJJ:{n:'Ganancias, DDJJ anual',s:'Ganancias',t:'a',v:'presentado'},BP:{n:'Bienes Personales',s:'BP',t:'a',v:'presentado'}};
-const tieneImp=(c,k)=>{const i=c.impuestos||[];return k==='GANANCIAS_PH'?['GANANCIAS_PH','GAN_ANT','GAN_DDJJ','BP'].some(x=>i.includes(x)):i.includes(k)};
+const OBLIG={IVA:{n:'IVA',s:'IVA',t:'m',v:'presentado'},IVA_EXENTO:{n:'IVA Exento',s:'IVA Exento',t:'m',v:'presentado'},IIBB:{n:'IIBB',s:'IIBB',t:'m',v:'presentado'},F931:{n:'Cargas sociales F.931',s:'F.931',t:'m',v:'presentado'},GAN_ANT:{n:'Anticipos de Ganancias',s:'Anticipos',t:'m',v:'pagado'},GAN_DDJJ:{n:'Ganancias, DDJJ anual',s:'Ganancias',t:'a',v:'presentado'},BP:{n:'Bienes Personales',s:'BP',t:'a',v:'presentado'}};
+const tieneImp=(c,k)=>{const i=c.impuestos||[];return k==='GANANCIAS_PH'?['GANANCIAS_PH','GAN_ANT','GAN_DDJJ','BP'].some(x=>i.includes(x)):k==='IVA_EXENTO'?esExento(c):i.includes(k)};
 const tieneChk=(c,k)=>{const i=c.impuestos||[];return i.includes(k)||(i.includes('GANANCIAS_PH')&&(k==='GAN_ANT'||k==='GAN_DDJJ'))};
 /** Qué declaraciones se controlan para un cliente según los impuestos que tiene. */
-const aplica=c=>{const i=c.impuestos||[],r=[];if(i.includes('IVA'))r.push('IVA');if(i.includes('IIBB')||i.includes('CM'))r.push('IIBB');if(i.includes('F931'))r.push('F931');if(i.includes('GAN_ANT')||i.includes('GANANCIAS_PH'))r.push('GAN_ANT');if(i.includes('GAN_DDJJ')||i.includes('GANANCIAS_PH'))r.push('GAN_DDJJ');if(i.includes('BP'))r.push('BP');return r};
+const aplica=c=>{const i=c.impuestos||[],r=[];if(i.includes('IVA'))r.push('IVA');if(esExento(c))r.push('IVA_EXENTO');if(i.includes('IIBB')||i.includes('CM'))r.push('IIBB');if(i.includes('F931'))r.push('F931');if(i.includes('GAN_ANT')||i.includes('GANANCIAS_PH'))r.push('GAN_ANT');if(i.includes('GAN_DDJJ')||i.includes('GANANCIAS_PH'))r.push('GAN_DDJJ');if(i.includes('BP'))r.push('BP');return r};
 function declChips(r,wp){
   return r.fil.length?r.fil.map(x=>`<a href="#" onclick="${x.imp==='GAN_ANT'?`irAnticipos('${wp}')`:x.imp==='F931'?`irSueldos('${r.c.id}','${wp}')`:`abrirFicha('${r.c.id}','present')`};return false" class="tag" style="text-decoration:none;background:var(--${x.ok?'grn':'amb'});color:var(--${x.ok?'grnt':'ambt'});margin:0 4px 4px 0">${OBLIG[x.imp].s} ${x.ok?OBLIG[x.imp].v:'pendiente'}</a>`).join(''):'<span class="s">sin IVA ni IIBB cargados</span>';
 }
@@ -2833,6 +2833,38 @@ function cmpFilaArca(f,c){
   for(let i=24;i<=29;i++)fila.push(Number(f[i])||0);
   return fila;
 }
+
+/* ===== Resúmenes bancarios: reconocer a qué cliente pertenece el archivo (por CUIT, por nombre o por el número de cuenta ya cargado) ===== */
+const rsbSoloDig=x=>String(x||'').replace(/\D/g,'');
+function rsbCuitsEn(lineas){const o=[];lineas.forEach(l=>{for(const m of String(l).matchAll(/(?<!\d)(\d{2})-?(\d{8})-?(\d)(?!\d)/g))o.push(m[1]+m[2]+m[3])});return o}
+function rsbClientePorTexto(lineas){
+  const act=ui.clients.filter(c=>c.active!==false),pick=L=>{
+    const cuits=rsbCuitsEn(L),cnt=new Map();
+    act.forEach(c=>{const n=cuits.filter(x=>x===c.cuit||(c.cuit_ingreso&&x===c.cuit_ingreso)).length;if(n)cnt.set(c,n)});
+    const r=[...cnt.entries()].sort((a,b)=>b[1]-a[1]);
+    if(r.length===1||(r.length>1&&r[0][1]>=2*r[1][1]))return {c:r[0][0],via:'CUIT'};
+    if(r.length>1)return {amb:r.map(x=>x[0].razon_social)};
+    const t=' '+norm(L.join(' '))+' ',nn=new Map();
+    act.forEach(c=>{[c.razon_social,c.nombre_comercial].filter(Boolean).forEach(nm=>{const k=norm(nm);if(k.length>=8&&t.includes(' '+k+' '))nn.set(c,Math.max(nn.get(c)||0,k.length))})});
+    const q=[...nn.entries()].sort((a,b)=>b[1]-a[1]);
+    if(q.length===1||(q.length>1&&q[0][1]>q[1][1]))return {c:q[0][0],via:'nombre'};
+    if(q.length>1)return {amb:q.map(x=>x[0].razon_social)};
+    return null};
+  return pick(lineas.slice(0,60))||pick(lineas);
+}
+/** Devuelve {c,via} con el cliente reconocido, {amb:[...]} si hay más de uno posible o null si no encontró ninguno. */
+async function rsbDetectarCliente(lineas,cuentas){
+  const r=rsbClientePorTexto(lineas);if(r)return r;
+  /* Último recurso: el mismo número de cuenta ya cargado antes para un cliente. */
+  try{
+    const ds=[...new Set((cuentas||[]).map(rsbSoloDig).filter(x=>x.length>=6))];if(!ds.length)return null;
+    const {data}=await sb.from('bank_statements').select('client_id,cuenta').not('cuenta','is',null).limit(2000);
+    const m=(data||[]).filter(x=>ds.includes(rsbSoloDig(x.cuenta)));const ids=[...new Set(m.map(x=>x.client_id))];
+    if(ids.length===1){const c=ui.clients.find(z=>z.id===ids[0]);if(c)return {c,via:'número de cuenta ya cargado'}}
+  }catch(e){}
+  return null;
+}
+
 /* ===== Vencimientos: agregar fechas e impuestos (formulario arriba y errores claros) ===== */
 const VENC_ANUALES=['GANANCIAS_PH','GAN_DDJJ','BP','GAN_ANT'];
 const vencErr=e=>{const m=String((e&&e.message)||'');
@@ -5399,7 +5431,7 @@ function rsbParse(lineas,opts){
   L.forEach((l,idx)=>{
     const n=l.normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase(),f=rsbFechaInicio(l),mo=montosDe(l);
     // saldo anterior / final
-    if(/saldo (anterior|inicial|ultimo extracto|ult\.? ext)|saldo al (inicio|\d)|saldo apertura/.test(n)&&mo.length&&!/final|actual|cierre/.test(n)){cierra();const v=mo[mo.length-1].n;if(saldoIni===null){saldoIni=v;prev=v}else if(prev!==null&&Math.abs(prev-v)>0.011&&movs.length)av.push(`El "saldo anterior" de la línea ${idx+1} (${v.toFixed(2)}) no coincide con el último saldo leído (${prev.toFixed(2)}): puede faltar una página o haber un movimiento sin leer.`);return}
+    if((/saldo (res\.? ?)?(anterior|inicial|ultimo extracto|ult\.? ext)|saldo al (inicio|\d)|saldo apertura/.test(n)||(movs.length===0&&!pend&&!f&&prev===null&&/^saldo\b/.test(n)))&&mo.length&&!/final|actual|cierre|disponible/.test(n)){cierra();const v=mo[mo.length-1].n;if(saldoIni===null){saldoIni=v;prev=v}else if(prev!==null&&Math.abs(prev-v)>0.011&&movs.length)av.push(`El "saldo anterior" de la línea ${idx+1} (${v.toFixed(2)}) no coincide con el último saldo leído (${prev.toFixed(2)}): puede faltar una página o haber un movimiento sin leer.`);return}
     if(/^(saldo (final|actual|disponible|al cierre|al \d)|total saldo|saldo contable)/.test(n)&&mo.length){cierra();saldoFin=mo[mo.length-1].n;return}
     if(/^(total|totales|subtotal|suma)\b/.test(n)){cierra();return}
     if(f&&/^\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}\s+\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}\s*(?:\$|$)/.test(l)&&mo.length<=1&&!/[a-z]{3}/i.test(l.replace(/\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}/g,''))){cierra();return}
@@ -5581,10 +5613,18 @@ async function rsbLeerArchivos(files){
       else throw new Error(`"${f.name}": usá PDF o una foto (JPG, PNG).`);
       ok.push(f);
     }
+    let detMsg=null;
+    {const cu=[];for(const mm of lineas.join('\n').matchAll(/(?:cuenta|cta\.?|caja de ahorro|cuenta corriente)[^\d\n]{0,30}(\d[\d\-\/. ]{5,24}\d)/gi))cu.push(mm[1]);
+     for(const l of lineas.slice(0,40)){const m2=String(l).match(/\b(\d{3,4}\/\d{2,3})\b/);if(m2)cu.push(m2[1])}
+     const det=await rsbDetectarCliente(lineas,cu);
+     if(det&&det.c){detMsg='Cliente reconocido por '+det.via+': '+det.c.razon_social+'.';if(det.c.id!==R.cid){R.cid=det.c.id;ui.cid=det.c.id;await rsbCargar()}}
+     else if(det&&det.amb)detMsg='El archivo menciona a más de un cliente ('+det.amb.slice(0,4).join(', ')+'): elegí vos el cliente correcto arriba antes de guardar.';
+     else detMsg='No pude reconocer a qué cliente pertenece este resumen: revisá que el cliente elegido arriba sea el correcto.'}
     const cab0=rsbCabecera(lineas,[],ok.map(f=>f.name)),anio=cab0.hasta?+cab0.hasta.slice(0,4):null,segs=rsbSegmentar(lineas),ds=[];
     segs.forEach(g=>{
       const P=rsbParse(g.lineas,{anio}),cab=rsbCabecera(g.lineas,P.movs,ok.map(f=>f.name));
       const D={id:null,banco:cab0.banco||cab.banco,cuenta:g.cuenta||cab.cuenta,nombre:g.nombre,moneda:g.moneda,desde:cab.desde||cab0.desde,hasta:cab.hasta||cab0.hasta,saldo_inicial:P.saldoIni===null?'':P.saldoIni,saldo_final:P.saldoFin===null?'':P.saldoFin,via:[...vias].join('+'),movs:P.movs,avisos:P.avisos,descartadas:P.descartadas,files:ok,archivos:[],lineas:g.lineas,dirty:true};
+      if(detMsg)D.avisos.unshift(detMsg);
       if(!P.movs.length)D.avisos.unshift('No pude leer movimientos de esta cuenta. Si es una foto, probá con más luz y de frente; si es un PDF escaneado, subilo en mejor calidad. También podés cargar los movimientos a mano.');
       if(D.via.includes('ocr'))D.avisos.unshift('Lectura por reconocimiento de texto (foto o PDF escaneado): puede confundir números. Controlá las filas marcadas y los saldos contra el original.');
       rsbRecalcular(D);
@@ -7045,7 +7085,7 @@ function cambiarImporteAnt(imp,per,v,cid){const n=String(v).trim()===''?null:inf
 function cambiarNumAnt(imp,per,v,cid){return updPres(imp,per,{numero_anticipo:v?Number(v):null},'Número de anticipo actualizado.',cid)}
 
 /* ===== Presentación de cada obligación, a partir de lo que se marcó ===== */
-const FIL_DE_VENC={IVA:'IVA',CM:'IIBB',F931:'F931'};
+const FIL_DE_VENC={IVA:'IVA',IVA_EXENTO:'IVA_EXENTO',CM:'IIBB',F931:'F931'};
 function presDeVenc(c,d){
   const key=FIL_DE_VENC[d.impuesto];if(!key||!d.periodo)return {k:'na'};
   const x=ui.fil.find(z=>z.client_id===c.id&&z.impuesto===key&&z.periodo.slice(0,7)===String(d.periodo).slice(0,7));
@@ -7391,7 +7431,7 @@ async function infWhatsapp(){
 
 /* ===== Tablero de cumplimiento ===== */
 ui.cum={periodo:null,dl:[],solo:false,term:'',q:''};
-const CUM_COLS=[['IVA','IVA','IVA'],['IIBB','IIBB','CM'],['F931','F.931','F931'],['GAN_ANT','Anticipo Gcias.',null]];
+const CUM_COLS=[['IVA','IVA','IVA'],['IVA_EXENTO','IVA Exento','IVA_EXENTO'],['IIBB','IIBB','CM'],['F931','F.931','F931'],['GAN_ANT','Anticipo Gcias.',null]];
 async function loadCum(){const C=ui.cum;C.periodo=C.periodo||workPeriod();const {data,error}=await sb.from('tax_deadlines').select('*').eq('periodo',C.periodo);if(error)throw error;C.dl=data}
 function cumCelda(c,k){
   const per=ui.cum.periodo;if(!aplica(c).includes(k))return {k:'na'};
@@ -7403,7 +7443,7 @@ function cumCelda(c,k){
 function cumIr(cid,k){const per=ui.cum.periodo;if(k==='F931')return irSueldos(cid,per);if(k==='GAN_ANT')return irAnticipos(per);abrirFicha(cid,'present')}
 /* ===== Cumplimiento: más filtros y vista por día de vencimiento ===== */
 Object.assign(ui.cum,{imp:'',est:'',vista:'tablero'});
-const CUM_IMP_DL={IVA:['IVA'],IIBB:['CM','IIBB'],F931:['F931']};
+const CUM_IMP_DL={IVA:['IVA'],IVA_EXENTO:['IVA_EXENTO'],IIBB:['CM','IIBB'],F931:['F931']};
 function cumFiltrosExtra(){
   const C=ui.cum,op=(v,t,cur)=>`<option value="${v}" ${cur===v?'selected':''}>${t}</option>`;
   return `<label>Impuesto<select onchange="ui.cum.imp=this.value;draw()">${op('','Todos',C.imp)}${CUM_COLS.map(([k,t])=>op(k,t,C.imp)).join('')}</select></label>
