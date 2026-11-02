@@ -2056,6 +2056,10 @@ function sueBoletaPagina(lineas,n){
   }else if(/Contribuci[oó]n Adicional y Solidaria|OSECAC/i.test(t)){
     P.conc='OSECAC';P.cuit=cuitOk(dig(g(/C\.U\.I\.T\.:?\s*(\d{2}-?\d{8}-?\d)/i)));
     P.per=per(t.match(/Per[ií]odo:?\s*(20\d\d)\s*\/\s*(\d{2})/i),1,2);P.total=g(/TOTAL A PAGAR:?\s*([\d.,]+)/i);P.razon=g(/Raz[oó]n Social:?\s*(.+?)\s+Per[ií]odo/i);
+  }else if(/ASOCIACI[OÓ]N MUTUAL MERCANTIL|\bAMMA\b/i.test(t)&&/CUP[OÓ]N DE PAGO/i.test(t)){
+    P.conc='AMMA';P.cuit=cuitOk(dig(g(/\bCUIT\.?:\s*(\d{11})\b/i)));
+    P.per=per(t.match(/Per[ií]odo:\s*(\d{2})\/(20\d\d)/i),2,1);{const e=t.match(/Empleador:\s*([^\n]*)/i);P.razon=e?e[1].split(/\s+(?:CUP[OÓ]N|Empleador:|CUIT|Domicilio|Localidad|N[º°o]\s*\d)/i)[0].trim()||null:null}
+    P.total=g(/Importe a pagar:\s*\$\s*([\d.,]+)/i)||g(/Total a Pagar[^\n]*\n?\s*\$\s*([\d.,]+)/i);
   }else if(/RECUERDE SUBIR EL COMPROBANTE AL SISTEMA|UTEDYC/i.test(t)){
     P.conc='UTEDYC';P.cuit=cuitOk(dig(g(/\bCUIT:\s*(\d{2}-?\d{8}-?\d)/i)));
     P.per=per(t.match(/Per[ií]odo:?\s*(\d{2})\/(20\d\d)/i),2,1);P.total=g(/\$\s*([\d.]+,\d{2})\s+\d{2}\/\d{2}\/\d{4}/);
@@ -2282,7 +2286,7 @@ function sueMultiPrevHtml(M){
   <p class="s" style="margin-top:6px">Cada empleado recibe un PDF con sus propias páginas (original y duplicado), y además se puede guardar el archivo completo; cada VEP queda en el empleador y período que indica. Los empleadores y empleados de recibos que no estén cargados se crean con los datos del recibo. Podés arrastrar más archivos arriba antes de confirmar.</p>`;
 }
 function sueMultiZona(){
-  return `<div ondragover="event.preventDefault();this.style.background='rgba(120,160,255,.14)';this.style.borderColor='var(--blut,#3b6fd4)'" ondragleave="this.style.background='';this.style.borderColor=''" ondrop="sueMultiDrop(event)" style="border:2px dashed var(--bd,#cbd5e1);border-radius:12px;padding:18px;text-align:center"><div><b>Arrastrá acá los recibos de sueldo, los VEP y las boletas de sindicatos</b> (uno o varios PDF, de cualquier empleador)</div><div class="s" style="margin:4px 0 10px">La app reconoce si cada archivo es un recibo, un VEP o una boleta (UATRE, OSECAC, FAECYS, IERIC, UOCRA, UTEDYC), identifica el empleador por su CUIT, separa los recibos por empleado, corta las boletas que traen varios empleadores y crea lo que falte. Antes de guardar vas a ver una vista previa.</div><label class="b" style="cursor:pointer;display:inline-block">O elegí los archivos<input type="file" accept="application/pdf,.pdf" multiple hidden onchange="sueMultiLeer([...this.files]);this.value=''"></label></div>`;
+  return `<div ondragover="event.preventDefault();this.style.background='rgba(120,160,255,.14)';this.style.borderColor='var(--blut,#3b6fd4)'" ondragleave="this.style.background='';this.style.borderColor=''" ondrop="sueMultiDrop(event)" style="border:2px dashed var(--bd,#cbd5e1);border-radius:12px;padding:18px;text-align:center"><div><b>Arrastrá acá los recibos de sueldo, los VEP y las boletas de sindicatos</b> (uno o varios PDF, de cualquier empleador)</div><div class="s" style="margin:4px 0 10px">La app reconoce si cada archivo es un recibo, un VEP o una boleta (UATRE, OSECAC, FAECYS, IERIC, UOCRA, UTEDYC, AMMA), identifica el empleador por su CUIT, separa los recibos por empleado, corta las boletas que traen varios empleadores y crea lo que falte. Antes de guardar vas a ver una vista previa.</div><label class="b" style="cursor:pointer;display:inline-block">O elegí los archivos<input type="file" accept="application/pdf,.pdf" multiple hidden onchange="sueMultiLeer([...this.files]);this.value=''"></label></div>`;
 }
 function sueMultiCard(){
   const M=ui.sueMulti,L=ui.sueWaLink;
