@@ -885,6 +885,7 @@ function fTab(c,f){
     <label>Correo electrónico<input type="email" name="email" value="${v('email')}"></label>
     <label>Forma de pago<select name="forma_pago"><option value="">Sin indicar</option>${FORMAS_PAGO.map(o=>`<option ${c.forma_pago===o?'selected':''}>${o}</option>`).join('')}</select></label>
     <label>Detalle de la forma de pago<input name="forma_pago_detalle" placeholder="Banco, cuenta, quién paga" value="${v('forma_pago_detalle')}"></label>
+    <label>N° de cuenta en la Cooperativa Unión (Justiniano Posse). Si tiene más de una, separalas con coma<input name="cuenta_coop" placeholder="Ej.: 7752801, 7752802" value="${v('cuenta_coop')}"></label>
     <label>Ejercicio económico: mes de inicio<select name="ej_inicio" onchange="syncEj(this)"><option value="">Sin indicar</option>${MESES.map((m,i)=>`<option value="${i+1}" ${c.ejercicio_inicio_mes===i+1?'selected':''}>${m}</option>`).join('')}</select></label>
     <label>Ejercicio económico: mes de cierre<select name="ej_cierre" onchange="syncEj(this)"><option value="">Sin indicar</option>${MESES.map((m,i)=>`<option value="${i+1}" ${c.ejercicio_cierre_mes===i+1?'selected':''}>${m}</option>`).join('')}</select></label>
     <label>CUIT de ingreso a ARCA<input name="cuit_ingreso" inputmode="numeric" placeholder="Vacío = el CUIT del cliente" value="${c.cuit_ingreso?cuitF(c.cuit_ingreso):''}"></label>
@@ -929,7 +930,7 @@ async function saveCliente(e){
   const ci=String(f.get('cuit_ingreso')||'').replace(/\D/g,'');if(ci&&ci.length!==11){flash('El CUIT de ingreso debe tener 11 dígitos (o dejalo vacío).','err');draw();return false}
   const num=k=>{const x=String(f.get(k)||'');return x?Number(x):null},ei=num('ej_inicio'),ec=num('ej_cierre');
   if((ei===null)!==(ec===null)||(ei!==null&&ei!==ec%12+1)){flash('El ejercicio necesita mes de inicio y de cierre, y el inicio es el mes siguiente al cierre (por ejemplo, cierre en junio e inicio en julio).','err');draw();return false}
-  const {data,error}=await sb.from('clients').update({razon_social:rs,nombre_comercial:t('nombre_comercial'),cuit,condicion_iva:t('condicion_iva'),domicilio:t('domicilio'),localidad:t('localidad'),provincia:t('provincia'),telefono:t('telefono'),email:t('email'),observaciones:t('observaciones'),impuestos:f.getAll('imp'),cuit_ingreso:ci||null,titular_ingreso:t('titular_ingreso'),forma_pago:t('forma_pago'),forma_pago_detalle:t('forma_pago_detalle'),ejercicio_inicio_mes:ei,ejercicio_cierre_mes:ec}).eq('id',id).select('id');
+  const {data,error}=await sb.from('clients').update({razon_social:rs,nombre_comercial:t('nombre_comercial'),cuit,condicion_iva:t('condicion_iva'),domicilio:t('domicilio'),localidad:t('localidad'),provincia:t('provincia'),telefono:t('telefono'),email:t('email'),observaciones:t('observaciones'),impuestos:f.getAll('imp'),cuit_ingreso:ci||null,titular_ingreso:t('titular_ingreso'),forma_pago:t('forma_pago'),forma_pago_detalle:t('forma_pago_detalle'),cuenta_coop:t('cuenta_coop'),ejercicio_inicio_mes:ei,ejercicio_cierre_mes:ec}).eq('id',id).select('id');
   if(error)flash(errTxt(error),'err');else if(!data.length)flash('No tenés permiso para editar clientes.','err');else return reabrir('Datos guardados.'),false;
   draw();return false;
 }
@@ -2632,6 +2633,7 @@ function antDropCard(){
 
 /* ===== Importar compras: Excel de tickets de la Cooperativa (el cliente sale de la columna CUENTA / DETALLE) ===== */
 const COOP_POLIZA=/p[oó]liza|propuesta|seguro|granizo|endoso|cobertura|siniestro|asegur/i;
+const coopLista=c=>String((c&&c.cuenta_coop)||'').split(/[\s,;]+/).map(x=>x.trim()).filter(Boolean);
 const coopCuentas=()=>{try{return JSON.parse(localStorage.getItem('coop_cuentas')||'{}')||{}}catch(e){return {}}};
 const coopGuardarCuenta=(cuenta,cid)=>{try{const m=coopCuentas();m[cuenta]=cid;localStorage.setItem('coop_cuentas',JSON.stringify(m))}catch(e){}};
 const coopTxt=s=>String(s||'').replace(/&#(\d+);/g,(m,n)=>String.fromCharCode(+n)).replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&apos;/g,"'").replace(/&amp;/g,'&');
@@ -2702,11 +2704,14 @@ function coopAnalizar(rows){
 /** Busca el cliente por la cuenta recordada o por el nombre (completo o cortado). */
 function coopBuscarCliente(G){
   const act=ui.clients.filter(c=>c.active!==false),m=coopCuentas()[G.cuenta];
-  if(m&&act.some(c=>c.id===m))return act.find(c=>c.id===m);
+  /* 1) Número de cuenta ya vinculado al cliente (es lo más seguro: la cuenta no cambia). */
+  const pc=act.filter(c=>coopLista(c).includes(String(G.cuenta).trim()));
+  if(pc.length===1){G.via='cuenta';return pc[0]}
+  if(m&&act.some(c=>c.id===m)){G.via='recordada';return act.find(c=>c.id===m)}
   const nn=G.nombres.map(norm).filter(Boolean);
-  const ex=act.filter(c=>nn.includes(norm(c.razon_social)));if(ex.length===1)return ex[0];
+  const ex=act.filter(c=>nn.includes(norm(c.razon_social)));if(ex.length===1){G.via='nombre';return ex[0]}
   const pf=act.filter(c=>{const cn=norm(c.razon_social);return nn.some(x=>(x.length>=12&&cn.startsWith(x))||(cn.length>=12&&x.startsWith(cn)))});
-  return pf.length===1?pf[0]:null;
+  if(pf.length===1){G.via='nombre';return pf[0]}return null;
 }
 async function coopExistentes(G){
   G.exist=null;if(!G.cid)return;
@@ -2729,7 +2734,7 @@ async function coopLeer(files){
   draw();
 }
 function coopDrop(e){e.preventDefault();const z=e.currentTarget;z.style.background='';z.style.borderColor='';coopLeer(e.dataTransfer?e.dataTransfer.files:[])}
-async function coopCliente(gi,cid){const G=ui.coop.grupos[gi];G.cid=cid||null;G.auto=false;if(cid)coopGuardarCuenta(G.cuenta,cid);await coopExistentes(G);draw()}
+async function coopCliente(gi,cid){const G=ui.coop.grupos[gi];G.cid=cid||null;G.auto=false;G.via='manual';await coopExistentes(G);draw()}
 function coopSel(gi,fi,v){const R=ui.coop.grupos[gi].filas[fi];R.sel=!!v;draw()}
 function coopTipoSet(gi,fi,v){const R=ui.coop.grupos[gi].filas[fi];R.cmp=v?Number(v):null;if(R.cmp&&!R.poliza){R.motivo='';R.sel=true}else if(!R.cmp)R.sel=false;draw()}
 function coopTodos(gi,modo){const G=ui.coop.grupos[gi];G.filas.forEach(R=>{if(!R.cmp)return;R.sel=modo==='sin'?!R.poliza&&!R.rep:modo==='todos'})
@@ -2747,7 +2752,7 @@ function coopHtml(){
     const cli=G.cid?ui.clients.find(c=>c.id===G.cid):null;
     return `<div class="card" style="margin:10px 0"><div class="row" style="gap:12px;align-items:flex-end;flex-wrap:wrap"><div><b>${esc(G.nombre)}</b><span class="s">Cuenta ${esc(G.cuenta)} de la cooperativa · ${G.filas.length} comprobante(s)</span></div>
      <label>Cliente en la app<br><select onchange="coopCliente(${gi},this.value)"><option value="">Elegir cliente…</option>${opts}</select></label>
-     ${cli?(G.auto?'<span class="tag" style="background:var(--grn);color:var(--grnt)">Reconocido por el nombre</span>':'<span class="tag" style="background:var(--blu);color:var(--blut)">Elegido a mano (se recuerda esta cuenta)</span>'):'<span class="tag" style="background:var(--red);color:var(--redt)">Elegí el cliente para poder cargar</span>'}</div>
+     ${cli?(G.auto&&G.via==='cuenta'?'<span class="tag" style="background:var(--grn);color:var(--grnt)">Reconocido por el número de cuenta</span>':(coopLista(cli).includes(String(G.cuenta))?'<span class="tag" style="background:var(--grn);color:var(--grnt)">Cuenta vinculada a este cliente</span>':`<span class="tag" style="background:var(--blu);color:var(--blut)">${G.auto?'Reconocido por el nombre':'Elegido a mano'}: al confirmar se vincula la cuenta ${esc(G.cuenta)} con este cliente</span>`)):'<span class="tag" style="background:var(--red);color:var(--redt)">Elegí el cliente para poder cargar</span>'}</div>
      <div class="row" style="gap:8px;margin:8px 0;flex-wrap:wrap"><button class="g sm" onclick="coopTodos(${gi},'sin')">Marcar todos menos pólizas</button><button class="g sm" onclick="coopTodos(${gi},'todos')">Marcar todos</button><button class="g sm" onclick="coopTodos(${gi},'ninguno')">Desmarcar todos</button><span class="s">${pol?pol+' póliza(s) sin marcar. ':''}${dup?dup+' ya estaban cargados. ':''}Se cargan ${el.length}.</span></div>
      <div class="tw"><table><thead><tr><th></th><th>Fecha</th><th>Tipo</th><th>Número</th><th>Concepto</th><th>Neto</th><th>IVA</th><th>Total</th><th>Estado</th></tr></thead><tbody>${filas}</tbody></table></div></div>`;
   }).join('');
@@ -2760,7 +2765,7 @@ async function coopConfirmar(){
   if(ui.busy)return;const C=ui.coop;if(!C||C.fase!=='previa')return;
   const trabajos=C.grupos.filter(G=>G.cid).map(G=>({G,E:coopElegidos(G)})).filter(t=>t.E.length);
   if(!trabajos.length)return;
-  ui.busy=true;const res=[],mal=[];let ultimo=null;
+  ui.busy=true;const res=[],mal=[],vinc=[];let ultimo=null;
   for(const {G,E} of trabajos){
     const cli=ui.clients.find(c=>c.id===G.cid),porMes=new Map();E.forEach(R=>{const m=R.fecha.slice(0,7);if(!porMes.has(m))porMes.set(m,[]);porMes.get(m).push(R)});
     let n=0;
@@ -2782,10 +2787,20 @@ async function coopConfirmar(){
       }catch(e){if(batchId)await sb.from('import_batches').update({rows_new:0}).eq('id',batchId);mal.push((cli?cli.razon_social:G.nombre)+' '+mes.slice(5)+'/'+mes.slice(0,4)+' ('+errTxt(e)+')')}
     }
     res.push(`${cli?cli.razon_social:G.nombre}: ${n}`);
+    /* Vincula la cuenta con el cliente para que la próxima vez se reconozca solo por el número. */
+    if(cli&&n>0&&!coopLista(cli).includes(String(G.cuenta).trim())){
+      const otro=(ui.clientsAll||ui.clients).find(c=>c.id!==cli.id&&coopLista(c).includes(String(G.cuenta).trim()));
+      if(otro)vinc.push(`la cuenta ${G.cuenta} ya está vinculada a ${otro.razon_social}: no se vinculó con ${cli.razon_social}`);
+      else{try{const nueva=[...coopLista(cli),String(G.cuenta).trim()].join(', ');
+        const u=await sb.from('clients').update({cuenta_coop:nueva}).eq('id',cli.id).select('id');
+        if(u.error)throw u.error;if(!u.data||!u.data.length)throw new Error('sin permiso');vinc.push(`cuenta ${G.cuenta} vinculada a ${cli.razon_social}${coopLista(cli).length?' (que ya tenía otra cuenta: ahora tiene '+nueva+')':''}`);cli.cuenta_coop=nueva}
+      catch(e){vinc.push(`no se pudo vincular la cuenta ${G.cuenta} con ${cli.razon_social} (${/cuenta_coop|column/i.test((e&&e.message)||'')?'falta la columna en Supabase':errTxt(e)})`)}}
+    }
   }
   ui.busy=false;ui.coop=null;
+  try{await loadClients()}catch(e){}
   if(ultimo){ui.cid=ultimo.cid;ui.periodo=ultimo.mes}
-  flash(`Cooperativa: se cargaron ${res.join('; ')}.${mal.length?' No se pudo cargar: '+mal.join('; ')+'. Podés repetir la carga: no se duplica nada.':''}`,mal.length?'warn':'ok');
+  flash(`Cooperativa: se cargaron ${res.join('; ')}.${vinc.length?' Cuentas: '+vinc.join('; ')+'.':''}${mal.length?' No se pudo cargar: '+mal.join('; ')+'. Podés repetir la carga: no se duplica nada.':''}`,mal.length?'warn':'ok');
   if(ultimo&&!mal.length){await show('comprobantes');return}
   draw();
 }
