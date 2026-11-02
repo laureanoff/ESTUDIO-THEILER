@@ -5362,31 +5362,40 @@ function inflPlantilla(i){
 const RSB_CAT={ley_deb:'Ley 25.413 sobre débitos',ley_cre:'Ley 25.413 sobre créditos',comision:'Comisiones y gastos bancarios',sellado:'Sellados',interes:'Intereses',iva:'IVA sobre comisiones',perc_iva:'Percepciones y retenciones de IVA',perc_iibb:'Retenciones y percepciones de IIBB',ret_gan:'Retenciones de Ganancias',mov_cuentas:'Movimiento entre cuentas propias',inversiones:'Inversiones (suscripción / rescate)',prendario:'Débito / crédito prendario',transf_rec:'Transferencia recibida',transf_env:'Transferencia enviada',cheque:'Cheques',deposito:'Depósitos',extraccion:'Extracciones',tarjeta:'Tarjetas',imp_arca:'Pago de impuestos (ARCA, VEP, rentas)',sueldos:'Sueldos y cargas sociales',prestamo:'Préstamos y descubierto',debito_auto:'Débitos automáticos y servicios',otros:'Sin clasificar'};
 const rsbCatNombre=k=>RSB_CAT[k]||(k==='imp_cd'?RSB_CAT.ley_deb:RSB_CAT.otros);
 /** Sugerencia de categoría por el texto del movimiento. Es solo una propuesta que se puede cambiar. */
+const rsbClave=d=>String(d||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().replace(/\d[\d.,\/-]*/g,' ').replace(/[^a-z*\/.]+/g,' ').replace(/\s+/g,' ').trim().slice(0,40);
+const rsbMemoria=()=>{try{return JSON.parse(localStorage.getItem('rsb_memoria')||'{}')||{}}catch(e){return {}}};
+function rsbRecordar(desc,cat){const k=rsbClave(desc);if(k.length<4)return;try{const m=rsbMemoria();if(cat&&cat!=='otros')m[k]=cat;else delete m[k];localStorage.setItem('rsb_memoria',JSON.stringify(m))}catch(e){}}
 function rsbCategoria(desc,debito,credito){
-  const n=String(desc||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().replace(/i\.\s?v\.\s?a\.?/g,'iva').replace(/\s+/g,' ');
+  const n=String(desc||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().replace(/i\.\s?v\.\s?a\.?/g,'iva').replace(/\s+/g,' ').split(/ - |desde la fecha de sus/)[0].slice(0,70);
+  const mem=rsbMemoria()[rsbClave(desc)];if(mem&&RSB_CAT[mem])return mem;
   const esCred=(Number(credito)||0)>0&&!((Number(debito)||0)>0);
-  if(/25\.?413|ley ?25413|impdebcre|imp\.? ?(cred|deb)|impuesto (a los |s\/)?(deb|cred)/.test(n)){
-    const cr=/\b(cr|cre|cred|credito|creditos)\b\.?/.test(n.replace(/s\/cr/,'s/ cr')),db=/\b(db|deb|debito|debitos)\b\.?|s\/db|s\/deb/.test(n);
-    return cr&&!db?'ley_cre':'ley_deb'}
-  if(/sircreb|sirtac|percep\w* ?(ib|iibb|ingresos brutos)|ret\w* ?(ib|iibb|ingresos brutos)|\biibb\b|\bing\.? ?brutos/.test(n))return 'perc_iibb';
-  if(/(percep|perc|reten|ret)\w*\.? ?iva|iva ?(rg|r\.g)|\brg\.? ?(2408|3337|140|2854)/.test(n))return 'perc_iva';
+  /* Ley 25.413 (impuesto al débito y crédito): IMP.S/OPER.DEBITOS, IMP.S/OPER.CREDITOS, IMP.DEB.CRE.LEY 25413, etc. */
+  if(/25\.?413|ley ?25413|impdebcre|imp\.? ?(cred|deb)|impuesto (a los |s\/)?(deb|cred)|imp\.? ?s\/? ?oper|imp\.? ?s\/? ?(deb|cred)|\bi\.?d\.?c\.?\b|deb\.? ?y ?cred|debitos? y creditos?|imp\.? ?ley/.test(n)){
+    const cr=/\b(cr|cre|cred|credito|creditos)\b\.?|oper\.? ?cred|s\/ ?cr/.test(n.replace(/s\/cr/,'s/ cr')),db=/\b(db|deb|debito|debitos)\b\.?|oper\.? ?deb|s\/db|s\/deb/.test(n);
+    return cr&&!db?'ley_cre':db&&!cr?'ley_deb':(esCred?'ley_cre':'ley_deb')}
+  if(/sircreb|sirtac|percep\w* ?(ib|iibb|ingresos brutos)|ret\w* ?(ib|iibb|ingresos brutos)|\biibb\b|\bing\.? ?brutos|\bdgr\b.*(perc|ret)|(perc|ret)\w*.*\b(dgr|rentas|arba|agip)\b/.test(n))return 'perc_iibb';
+  if(/(percep|perc|reten|ret)\w*\.? ?iva|iva ?(rg|r\.g)|iva ?percep|\brg\.? ?(2408|3337|140|2854)/.test(n))return 'perc_iva';
   if(/(ret|reten)\w*\.? ?(de )?ganancias|ret\.? ?gan|sicore/.test(n))return 'ret_gan';
   if(/\biva\b/.test(n))return 'iva';
-  if(/sellad/.test(n))return 'sellado';
+  if(/sellad|\bsello\b/.test(n))return 'sellado';
   if(/prendari/.test(n))return 'prendario';
-  if(/sdo\W*mismo|mismo\W*tit|cuentas? propias?|entre cuentas|transf\w* (a|de) cuenta propia/.test(n))return 'mov_cuentas';
-  if(/rescate|\bfci\b|fondo comun|plazo fijo|\bpf\b|inversion|suscripcion|cuotaparte|cuota parte/.test(n))return 'inversiones';
-  if(/comision|\bcom\.|comis\.|mantenimiento|gastos? (adm|banc)|\bcargo\b|paquete|costo (de )?(mant|serv)|servicio de cuenta/.test(n))return 'comision';
-  if(/interes|\bint\.? /.test(n))return 'interes';
-  if(/\bvep\b|afip|\barca\b|arba|rentas|agip|monotributo|f\.? ?931|impuesto/.test(n))return 'imp_arca';
-  if(/sueldo|haberes|remuneraci/.test(n))return 'sueldos';
-  if(/prestamo|cuota pr|credito personal|descubierto|adelanto en cta|adelanto cta/.test(n))return 'prestamo';
-  if(/cheque|\bchq\b|\bcheq\b|\bch\.? ?\d/.test(n))return 'cheque';
-  if(/transf|\btrf\b|\bcbu\b|acreditaci/.test(n))return esCred?'transf_rec':'transf_env';
-  if(/deposito|dep\.? (efectivo|cheque)/.test(n))return 'deposito';
-  if(/extraccion|retiro|cajero|\batm\b/.test(n))return 'extraccion';
-  if(/tarjeta|visa|master|cabal|naranja|amex/.test(n))return 'tarjeta';
-  if(/debito autom|\bd\.a\.|pago (de )?serv|edenor|epec|telecom|movistar|claro|seguro/.test(n))return 'debito_auto';
+  if(/sdo\W*mismo|mismo\W*tit|cuentas? propias?|entre cuentas|transf\w* (a|de) cuenta propia|tr\.? ?c\/?propia/.test(n))return 'mov_cuentas';
+  if(/rescate|\bfci\b|fondo comun|plazo fijo|\bpf\b|inversion|suscripcion|cuotaparte|cuota parte|\bfima\b|\bcpd\b|caucion|lebac|leliq|\bletes?\b|\bbonos?\b/.test(n))return 'inversiones';
+  /* cheques: acreditaciones de cámara, canje de valores, rechazos, descuentos */
+  if(/\bch\.? ?(cam|recib|dep|pag|rech|propio|emit)|\bcje\b|\bcheq|\bchq\b|\bch\.? ?\d|canje|cam(ara)?\.? ?(recib|comp)|deb\.? ?aut\.? ?recib|recib\.? ?camara|\bech\b|e-?cheq|valores? ?(al )?(cobro|depositad)|desc\.? ?(de )?(ch|doc)|acr\.? ?desc|rechaz|devol\.? ?ch|\bcertif\.? ?ch|libr\w* ?cheq|talonario|\bcheque/.test(n)&&!/\bcom(\.|\b)|comis|\bgto|gasto|cargo|mant/.test(n))return 'cheque';
+  if(/comision|\bcom\.|\bcom\b|comis\.|\bcomis\b|mantenimiento|\bmant\b|gastos? (adm|banc|varios)|\bgtos?\b|\bgto\./.test(n)||/\bcargo\b|paquete|costo (de )?(mant|serv)|servicio de cuenta|abono|\babon\b|\bcuota (de )?(paq|serv|cuenta)|renovac|emision (de )?(ch|talon)|chequera|\bcom\.?cv|\bc\.?v\.? ?ot/.test(n))return 'comision';
+  if(/interes|\bint\.? |\bint\b|reint|subsi|bonif|\bintereses?\b|\bdev\.? ?int/.test(n))return 'interes';
+  if(/\bvep\b|afip|\barca\b|arba|rentas|agip|\bdgr\b|\bdgi\b|\bater\b|\bapross\b|monotributo|f\.? ?931|impuesto|\bimp\.? ?(nac|prov|mun)|tasa (municipal|muni)|\bmunicipal|ingresos brutos|\bsicore\b|\bsuss\b|\bb\.? ?pers/.test(n))return 'imp_arca';
+  if(/sueldo|haberes|remuneraci|\bsac\b|aguinaldo|\bliq\.? ?final|jornal/.test(n))return 'sueldos';
+  if(/prestamo|\bptmo\b|\bpmo\b|pto\.? ?cta|cuota pr|credito personal|descubierto|adelanto en cta|adelanto cta|\bcob\.? ?cta\.? ?pt|\bprest\b|amortiz|cancel\w* ?(de )?(prest|ptmo)/.test(n))return 'prestamo';
+  if(/tarjeta|\btarj\b|\bvisa\b|master|cabal|naranja|amex|\bdb\.? ?(compl|min|pago)|\bpa\.? ?res|resumen (de )?(tarj|visa|master)|\bt\.? ?visa|\bt\.? ?mast/.test(n))return 'tarjeta';
+  if(/debito autom|\bdeb\.? ?aut|\bd\.a\.|\bda\b|pago (de )?serv|pago aut|\bserv(ic)?\b|edenor|epec|telecom|movistar|claro|personal flow|\bseguro|\bart\b|aseguradora|cooperativa|cuota social|\bgas\b|\bagua\b|\bluz\b|internet|alquiler|expensas/.test(n))return 'debito_auto';
+  if(/\btf\b|\bt\.f\.|transf|\btrf\b|\btr\b|\bhb\b|home ?banking|\bcbu\b|\bcvu\b|\bdebin\b|\bcoelsa\b|acreditaci|\bacr\b|\bcred\.? ?(trf|tf)|giro|pago a proveedor|\bpagos? ?(prov|masivo)|\bptg\b|\bmep\b|\bcr\.?(p\/|por)/.test(n))return esCred?'transf_rec':'transf_env';
+  if(/deposito|\bdep\b|dep\.? ?(efectivo|cheque)|\bdep\.? ?(en )?efvo|\bdep\.?\s?ef\b|ingreso (en )?efectivo|\bcaja\b/.test(n))return 'deposito';
+  if(/extraccion|retiro|cajero|\batm\b|\bext\b|\bextrac/.test(n))return 'extraccion';
+  /* Último recurso: la dirección del movimiento. No queda "sin clasificar" si se puede deducir. */
+  if(esCred)return /cred|acred|ingreso|cobr|dep|abon|acr\b/.test(n)?'transf_rec':'transf_rec';
+  if((Number(debito)||0)>0)return /deb|pago|cobro|cargo|gto|db/.test(n)?'debito_auto':'debito_auto';
   return 'otros';
 }
 const RSB_MONTO=/(?<![\d.,\/-])\(?-?\$?\s?(?:\d{1,3}(?:\.\d{3})+|\d+),\d{2}\)?-?(?![\d,])/g;
@@ -5643,7 +5652,7 @@ function rsbEdit(i,k,v){
   const D=RB().draft,m=D&&D.movs[i];if(!m)return;
   if(k==='fecha'){m.fecha=v||null}
   else if(k==='desc'){m.desc=v;if(m.cat==='otros')m.cat=rsbCategoria(v,m.debito,m.credito)}
-  else if(k==='cat'){m.cat=v}
+  else if(k==='cat'){m.cat=v;rsbRecordar(m.desc,v)}
   else{const s=String(v).trim();if(s===''){m[k]=k==='saldo'?null:0}else{const n=pNum(s);if(n===null||isNaN(n)){flash('Importe no válido.','warn');return draw()}m[k]=Math.abs(n)*(k==='saldo'?Math.sign(n)||1:1);if(k==='saldo')m[k]=n;if(k==='debito'&&n)m.credito=0;if(k==='credito'&&n)m.debito=0}}
   m.dud=false;D.dirty=true;rsbRecalcular(D);draw();
 }
