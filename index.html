@@ -226,7 +226,7 @@ async function show(t){
   stopCam();ui.tab=t;ui.hist=null;ui.scan=null;
   try{
     if(t==='inicio'||t==='vencimientos')await loadDeadlines();
-    if(t==='clientes')await loadCStats();
+    if(t==='clientes'){await loadCStats();await loadDeadlines();await loadDash();try{await loadInicioExtra()}catch(e){ui.ini=null}}
     if(t==='ventas')await loadVentas();
     if(t==='iva')await loadIva();
     if(t==='cumplimiento'){await loadDash();await loadDeadlines();await loadCum()}
@@ -3147,8 +3147,18 @@ function iniCopiar(id){
   try{navigator.clipboard.writeText(String(c.cuit)).then(ok,mal)}catch(e){mal()}
 }
 function iniArca(){window.open('https://auth.afip.gob.ar/contribuyente_/login.xhtml','_blank','noopener')}
-function iniFiltro(k){ui.iniF=ui.iniF===k?'':k;draw()}
-function iniBuscar(v){ui.iniQ=v;const g=document.getElementById('ini_grid');if(g)g.innerHTML=iniGrid()}
+function iniIr(k){ui.iniF=k;ui.cf=Object.assign({},ui.cf||{},{estado:'activos'});show('clientes')}
+function iniFilaDe(c){
+  const wp=workPeriod(),cur=ui.pst.find(r=>r.client_id===c.id&&r.periodo.slice(0,7)===wp),nxt=ui.dl.filter(d=>diasHasta(d.fecha)>=0&&delC(d,c)).sort((a,b)=>a.fecha<b.fecha?-1:1)[0];
+  const pend=cur?cur.sin_pasar:0,fal=cur?cur.faltan:0;
+  return {c,cur,nxt,pend,fal,fil:aplica(c).filter(k=>OBLIG[k].t==='m').map(imp=>({imp,ok:!!ui.fil.find(f=>f.client_id===c.id&&f.periodo.slice(0,7)===wp&&f.impuesto===imp)})),state:esExento(c)?'exento':!cur?'sin_importar':pend>0?'pendiente':fal>0?'faltan':'al_dia'};
+}
+const INI_SIT=[['','Todas'],['trajeron','Ya trajeron comprobantes'],['notraj','Todavía no trajeron'],['sin','Sin Excel importado'],['venc','Vencen en 7 días'],['decl','Con declaraciones pendientes'],['sue','Sueldos pendientes'],['ant','Anticipos pendientes']];
+/** Filtro "Situación del mes" de la pantalla Clientes. */
+function iniFiltroOk(c){
+  if(!ui.iniF||c.active===false)return !ui.iniF;
+  const r=iniFilaDe(c);return iniPasa(r,iniDatos(r));
+}
 /** Datos de un cliente para su recuadro. */
 function iniDatos(r){
   const c=r.c,wp=workPeriod(),X=ui.ini&&ui.ini.per===wp?ui.ini:null,ex=esExento(c);
@@ -3168,8 +3178,7 @@ function iniDatos(r){
   return {iva,sue,ant,venc:v2,pend,pron:venc[0]&&diasHasta(venc[0].fecha)<=7};
 }
 function iniPasa(r,D){
-  const f=ui.iniF||'',q=norm(ui.iniQ||'');
-  if(q&&!norm(r.c.razon_social+' '+(r.c.nombre_comercial||'')+' '+r.c.cuit).includes(q))return false;
+  const f=ui.iniF||'';
   return !f||(f==='trajeron'&&r.cur&&r.fal===0&&r.state!=='exento')||(f==='notraj'&&r.cur&&r.fal>0&&r.state!=='exento')||(f==='sin'&&r.state==='sin_importar')||(f==='venc'&&D.pron)||(f==='decl'&&D.pend.length>0)||(f==='sue'&&D.sue&&D.sue.ok<D.sue.n)||(f==='ant'&&D.ant&&D.ant!=='ok');
 }
 function iniCard(r,D,wp){
@@ -3187,21 +3196,20 @@ function iniCard(r,D,wp){
   <div class="ini-r"><span class="ini-l">Vence</span>${venc}</div>
   <div class="ini-r"><span class="ini-l">Falta</span>${decl}</div>
   ${sue||ant?`<div class="ini-r"><span class="ini-l">Otros</span>${sue} ${ant}</div>`:''}
+  <div class="ini-r"><span class="ini-l">Impuestos</span>${esExento(c)?'<span class="chip">IVA exento</span>':''}${(c.impuestos||[]).map(k=>`<span class="chip">${CL_SH[k]||esc(k)}</span>`).join('')||'<span class="s">sin marcar</span>'}</div>
   <div style="display:flex;gap:6px;margin-top:2px">${acc}<button class="g sm" onclick="abrirFicha('${c.id}')">Ficha</button></div></div>`;
 }
-function iniGrid(){
-  const wp=workPeriod(),R=dashRows(),L=R.map(r=>({r,D:iniDatos(r)})).filter(x=>iniPasa(x.r,x.D));
-  return L.length?L.map(x=>iniCard(x.r,x.D,wp)).join(''):'<div class="card" style="color:var(--mut);grid-column:1/-1">Ningún cliente coincide con el filtro.</div>';
+function clCard(c){
+  if(c.active===false)return clCardAnt(c);
+  const r=iniFilaDe(c);return iniCard(r,iniDatos(r),workPeriod());
 }
 function vInicio(){
   const R=dashRows(),wp=workPeriod(),lab=wp.slice(5)+'/'+wp.slice(0,4),D=R.map(r=>({r,D:iniDatos(r)}));
   const noEx=D.filter(x=>x.r.state!=='exento');
   const K=[['Clientes activos',R.length,''],['Ya trajeron comprobantes',noEx.filter(x=>x.r.cur&&x.r.fal===0).length,'trajeron'],['Todavía no trajeron',noEx.filter(x=>x.r.cur&&x.r.fal>0).length,'notraj'],['Sin Excel importado',R.filter(r=>r.state==='sin_importar').length,'sin'],['Vencen en 7 días',D.filter(x=>x.D.pron).length,'venc'],['Con declaraciones pendientes',D.filter(x=>x.D.pend.length).length,'decl'],['Sueldos pendientes',D.filter(x=>x.D.sue&&x.D.sue.ok<x.D.sue.n).length,'sue'],['Anticipos pendientes',D.filter(x=>x.D.ant&&x.D.ant!=='ok').length,'ant']];
   return `<h2>Inicio</h2>${bkRecordatorio()}${avisosResumen()}${bandejaCard()}
-  <div class="row" style="margin-bottom:14px;align-items:flex-end;gap:14px;flex-wrap:wrap"><label>Período a liquidar<br>${mesPick(wp,`ui.wp=this.value;show('inicio')`)}</label><label style="flex:1;min-width:200px;max-width:340px">Buscar cliente<br><input value="${esc(ui.iniQ||'')}" placeholder="Nombre o CUIT" oninput="iniBuscar(this.value)"></label><span class="s" style="max-width:420px">Todo lo que ves corresponde a ${lab}, el mes que se declara ahora. Tocá un número para filtrar los clientes.</span></div>
-  <div class="grid" style="margin-bottom:16px;grid-template-columns:repeat(auto-fit,minmax(128px,1fr))">${K.map(([t,n,k])=>`<div class="card kpi ${k?'ini-k':''} ${k&&ui.iniF===k?'on':''}" ${k?`onclick="iniFiltro('${k}')"`:''}><b>${n}</b><span>${t}</span></div>`).join('')}</div>
-  <div class="ini-g" id="ini_grid">${iniGrid()}</div>
-  <p class="s">"Trajo todo" significa que ya recibió todas las facturas que figuran en ARCA. El IVA aproximado es IVA de ventas menos IVA de compras cargados, sin saldos a favor ni retenciones: el cálculo completo está en "IVA aproximado". Las fechas están "A confirmar" hasta que las verifiques en Vencimientos.</p>`;
+  <div class="row" style="margin-bottom:14px;align-items:flex-end;gap:14px;flex-wrap:wrap"><label>Período a liquidar<br>${mesPick(wp,`ui.wp=this.value;show('inicio')`)}</label><span class="s" style="max-width:460px">Los números corresponden a ${lab}, el mes que se declara ahora. Tocá uno para ver en Clientes cuáles son.</span></div>
+  <div class="grid" style="margin-bottom:16px;grid-template-columns:repeat(auto-fit,minmax(128px,1fr))">${K.map(([t,n,k])=>`<div class="card kpi ${k?'ini-k':''}" ${k?`onclick="iniIr('${k}')"`:''}><b>${n}</b><span>${t}</span></div>`).join('')}</div>`;
 }
 
 /* ===== Resúmenes bancarios: reconocer los que ya están cargados ===== */
@@ -7448,6 +7456,7 @@ function clLista(){
   if(f.imp)L=L.filter(c=>f.imp==='IIBB'?(tieneImp(c,'IIBB')||tieneImp(c,'CM')):tieneImp(c,f.imp));
   if(f.term!=='')L=L.filter(c=>c.cuit.slice(-1)===f.term);
   if(f.falt)L=L.filter(c=>((ui.cstats[c.id]||{}).fal||0)>0);
+  if(ui.iniF)L=L.filter(iniFiltroOk);
   const nom=(a,b)=>a.razon_social.localeCompare(b.razon_social,'es');
   if(f.orden==='falt')L.sort((a,b)=>((ui.cstats[b.id]||{}).fal||0)-((ui.cstats[a.id]||{}).fal||0)||nom(a,b));
   else if(f.orden==='term')L.sort((a,b)=>a.cuit.slice(-1).localeCompare(b.cuit.slice(-1))||nom(a,b));
@@ -7455,7 +7464,7 @@ function clLista(){
   else L.sort(nom);
   return L;
 }
-function clCard(c){
+function clCardAnt(c){
   const st=ui.cstats[c.id]||{tot:0,fal:0};
   return `<div class="card cl ${c.active===false?'off':''}" tabindex="0" role="button" onclick="abrirFicha('${c.id}')" onkeydown="if(event.key==='Enter')abrirFicha('${c.id}')">
     <div class="term">${c.cuit.slice(-1)}<small>termina en</small></div><h3>${esc(c.razon_social)}</h3><div class="s" style="font-size:13px">CUIT ${cuitF(c.cuit)}${c.active===false?' (inactivo)':''}</div>
@@ -7467,7 +7476,7 @@ function clGrid(){
   return {n:L.length,html:L.length?L.map(clCard).join(''):(hay?`<div class="card">Ningún cliente coincide con la búsqueda o los filtros. <button class="g sm" onclick="clLimpiar()">Limpiar filtros</button></div>`:'<div class="card">Todavía no hay clientes. Agregá el primero con su razón social y CUIT.</div>')};
 }
 function clRender(){const g=clGrid(),el=document.getElementById('clgrid'),n=document.getElementById('clcount');if(el)el.innerHTML=g.html;if(n)n.textContent=g.n===ui.clients.length?g.n+' clientes':g.n+' de '+ui.clients.length+' clientes'}
-function clLimpiar(){ui.cf={q:'',estado:'activos',imp:'',term:'',falt:false,orden:'az'};draw()}
+function clLimpiar(){ui.cf={q:'',estado:'activos',imp:'',term:'',falt:false,orden:'az'};ui.iniF='';draw()}
 function vClientes(){
   const ed=canEdit(),f=ui.cf,g=clGrid(),sel=(k,v,t)=>`<option value="${v}" ${f[k]===v?'selected':''}>${t}</option>`;
   return `<h2>Clientes</h2>${ed?`<form class="card row" onsubmit="return addClient(event)" style="margin-bottom:16px">
@@ -7480,6 +7489,7 @@ function vClientes(){
    <label>CUIT termina en<select onchange="ui.cf.term=this.value;clRender()"><option value="">Cualquiera</option>${[0,1,2,3,4,5,6,7,8,9].map(n=>`<option value="${n}" ${f.term===String(n)?'selected':''}>${n}</option>`).join('')}</select></label>
    <label>Ordenar<select onchange="ui.cf.orden=this.value;clRender()">${sel('orden','az','Razón social (A a Z)')}${sel('orden','falt','Más facturas faltantes')}${sel('orden','term','Terminación del CUIT')}${sel('orden','nuevos','Más nuevos')}</select></label>
    <label style="display:flex;gap:8px;align-items:center;white-space:nowrap"><input type="checkbox" style="margin:0" ${f.falt?'checked':''} onchange="ui.cf.falt=this.checked;clRender()"> Con facturas faltantes</label>
+   <label>Situación del mes<select onchange="ui.iniF=this.value;clRender()">${INI_SIT.map(([k,t])=>`<option value="${k}" ${(ui.iniF||'')===k?'selected':''}>${t}</option>`).join('')}</select></label><label>Período a liquidar<br>${mesPick(workPeriod(),`ui.wp=this.value;show('clientes')`)}</label>
    <button class="g" onclick="clLimpiar()">Limpiar</button><span class="s" id="clcount" style="align-self:center">${g.n===ui.clients.length?g.n+' clientes':g.n+' de '+ui.clients.length+' clientes'}</span></div>
   <div class="cl-grid" id="clgrid">${g.html}</div>`;
 }
