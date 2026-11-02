@@ -2801,6 +2801,19 @@ function coopCard(){
   return `<div class="card" style="margin-top:16px"><b>Tickets de la cooperativa (Unión de Justiniano Posse)</b><p class="s" style="margin:4px 0 10px">No usa el cliente ni el período de arriba: los toma del archivo. Cada comprobante queda en el mes de su fecha, listo para exportar con el Excel de "Comprobantes de compras".</p>${cuerpo}</div>`;
 }
 
+
+/* ===== Compras: el Excel de importación respeta el formato del Excel de "Mis Comprobantes Recibidos" de ARCA (columnas A a AD) ===== */
+const CMP_COLS_ARCA=['Fecha','Tipo','Punto de Venta','Número Desde','Número Hasta','Cód. Autorización','Tipo Doc. Emisor','Nro. Doc. Emisor','Denominación Emisor','Tipo Doc. Receptor','Nro. Doc. Receptor','Tipo Cambio','Moneda','Neto Grav. IVA 0%','IVA 2,5%','Neto Grav. IVA 2,5%','IVA 5%','Neto Grav. IVA 5%','IVA 10,5%','Neto Grav. IVA 10,5%','IVA 21%','Neto Grav. IVA 21%','IVA 27%','Neto Grav. IVA 27%','Neto Gravado Total','Neto No Gravado','Op. Exentas','Otros Tributos','Total IVA','Imp. Total'];
+const CMP_ANCHOS=[13,28,18,16,13,22,21,16,52,23,16,14,8,22,10,25,8,22,12,26,12,23,10,23,18,19,14,18,12,13];
+/** Pasa una fila armada por cmpArmar al formato de ARCA: fecha dd/mm/aaaa como texto, números como números y en blanco las alícuotas sin importe. */
+function cmpFilaArca(f,c){
+  const [y,m,d]=String(f[0]).split('-'),pv=Number(String(f[2]).split('-')[0]),num=v=>v===''||v===null||v===undefined?null:Number(v),cae=String(f[5]||'').trim();
+  const cu=String(f[7]||'').replace(/\D/g,''),rc=String((c&&c.cuit)||'').replace(/\D/g,'');
+  const fila=[d+'/'+m+'/'+y,f[1],pv,num(f[3]),num(f[4]),/^\d{1,15}$/.test(cae)?Number(cae):(cae||null),cu.length===11?'CUIT':null,cu.length===11?Number(cu):null,f[8]||null,rc.length===11?'CUIT':null,rc.length===11?Number(rc):null,1,'$'];
+  for(let i=13;i<=23;i++)fila.push(Number(f[i])?Number(f[i]):null);
+  for(let i=24;i<=29;i++)fila.push(Number(f[i])||0);
+  return fila;
+}
 /* ===== Vencimientos: agregar fechas e impuestos (formulario arriba y errores claros) ===== */
 const VENC_ANUALES=['GANANCIAS_PH','GAN_DDJJ','BP','GAN_ANT'];
 const vencErr=e=>{const m=String((e&&e.message)||'');
@@ -3340,7 +3353,7 @@ function cmpArmar(vs){
     filas.push([v.fecha,tipoTxt,`${pv}-${nro}`,v.numero,v.numero,ka&&raw[ka]!==null&&raw[ka]!==undefined?String(raw[ka]):'',cu.length===11?80:'',cu,v.emisor_nombre||'','','',1,'PES',
       t['0'].n,t['2.5'].i,t['2.5'].n,t['5'].i,t['5'].n,t['10.5'].i,t['10.5'].n,t['21'].i,t['21'].n,t['27'].i,t['27'].n,neto,nog,exe,otr,iva,tot]);
   }
-  if(ext)avisos.unshift(`${ext} comprobante(s) están en moneda extranjera: se exportan en pesos (ya convertidos) con moneda PES y tipo de cambio 1.`);
+  if(ext)avisos.unshift(`${ext} comprobante(s) están en moneda extranjera: se exportan en pesos (ya convertidos) con moneda $ y tipo de cambio 1.`);
   return {filas,avisos,sinDesglose,noCierra};
 }
 function comprasExportarExcel(){
@@ -3348,13 +3361,12 @@ function comprasExportarExcel(){
   if(!v.length){flash('No hay comprobantes de compra en este período para exportar.','err');return draw()}
   if(typeof XLSX==='undefined'){flash('No se pudo cargar el generador de Excel (¿sin conexión?).','err');return draw()}
   const marc=v.filter(x=>!ui.cmpOut.has(x.id));if(!marc.length){flash('No hay ningún comprobante marcado para el Excel.','err');return draw()}
-  const r=cmpArmar(marc),ws=XLSX.utils.aoa_to_sheet([CMP_COLS,...r.filas]);
-  ws['!cols']=CMP_COLS.map((h,i)=>({wch:i===1||i===8?30:i<8?16:14}));
-  r.filas.forEach((_,i)=>{for(let col=11;col<30;col++){if(col===12)continue;const a=XLSX.utils.encode_cell({r:i+1,c:col});if(ws[a]&&typeof ws[a].v==='number')ws[a].z='#,##0.00'}});
-  const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Compras');
+  const r=cmpArmar(marc),filasA=r.filas.map(f=>cmpFilaArca(f,c)),ws=XLSX.utils.aoa_to_sheet([['Mis Comprobantes Recibidos - CUIT '+((c&&c.cuit)||''),...Array(29).fill(null)],CMP_COLS_ARCA,...filasA]);
+  ws['!cols']=CMP_ANCHOS.map(w=>({wch:w}));
+  const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Sheet1');
   ui.cmpAvisos=r.avisos;
   const nom=String((c&&c.razon_social)||'cliente').normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^A-Za-z0-9]+/g,'_').slice(0,40);
-  bajar({blob:new Blob([XLSX.write(wb,{type:'array',bookType:'xlsx'})],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),name:`Compras_importacion_${nom}_${ui.periodo}.xlsx`});
+  bajar({blob:new Blob([XLSX.write(wb,{type:'array',bookType:'biff8'})],{type:'application/vnd.ms-excel'}),name:`Compras_importacion_${nom}_${ui.periodo}.xls`});
   flash(`Se exportaron ${r.filas.length} comprobantes de compra.`+(r.avisos.length?` Hay ${r.avisos.length} aviso(s) para revisar.`:''));draw();
 }
 
