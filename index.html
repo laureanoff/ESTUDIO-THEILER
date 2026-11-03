@@ -2499,12 +2499,13 @@ const antSinAc=s=>String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'');
 /** VEP de anticipo de Ganancias (consolidado o no): CUIT, número, importe de Ganancias y vencimiento. */
 function antVepLeer(lineas){
   const t=lineas.join('\n'),n=antSinAc(t);
-  if(!/Volante Electr[oó]nico de Pago|Nro\.?\s*VEP/i.test(t)||!/GANANCIAS\s+PERSONAS\s+F[IÍ]SICAS/i.test(n))return null;
-  const c=t.match(/\bCUIT:?\s*(\d{2})-?(\d{8})-?(\d)/i),m=t.match(/GANANCIAS\s+PERSONAS\s+F[IÍ]SICAS[^\n$]*\$\s*([\d.]+,\d{2})/i);
+  const pf=/GANANCIAS\s+PERSONAS\s+F[IÍ]SICAS/i.test(n),so=!pf&&/GANANCIAS\s+SOCIEDADES/i.test(n)&&/ANTICIPO/i.test(n);
+  if(!/Volante Electr[oó]nico de Pago|Nro\.?\s*VEP/i.test(t)||(!pf&&!so))return null;
+  const c=t.match(/\bCUIT:?\s*(\d{2})-?(\d{8})-?(\d)/i),m=t.match(pf?/GANANCIAS\s+PERSONAS\s+F[IÍ]SICAS[^\n$]*\$\s*([\d.]+,\d{2})/i:/GANANCIAS\s+SOCIEDADES[^\n$]*\$\s*([\d.]+,\d{2})/i),an=so?n.match(/ANTICIPO\s*\/\s*CUOTA:?\s*(\d{1,2})\b/i):null;
   const tot=t.match(/Importe total a pagar:?\s*\$?\s*([\d.]+,\d{2})/i),v=t.match(/D[ií]a de Expiraci[oó]n:?\s*(\d{4})-(\d{2})-(\d{2})/i),nro=t.match(/Nro\.?\s*VEP(?:\s+Consolidado)?:?\s*(\d+)/i);
   const det=[...t.matchAll(/^([^\n$]{3,80}?)\s*\$\s*([\d.]+,\d{2})\s*$/gm)].map(x=>x[1].trim()+' $ '+x[2]).filter(x=>!/Importe total/i.test(x));
   const num=s=>s?Number(s.replace(/\./g,'').replace(',','.')):null;
-  return {kind:'vep',cuit:c?c[1]+c[2]+c[3]:null,nro:nro?nro[1]:null,importe:num(m?m[1]:(tot?tot[1]:null)),total:tot?num(tot[1]):null,det,vence:v?v[1]+'-'+v[2]+'-'+v[3]:null,per:v?v[1]+'-'+v[2]:null,num:null};
+  return {kind:'vep',cuit:c?c[1]+c[2]+c[3]:null,nro:nro?nro[1]:null,importe:num(m?m[1]:(tot?tot[1]:null)),total:tot?num(tot[1]):null,det,vence:v?v[1]+'-'+v[2]+'-'+v[3]:null,per:v?v[1]+'-'+v[2]:null,num:an&&+an[1]>=1&&+an[1]<=10?+an[1]:null,soc:so};
 }
 /** Compensación F.1151 con destino "Ganancias personas físicas / Anticipos". El texto de estos PDF suele venir sin espacios. */
 function antCompLeer(lineas){
@@ -2526,7 +2527,7 @@ async function antDropLeer(files){
     try{
       const err=await esPdf(f);if(err)throw new Error(err);
       const lin=Array.from(await pdfTexto(f)).map(String),R=antVepLeer(lin)||antCompLeer(lin);
-      if(!R){const t=lin.join('\n');throw new Error(/RECIBO DE HABERES/i.test(t)?'Esto es un recibo de sueldo: cargalo desde Sueldos.':/Volante Electr[oó]nico de Pago|Nro\.?\s*VEP/i.test(t)?'Es un VEP, pero no es de Ganancias personas físicas (anticipos).':'No se reconoció: tiene que ser el VEP del anticipo de Ganancias o la compensación (F.1151) con destino Anticipos, en PDF con texto.')}
+      if(!R){const t=lin.join('\n');throw new Error(/RECIBO DE HABERES/i.test(t)?'Esto es un recibo de sueldo: cargalo desde Sueldos.':/Volante Electr[oó]nico de Pago|Nro\.?\s*VEP/i.test(t)?'Es un VEP, pero no es de anticipos de Ganancias (personas físicas o sociedades).':'No se reconoció: tiene que ser el VEP del anticipo de Ganancias o la compensación (F.1151) con destino Anticipos, en PDF con texto.')}
       if(R.noAnt)throw new Error('Es una compensación, pero su destino no es un anticipo de Ganancias.');
       Object.assign(it,R);
       const cl=R.cuit?antClientes().find(c=>String(c.cuit)===R.cuit):null;it.cid=cl?cl.id:null;
@@ -2551,13 +2552,13 @@ function antPrev(it){
 function antDropHtml(M){
   let n=0;
   const b=M.items.map((it,i)=>{
-    const cab=`<div style="margin-top:12px"><b>${esc(it.nombre)}</b><span class="s">${it.kind==='vep'?'VEP de anticipo de Ganancias':'Compensación F.1151'}</span></div>`;
+    const cab=`<div style="margin-top:12px"><b>${esc(it.nombre)}</b><span class="s">${it.kind==='vep'?'VEP de anticipo de Ganancias'+(it.soc?' (sociedades)':' (personas físicas)'):'Compensación F.1151'}</span></div>`;
     if(it.err)return cab+`<div class="msg err">${esc(it.err)} Este archivo no se carga.</div>`;
     const P=antPrev(it),c=P.c;if(!it.omitir&&P.ok&&(!P.ex||it.reemplazar))n++;
     const est=it.kind==='vep'?(P.pagado?'El anticipo ya figura pagado: solo se adjunta el VEP, el estado no cambia.':'Va a quedar como <b>VEP enviado</b>.'):'Va a quedar como <b>Pagado</b>'+(P.x&&filEnviado(P.x)?' (tenía el VEP enviado: se suma la compensación).':'.');
     return `<div class="card" style="margin:8px 0;${it.omitir?'opacity:.55':''}"><div class="row" style="gap:10px;align-items:center;flex-wrap:wrap"><b>${esc(c?c.razon_social:(it.cuit?'CUIT '+cuitF(it.cuit):'(no se leyó el CUIT)'))}</b>${it.cuit?`<span class="s">CUIT ${cuitF(it.cuit)}</span>`:''}${c?'<span class="tag" style="background:var(--grn);color:var(--grnt)">Cliente cargado</span>':'<span class="tag" style="background:var(--red);color:var(--redt)">Cliente no cargado: no se puede guardar</span>'}<label class="row" style="gap:5px;align-items:center;margin-left:auto"><input type="checkbox" ${it.omitir?'checked':''} onchange="antDropSet(${i},'omitir',this.checked)"> No cargar</label></div>
      <div class="s" style="margin-top:4px">${it.nro?(it.kind==='vep'?'VEP Nro ':'Transacción ')+esc(it.nro)+' · ':''}${it.importe!=null?'Importe $ '+esc(money(it.importe))+' · ':''}${it.kind==='vep'?(it.vence?'Vence '+fAR(it.vence):''):(it.fecha?'Solicitada el '+fAR(it.fecha):'')}${it.det&&it.det.length>1?' · '+esc(it.det.join('; ')):''}</div>
-     ${it.kind==='vep'&&it.det&&it.det.length>1?'<div class="msg warn" style="margin-top:6px">Este VEP trae más de un concepto: el importe del anticipo se tomó solo de Ganancias personas físicas.</div>':''}
+     ${it.kind==='vep'&&it.det&&it.det.length>1?'<div class="msg warn" style="margin-top:6px">Este VEP trae más de un concepto: el importe del anticipo se tomó solo de Ganancias '+(it.soc?'sociedades':'personas físicas')+'.</div>':''}
      <div class="row" style="gap:14px;flex-wrap:wrap;align-items:flex-end;margin:8px 0"><label>Período del anticipo<br>${mesPick(it.per,`antDropSet(${i},'per',this.value)`)}</label>
       <label>Número de anticipo<br><select onchange="antDropSet(${i},'num',this.value?Number(this.value):null)">${antNumOpts(it.num,null)}</select></label></div>
      ${it.kind==='comp'&&!it.num?'<div class="msg warn">No se leyó el número de anticipo: elegilo.</div>':''}${it.kind==='vep'&&!it.num?'<div class="msg warn">El VEP no dice qué número de anticipo es: elegilo (podés dejarlo vacío).</div>':''}
