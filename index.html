@@ -1490,7 +1490,7 @@ function sueVencHtml(c,tipo){
 }
 function sueFicha(c,f,tipo){
   const p=sueProf(f,tipo)||{},s=sueState(f),emp=f.emp.filter(e=>e.tipo===tipo&&e.activo).length;
-  const abierto=(s.ab&&s.ab[tipo]!==undefined)?s.ab[tipo]:(emp>0||!!sueProf(f,tipo));
+  const abierto=(s.ab&&s.ab[tipo]!==undefined)?s.ab[tipo]:false;
   const bol=p.boletas||[];
   return `<details class="card" style="margin-bottom:12px" ${abierto?'open':''} ontoggle="ui.sd.sue.ab=ui.sd.sue.ab||{};ui.sd.sue.ab['${tipo}']=this.open"><summary style="cursor:pointer;font-weight:700">${SUE_TIPOS[tipo]} · ficha de liquidación ${emp?`<span class="s" style="display:inline">(${emp} activo${emp>1?'s':''})</span>`:''}${sueProf(f,tipo)?'':' <span class="s" style="display:inline">sin completar</span>'}</summary>
   ${sueVencHtml(c,tipo)}
@@ -1541,17 +1541,16 @@ function vSueldos(c,f){
     return `<tr><td>${esc(e.nombre)}<span class="s">${e.cuil?cuitF(e.cuil):''}</span>${sueTag(e.tipo)}${envio(e)}</td>
     <td>${p?`<span class="tag" style="background:var(--grn);color:var(--grnt)">Cargado</span><span class="s">${esc(p.nombre_archivo)}</span><div class="row" style="gap:4px;margin-top:4px"><button class="g sm" onclick="verArchivo('${p.path}')">Ver</button>${sub('Reemplazar')}<button class="g sm" onclick="quitarRecibo('${p.id}')">Quitar</button></div>`:`<span class="tag" style="background:var(--amb);color:var(--ambt)">Falta</span> ${sub('Subir PDF')}`}</td>
     <td>${p?(ok?`<div class="row" style="gap:4px;flex-wrap:wrap">${T.lista.filter(t=>t.ok).map(t=>`<button class="b sm" onclick="enviarReciboWa('${p.id}','${t.rol}')">Enviar PDF al ${t.rol}</button>`).join('')}<button class="g sm" onclick="descargarRecibo('${p.id}')">Descargar</button></div><span class="s">Se envía a: ${T.lista.filter(t=>t.ok).map(t=>t.rol+' ('+esc(t.quien)+')').join(' y ')}</span><div style="margin-top:4px">${sueEstadoHtml(p,true)}</div>`:`<span class="s">${T.lista.map(t=>esc(t.motivo)).join('. ')}</span>${sueTelForm(c,T)}<button class="g sm" onclick="descargarRecibo('${p.id}')">Descargar</button><div style="margin-top:4px">${sueEstadoHtml(p,false)}</div>`):'<span class="s">Subí primero el recibo</span>'}</td></tr>`}).join('');
-  return `<h3 style="margin-top:0">Fichas de liquidación</h3><p class="s" style="margin-bottom:8px">Datos de cómo se liquida y se envía cada tipo de personal de este cliente: a quién van los recibos y el VEP, medio de pago, boletas y vencimientos según la terminación del CUIT.</p>${sueSelector(c,f,tipos)}${tipos.map(t=>sueFicha(c,f,t)).join('')}
-  <h3>Empleados</h3>${tipos.length||edit?form:'<div class="msg warn">Tildá arriba qué tipo de personal tiene este empleador para poder agregar empleados.</div>'}${empT}
-  <h3>Recibos de ${mesAnio(s.periodo+'-01')}</h3>
+  return sueAcc('fichas','Fichas de liquidación',`<p class="s" style="margin-bottom:8px">Cómo se liquida y se envía cada tipo de personal: a quién van los recibos y el VEP, medio de pago, boletas y vencimientos.</p>${sueSelector(c,f,tipos)}${tipos.map(t=>sueFicha(c,f,t)).join('')}`,{sub:tipos.length?tipos.map(t=>SUE_TIPOS[t]).join(', '):'sin tipo de personal'})
+  +sueAcc('emps','Empleados',(tipos.length||edit?form:'<div class="msg warn">Tildá en Fichas de liquidación qué tipo de personal tiene este empleador para poder agregar empleados.</div>')+empT,{force:!!(edit||dr||s.formErr),sub:act.length+' activo'+(act.length===1?'':'s')+(f.emp.length>act.length?' · '+(f.emp.length-act.length)+' inactivo(s)':'')})
+  +`<h3 style="margin:16px 0 8px">Recibos de ${mesAnio(s.periodo+'-01')}</h3>
   <div class="card row" style="margin-bottom:12px">
    <label>Período<br>${mesPick(s.periodo,`ui.sd.sue.periodo=this.value;draw()`)}</label>
    <label>Tipo de recibo<br><select onchange="ui.sd.sue.tipo=this.value;draw()">${TIPOS_REC.map(t=>`<option ${s.tipo===t?'selected':''}>${t}</option>`).join('')}</select></label>
-   <label class="g">Subir varios PDF a la vez<input type="file" accept="application/pdf,.pdf" multiple hidden onchange="subirVarios(this)"></label></div>
-  <p class="s" style="margin-bottom:10px">Para subir varios juntos, cada archivo tiene que llevar en su nombre el CUIL o el nombre y apellido del empleado.</p>
+   <label class="g" title="Cada archivo tiene que llevar en su nombre el CUIL o el nombre y apellido del empleado.">Subir varios PDF a la vez<input type="file" accept="application/pdf,.pdf" multiple hidden onchange="subirVarios(this)"></label></div>
   <div class="tw" style="margin-bottom:14px"><table><thead><tr><th>Empleado</th><th>Recibo</th><th>Enviar por WhatsApp</th></tr></thead><tbody>${act.length?filas:'<tr><td colspan="3" style="color:var(--mut)">No hay empleados activos.</td></tr>'}</tbody></table></div>
-  ${sueTodosCard(c,f)}${sueMsgCard()}
-  <p class="s" style="margin-top:8px">El recibo se envía como archivo PDF, sin enlace. En el celular se abre el menú de compartir con el PDF y el texto ya cargados (elegís WhatsApp y el contacto). En la compu se descarga el PDF y se abre el chat con el número y el texto: arrastrás el archivo al chat. La app no sabe si el mensaje se envió: solo anota que lo preparaste.</p>`;
+  ${sueAcc('todos','Archivo con todos los recibos juntos',sueTodosCard(c,f))}
+  <p class="s" style="margin-top:6px" title="En el celular se abre el menú de compartir con el PDF y el texto cargados. En la compu se descarga el PDF y se abre el chat: arrastrás el archivo. La app no sabe si el mensaje se envió: solo anota que lo preparaste.">El recibo se envía como PDF, sin enlace. Los textos de los mensajes se editan en la pestaña “Mensajes de WhatsApp” de arriba.</p>`;
 }
 async function recargarSueldos(){await loadSueldosAll()}
 async function saveEmp(e){
@@ -1864,11 +1863,10 @@ function sueMsgSet(k,v){sueMsgs()[k]=v;sueMsgRefresh()}
 function sueMsgReset(k){sueMsgs()[k]=k==='pdfAdo'?MSG_PDF_ADO:MSG_PDF_EMP;draw()}
 function sueMsgCard(){
   const s=sueMsgs(),P=sueMsgPrev();
-  return `<div class="card" style="margin-bottom:14px"><b>Mensajes de WhatsApp</b>
-  <p class="s" style="margin:4px 0 10px">Se completan solos con los datos de cada recibo: {nombre} (a quien se le escribe), {empleado}, {empleador} y {periodo}. El PDF del recibo va adjunto (sin enlace). Abajo ves cómo queda con ${P.m.real?'un recibo real ('+esc(P.m.empleado)+')':'datos de ejemplo'}, y se actualiza mientras escribís.</p>
+  return sueAcc('msg','Mensajes de WhatsApp',`<p class="s" style="margin:4px 0 10px">Se completan solos: {nombre}, {empleado}, {empleador} y {periodo}. El PDF va adjunto. La vista previa usa ${P.m.real?'un recibo real ('+esc(P.m.empleado)+')':'datos de ejemplo'} y se actualiza mientras escribís.</p>
   <div class="fgrid">
    <div class="full"><label>Mensaje para el empleador<textarea rows="5" oninput="sueMsgSet('pdfEmp',this.value)">${esc(s.pdfEmp)}</textarea></label><div class="s" style="margin-top:4px">Vista previa:</div><pre id="sue_pv_emp" style="white-space:pre-wrap;margin:4px 0;padding:10px;border-radius:10px;background:var(--grn,#e8f5e9);font:inherit">${esc(P.emp)}</pre><button type="button" class="g sm" onclick="sueMsgReset('pdfEmp')">Volver al mensaje original</button></div>
-   <div class="full"><label>Mensaje para el empleado<textarea rows="5" oninput="sueMsgSet('pdfAdo',this.value)">${esc(s.pdfAdo)}</textarea></label><div class="s" style="margin-top:4px">Vista previa:</div><pre id="sue_pv_ado" style="white-space:pre-wrap;margin:4px 0;padding:10px;border-radius:10px;background:var(--grn,#e8f5e9);font:inherit">${esc(P.ado)}</pre><button type="button" class="g sm" onclick="sueMsgReset('pdfAdo')">Volver al mensaje original</button></div>${sueMsgTodosBloque()}</div></div>`;
+   <div class="full"><label>Mensaje para el empleado<textarea rows="5" oninput="sueMsgSet('pdfAdo',this.value)">${esc(s.pdfAdo)}</textarea></label><div class="s" style="margin-top:4px">Vista previa:</div><pre id="sue_pv_ado" style="white-space:pre-wrap;margin:4px 0;padding:10px;border-radius:10px;background:var(--grn,#e8f5e9);font:inherit">${esc(P.ado)}</pre><button type="button" class="g sm" onclick="sueMsgReset('pdfAdo')">Volver al mensaje original</button></div>${sueMsgTodosBloque()}</div>`,{sub:'texto editable'});
 }
 function sueEstadoHtml(p,ok){
   const e=sueEstado(p),fe=d=>new Date(d).toLocaleDateString('es-AR');
@@ -1878,7 +1876,7 @@ function sueEstadoHtml(p,ok){
 }
 function sueEnvioPanel(){
   const E=sueEnvSt(),s=ui.sueCfg,{rows,faltan}=sueEnvFilas();
-  if(!rows.length&&!faltan.length)return '';
+  if(!rows.length&&!faltan.length)return sueMsgCard();
   const cnt={pend:rows.filter(r=>sueEstado(r.p)!=='enviado').length,env:rows.filter(r=>sueEstado(r.p)==='enviado').length,todos:rows.length},F=E.f||'pend';
   const vis=rows.filter(r=>F==='todos'||(F==='env'?sueEstado(r.p)==='enviado':sueEstado(r.p)!=='enviado'));
   const sel=vis.filter(r=>E.sel.has(r.p.id)).length,corresp=vis.filter(r=>r.ok).length,nuevos=vis.filter(r=>r.ok&&!r.p.enviado_at).length;
@@ -2886,20 +2884,35 @@ const DZ_AUTO={ifile:()=>previsualizar(),lfile:()=>libroPrevisualizar(),vfile:()
   const aviso=m=>{let t=document.getElementById('dz_toast');if(!t){t=document.createElement('div');t.id='dz_toast';document.body.appendChild(t)}t.textContent=m;clearTimeout(tt);tt=setTimeout(()=>{const x=document.getElementById('dz_toast');if(x)x.remove()},4500)};
   const hayArch=e=>!!(e.dataTransfer&&[...(e.dataTransfer.types||[])].includes('Files'));
   const tipoOk=(f,acc)=>{const t=String(acc||'').split(',').map(x=>x.trim().toLowerCase()).filter(Boolean);if(!t.length)return true;const n=f.name.toLowerCase(),m=(f.type||'').toLowerCase();return t.some(a=>a[0]==='.'?n.endsWith(a):a.endsWith('/*')?m.startsWith(a.slice(0,-1)):m===a)};
-  /** Recuadro más cercano (label, formulario o tarjeta) que contiene un campo de archivo; ignora los recuadros que ya tienen su propia zona de arrastre. */
+  /** Recuadro más cercano que contiene un campo de archivo: la fila de una tabla (para los botones chicos "+ VEP", "Subir recibo"), o si no, la etiqueta, el formulario o la tarjeta. Ignora los recuadros que ya tienen su propia zona de arrastre. */
+  const campos=el=>[...el.querySelectorAll('input[type=file]')].filter(i=>!i.hasAttribute('capture')&&!i.disabled);
   const zona=t=>{
     if(!t||!t.closest||t.closest('[ondrop]'))return null;
+    const fila=t.closest('tr');
+    if(fila){const inp=campos(fila);if(inp.length)return {el:fila,inp,fila:true}}
     for(let el=t.closest('label,form,.card');el;el=el.parentElement&&el.parentElement.closest('label,form,.card')){
-      const inp=[...el.querySelectorAll('input[type=file]')].filter(i=>!i.hasAttribute('capture')&&!i.disabled);
+      const inp=campos(el);
       if(inp.length)return {el,inp}}
     return null};
   const apagar=()=>{if(on){on.classList.remove('dz-on');on=null}};
   document.addEventListener('dragover',e=>{
     if(!hayArch(e)||(e.target.closest&&e.target.closest('[ondrop]')))return;
-    e.preventDefault();const z=zona(e.target),box=z?(z.el.closest('.card')||z.el):null;
+    e.preventDefault();const z=zona(e.target),box=z?(z.fila?z.el:(z.el.closest('.card')||z.el)):null;
     if(box!==on){apagar();if(box){on=box;on.classList.add('dz-on')}}
     if(e.dataTransfer)e.dataTransfer.dropEffect='copy'});
   document.addEventListener('dragleave',e=>{if(on&&(!e.relatedTarget||!on.contains(e.relatedTarget)))apagar()});
+  /** Pone los archivos en el campo elegido y dispara su lector. */
+  const cargar=(inp,fs,e)=>{
+    let arch=fs;if(!inp.multiple&&fs.length>1){arch=[fs[0]];aviso('Esta carga recibe de a un archivo: se tomó '+fs[0].name+'.')}
+    try{const dt=new DataTransfer();arch.forEach(f=>dt.items.add(f));inp.files=dt.files}catch(x){aviso('Tu navegador no permite arrastrar acá: usá el botón de elegir archivo.');return}
+    const au=inp.id&&DZ_AUTO[inp.id];
+    if(au){aviso('Archivo cargado: '+arch[0].name);try{au()}catch(x){aviso('No se pudo leer el archivo: '+((x&&x.message)||x))}return}
+    if(!inp.getAttribute('onchange'))aviso('Archivo listo: '+arch[0].name+'. Completá el resto y guardá.');
+    inp.dispatchEvent(new Event('change',{bubbles:true}))};
+  /** Varios casilleros en la misma fila ("Presentación", "VEP", "Compensación"): se reconoce el archivo y va al que corresponde. */
+  const slotAdj=async(cand,f)=>{
+    try{const c=await banClasificar(f),q=/Compensaci/.test(c.lbl||'')?'COMPENSACION':/VEP/.test(c.lbl||'')?'VEP':'PRESENTACION';
+      return cand.find(i=>String(i.getAttribute('onchange')||'').includes("adjArch('"+q+"'"))||null}catch(x){return null}};
   document.addEventListener('drop',e=>{
     if(!hayArch(e))return;
     const propia=e.defaultPrevented||(e.target.closest&&e.target.closest('[ondrop]'));
@@ -2909,13 +2922,17 @@ const DZ_AUTO={ifile:()=>previsualizar(),lfile:()=>libroPrevisualizar(),vfile:()
     if(!z){bandejaSoltar(fs);return}
     const cand=z.inp.filter(i=>fs.every(f=>tipoOk(f,i.accept)));
     if(!cand.length){aviso('Ese tipo de archivo no se puede cargar acá. Se espera: '+(z.inp[0].accept||'cualquiera')+'.');return}
-    const inp=cand.find(i=>{const l=i.closest('label')||i.parentElement;return l&&l.contains(e.target)})||cand[0];
-    let arch=fs;if(!inp.multiple&&fs.length>1){arch=[fs[0]];aviso('Esta carga recibe de a un archivo: se tomó '+fs[0].name+'.')}
-    try{const dt=new DataTransfer();arch.forEach(f=>dt.items.add(f));inp.files=dt.files}catch(x){aviso('Tu navegador no permite arrastrar acá: usá el botón de elegir archivo.');return}
-    const au=inp.id&&DZ_AUTO[inp.id];
-    if(au){aviso('Archivo cargado: '+arch[0].name);try{au()}catch(x){aviso('No se pudo leer el archivo: '+((x&&x.message)||x))}return}
-    if(!inp.getAttribute('onchange'))aviso('Archivo listo: '+arch[0].name+'. Completá el resto y guardá.');
-    inp.dispatchEvent(new Event('change',{bubbles:true}))});
+    const hov=cand.find(i=>{const l=i.closest('label')||i.parentElement;return l&&l.contains(e.target)});
+    if(!hov&&cand.length>1&&cand.every(i=>/adjArch\(/.test(i.getAttribute('onchange')||''))){slotAdj(cand,fs[0]).then(i=>{if(i)aviso('Reconocido: va en "'+(i.closest('label').textContent||'').replace('+','').trim()+'".');cargar(i||cand[0],fs,e)});return}
+    cargar(hov||cand[0],fs,e)});
+  /** Pista visible en cada carga de archivos que no la tiene (la etiqueta y, si el campo se ve, una línea de ayuda). */
+  const marcar=()=>{document.querySelectorAll('input[type=file]').forEach(i=>{
+    if(i.dataset.dz)return;i.dataset.dz='1';if(i.hasAttribute('capture'))return;
+    const lab=i.closest('label'),card=i.closest('.card');
+    if(lab&&!lab.title)lab.title='Hacé clic o arrastrá el archivo hasta acá (también podés soltarlo sobre toda la fila).';
+    const oculto=i.hidden||/display:\s*none/.test(i.getAttribute('style')||'');
+    if(!oculto&&lab&&!i.closest('[ondrop]')&&!(card&&/arrastr/i.test(card.textContent||''))){const sp=document.createElement('span');sp.className='s';sp.textContent='También podés arrastrar el archivo y soltarlo en este recuadro.';lab.appendChild(sp)}})};
+  try{let tm=null;new MutationObserver(()=>{clearTimeout(tm);tm=setTimeout(marcar,150)}).observe(document.body,{childList:true,subtree:true})}catch(x){}
 })();
 
 /** Campo para cargar el WhatsApp del empleador justo donde falta (si no, el recibo no se puede enviar). */
@@ -3043,6 +3060,9 @@ async function banClasificar(f){
   if(ext==='pdf'||f.type==='application/pdf'){
     const err=await esPdf(f);if(err)return {err};
     const lin=Array.from(await pdfTexto(f)).map(String),t=lin.join('\n');
+    if(fvEsFactura(lin)){const x=fvExtraer(lin).d,cl=x.cuitEm?ui.clients.find(c=>String(c.cuit)===x.cuitEm):null;
+      if(cl)return {dest:'ventas',tipo:'fv',lbl:'Factura de venta de '+cl.razon_social,cid:cl.id};
+      return {err:'Es una factura que no emitió ningún cliente del estudio (CUIT del emisor '+(x.cuitEm||'no leído')+'). Las compras se cargan con el Excel de ARCA o Escanear QR.'}}
     if(ddjjTipo(lin))return {dest:'cumplimiento',lbl:'Declaración jurada'};
     const av=antVepLeer(lin)||antCompLeer(lin);
     if(av&&!av.noAnt)return {dest:'anticipos',lbl:av.kind==='vep'?'VEP de anticipo de Ganancias':'Compensación F.1151'};
@@ -3058,7 +3078,12 @@ async function banClasificar(f){
     try{const r=rsbParse(lin);if(r&&r.movs&&r.movs.length>=3)return {dest:'bancos',lbl:'Resumen bancario'}}catch(e){}
     return {err:'No se reconoció qué documento es: cargalo desde su pantalla.'};
   }
-  if(/^image\//.test(f.type)||/\.(jpe?g|png|webp|heic)$/i.test(f.name))return {err:'Las fotos se cargan desde Escanear QR (tickets) o desde Resúmenes bancarios.'};
+  if(/^image\//.test(f.type)||/\.(jpe?g|png|webp|heic)$/i.test(f.name)){
+    try{const q=parseAfipQr(await qrDeImagen(await createImageBitmap(f)));
+      if(q.ok){const cl=ui.clients.find(c=>String(c.cuit)===q.data.cuit);
+        if(cl)return {dest:'ventas',tipo:'fv',lbl:'Foto de factura de venta de '+cl.razon_social,cid:cl.id};
+        return {err:'La foto es de una factura que no emitió ningún cliente del estudio: si es una compra, cargala desde Escanear QR.'}}}catch(e){}
+    return {err:'No se encontró el QR de una factura en la foto. Las fotos de resúmenes se cargan desde Resúmenes bancarios y las de tickets desde Escanear QR.'}}
   if(ext==='xls'||ext==='xlsx'){
     let rows;try{rows=await coopLeerFilas(f)}catch(e){return {err:'No se pudo abrir el Excel: '+((e&&e.message)||e)}}
     try{const co=coopAnalizar(rows);if(co&&co.ok)return {dest:'importar',lbl:'Tickets de la cooperativa',tipo:'coop'}}catch(e){}
@@ -3085,7 +3110,7 @@ async function banIr(g){
     else if(g.dest==='sueldos')await sueMultiLeer(F);
     else if(g.dest==='bancos')await rsbLeerArchivos(F);
     else if(g.dest==='importar'){if(g.tipo==='coop')await coopLeer(F);else{banPonerArchivo('ifile',F[0]);await previsualizar()}}
-    else if(g.dest==='ventas'){banPonerArchivo('vfile',F[0]);await ventasPrevisualizar()}
+    else if(g.dest==='ventas'){if(g.tipo==='fv')await fvLeer(F);else{banPonerArchivo('vfile',F[0]);await ventasPrevisualizar()}}
   }catch(e){flash('No se pudo abrir '+BAN_DEST[g.dest]+': '+errTxt(e),'err');draw()}
 }
 async function bandejaSoltar(files){
@@ -3096,8 +3121,8 @@ async function bandejaSoltar(files){
   for(const f of files){
     let c;try{c=await banClasificar(f)}catch(e){c={err:(e&&e.message)||String(e)}}
     if(c.err){BAN.log.push({ok:false,n:f.name,t:c.err});continue}
-    const solo=c.dest==='importar'||c.dest==='ventas';
-    let g=solo?null:gr.find(x=>x.dest===c.dest);
+    const solo=c.dest==='importar'||(c.dest==='ventas'&&c.tipo!=='fv');
+    let g=solo?null:gr.find(x=>x.dest===c.dest&&x.tipo===c.tipo);
     if(!g){g={dest:c.dest,files:[],cid:c.cid,per:c.per,tipo:c.tipo};gr.push(g)}
     g.files.push(f);
     BAN.log.push({ok:true,n:f.name,t:c.lbl+' → '+BAN_DEST[c.dest]});
@@ -3122,7 +3147,7 @@ function banRender(){
 }
 function bandejaCard(){
   if(typeof isLiq==='function'&&isLiq())return '';
-  return `<div class="card" ondragover="event.preventDefault();this.style.outline='2px dashed var(--blut,#3b6fd4)'" ondragleave="this.style.outline=''" ondrop="event.preventDefault();this.style.outline='';bandejaSoltar(event.dataTransfer.files)" style="margin-bottom:14px"><div class="row" style="gap:10px;align-items:center;flex-wrap:wrap"><div style="flex:1;min-width:240px"><b>Bandeja de archivos</b><span class="s">Soltá acá cualquier archivo (recibos, boletas, VEP, declaraciones juradas, resúmenes bancarios, Excel de ARCA, tickets de la cooperativa). El sistema reconoce qué es, abre la pantalla que corresponde y lo deja listo para revisar. También funciona soltándolo en cualquier parte de una pantalla que no tenga su propio recuadro.</span></div><label class="b" style="cursor:pointer">Elegir archivos<input type="file" multiple accept=".pdf,.xls,.xlsx" style="display:none" onchange="bandejaSoltar(this.files);this.value=''"></label></div></div>`;
+  return `<div class="card" ondragover="event.preventDefault();this.style.outline='2px dashed var(--blut,#3b6fd4)'" ondragleave="this.style.outline=''" ondrop="event.preventDefault();this.style.outline='';bandejaSoltar(event.dataTransfer.files)" style="margin-bottom:14px"><div class="row" style="gap:10px;align-items:center;flex-wrap:wrap"><div style="flex:1;min-width:240px"><b>Bandeja de archivos</b><span class="s">Soltá acá cualquier archivo (recibos, boletas, VEP, declaraciones juradas, resúmenes bancarios, facturas de venta, Excel de ARCA, tickets de la cooperativa). El sistema reconoce qué es, abre la pantalla que corresponde y lo deja listo para revisar. También funciona soltándolo en cualquier parte de una pantalla que no tenga su propio recuadro.</span></div><label class="b" style="cursor:pointer">Elegir archivos<input type="file" multiple accept=".pdf,.xls,.xlsx" style="display:none" onchange="bandejaSoltar(this.files);this.value=''"></label></div></div>`;
 }
 
 /* ===== Inicio rediseñado: resumen por cliente en recuadros chicos ===== */
@@ -3230,6 +3255,263 @@ const rsbDupTxt=s=>`${s.banco||'banco'}${s.cuenta?', cuenta '+s.cuenta:''}, del 
 function rsbDupHtml(D){
   const s=rsbYaCargado(D);if(!s)return '';
   return `<div class="msg err" style="margin-bottom:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span style="flex:1;min-width:240px"><b>Este resumen ya está cargado.</b> Coincide con el guardado: ${esc(rsbDupTxt(s))}${s.created_at?', subido el '+esc(fAR(String(s.created_at).slice(0,10))):''}. No se puede guardar de nuevo.</span><button class="g sm" onclick="rsbAbrir('${s.id}')">Abrir el que ya está guardado</button><button class="g sm" onclick="rsbDescartar()">Descartar este</button></div>`;
+}
+
+/* ===== Ventas: lector de facturas emitidas (PDF, foto o archivo) =====
+   Lee la factura electrónica de ARCA (la que emite el cliente del estudio), reconoce al cliente por el CUIT del emisor,
+   y la carga en Ventas con su PDF. Toda factura se revisa en una vista previa antes de guardarse. */
+const FV_TIPO_LETRA={FACTURA:{A:1,B:6,C:11,M:51,E:19},'NOTA DE CREDITO':{A:3,B:8,C:13,M:53,E:21},'NOTA DE DEBITO':{A:2,B:7,C:12,M:52,E:20}};
+const fvRound=x=>Math.round((x+Number.EPSILON)*100)/100;
+const fvMonto=s=>{const n=pNum(String(s||'').replace(/[^\d.,-]/g,''));return n===null?null:n};
+/** Primera copia de la factura (los PDF de ARCA traen original, duplicado y triplicado). */
+function fvPrimera(L){const i=L.findIndex((l,k)=>k>3&&/^\s*(duplicado|triplicado)\s*$/i.test(String(l)));return i>0?L.slice(0,i):L}
+/** ¿Parece una factura, nota de crédito o nota de débito electrónica emitida? */
+function fvEsFactura(L){
+  const t=L.slice(0,120).join('\n'),n=norm(t);
+  return /punto de venta:?\s*\d+/i.test(t)&&/comp\.?\s*nro/i.test(t)&&(/\bfactura\b|nota de (credito|debito)/.test(n))&&(/\bCAE\b/i.test(t)||/cod\.?\s*\d/i.test(t));
+}
+function fvExtraer(L0){
+  const L=fvPrimera(L0.map(String)),t=L.join('\n'),n=norm(t),av=[],d={};
+  const m1=(re,i=1)=>{const m=t.match(re);return m?m[i]:null};
+  // tipo de comprobante
+  let cod=m1(/COD\.?\s*0*(\d{1,3})\b/i);cod=cod?Number(cod):null;
+  if(!cod){const clase=/nota de credito/.test(n)?'NOTA DE CREDITO':/nota de debito/.test(n)?'NOTA DE DEBITO':'FACTURA',letra=L.slice(0,10).map(x=>x.trim()).find(x=>/^[ABCME]$/.test(x));cod=letra?FV_TIPO_LETRA[clase][letra]:null;if(cod)av.push('El código de comprobante no se leyó: se dedujo la letra de la factura. Revisalo.')}
+  d.tipo=cod;
+  const pn=t.match(/punto de venta:?\s*(\d+)\s*comp\.?\s*nro:?\s*(\d+)/i);
+  d.pv=pn?Number(pn[1]):(m1(/punto de venta:?\s*(\d+)/i)?Number(m1(/punto de venta:?\s*(\d+)/i)):null);
+  d.num=pn?Number(pn[2]):(m1(/comp\.?\s*nro:?\s*(\d+)/i)?Number(m1(/comp\.?\s*nro:?\s*(\d+)/i)):null);
+  const f=t.match(/fecha de emisi[oó]n:?\s*(\d{2})\/(\d{2})\/(\d{4})/i);d.fecha=f?f[3]+'-'+f[2]+'-'+f[1]:null;
+  // CUIT del emisor y del receptor
+  const cuits=[...t.matchAll(/CUIT:?\s*(\d{2}-?\d{8}-?\d)/gi)].map(x=>x[1].replace(/\D/g,''));
+  d.cuitEm=cuits[0]||null;d.nomEm=(m1(/raz[oó]n social:\s*(.+?)\s+fecha de emisi/i)||'').trim()||null;
+  const iR=L.findIndex(l=>/apellido y nombre\s*\/\s*raz[oó]n social/i.test(l));
+  if(iR>=0){
+    const ln=L[iR],mc=ln.match(/CUIT:?\s*(\d{2}-?\d{8}-?\d)/i);d.cuitRec=mc?mc[1].replace(/\D/g,''):null;
+    let nom=(ln.split(/raz[oó]n social:?/i).pop()||'').trim(),sig=L[iR+1]||'';
+    if(sig&&!/^(condici[oó]n|domicilio|c[oó]digo|per[ií]odo|cuit|dni)/i.test(sig.trim())&&!/:/.test(sig))nom=(nom+' '+sig.trim()).trim();
+    d.nomRec=nom||null;
+  }else{d.cuitRec=cuits[1]||null;d.nomRec=null}
+  if(!d.cuitRec){d.nomRec=d.nomRec||'Consumidor final'}
+  // importes
+  const money1=re=>{const m=t.match(re);return m?fvMonto(m[1]):null};
+  const total=money1(/importe total:?\s*\$?\s*(-?[\d.,]+)/i);
+  const exento=money1(/importe exento:?\s*\$?\s*(-?[\d.,]+)/i)||0,nograv=money1(/importe no gravado:?\s*\$?\s*(-?[\d.,]+)/i)||0,netoG=money1(/importe neto gravado:?\s*\$?\s*(-?[\d.,]+)/i);
+  const otros=Math.max(0,...[...t.matchAll(/importe otros tributos:?\s*\$?\s*(-?[\d.,]+)/gi)].map(x=>fvMonto(x[1])||0));
+  const ivaCont=money1(/iva contenido:?\s*\$?\s*(-?[\d.,]+)/i);
+  const ivas={};[...t.matchAll(/\bIVA\s*(27|21|10[.,]5|5|2[.,]5|0)\s*%:?\s*\$?\s*(-?[\d.,]+)/gi)].forEach(x=>{const r=x[1].replace(',','.');ivas[r]=(ivas[r]||0)+(fvMonto(x[2])||0)});
+  d.total=total;d.exento=exento;d.nograv=nograv;d.otros=otros;
+  let netos={},iva=0,neto=0;
+  const conIva=Object.keys(ivas).length>0;
+  if(conIva){
+    Object.entries(ivas).forEach(([r,v])=>{iva+=v;if(v>0)netos[r]=fvRound(v*100/Number(r))});
+    neto=Object.values(netos).reduce((a,b)=>a+b,0);
+    if(netoG!==null&&Math.abs(netoG-neto)>0.05*Math.max(1,Object.keys(netos).length)){
+      if(Object.keys(netos).length===1){neto=netoG;netos[Object.keys(netos)[0]]=netoG}
+      else if(!Object.keys(netos).length)neto=netoG;
+      else av.push('El neto gravado informado ('+money(netoG)+') no coincide con el calculado desde los IVA ('+money(neto)+'). Revisalo.')}
+    else if(netoG!==null&&!Object.keys(netos).length)neto=netoG;
+  }else if(ivaCont!==null&&ivaCont>0&&total!==null){
+    iva=ivaCont;neto=fvRound(total-ivaCont-otros-exento-nograv);
+    const r=neto>0?iva*100/neto:0,std=[27,21,10.5,5,2.5].reduce((b,x)=>Math.abs(x-r)<Math.abs(b-r)?x:b,21);netos[String(std)]=neto;
+  }
+  d.neto=fvRound(neto);d.iva=fvRound(iva);d.netos=netos;d.ivas=ivas;
+  // lo que sobra del total
+  if(total!==null){
+    const resto=fvRound(total-(d.neto+d.iva+exento+nograv+otros));
+    if(Math.abs(resto)>0.02){
+      if(resto>0&&d.neto===0&&d.iva===0&&exento===0&&nograv===0){
+        if(ivaCont===null&&[6,7,8].includes(Number(d.tipo))){d.neto=fvRound(resto/1.21);d.iva=fvRound(resto-d.neto);d.netos={'21':d.neto};av.push('La factura B no discrimina el IVA (viene incluido en el total): se calculó al 21%. Si la operación tiene otra alícuota o es exenta, cambiala en "IVA incluido en el total".')}
+        else{d.exento=fvRound(resto);av.push('La factura informa IVA contenido en cero: se cargó como exenta. Si corresponde otra alícuota o "No gravado", cambiala en "IVA incluido en el total".')}}
+      else av.push('Neto, IVA y otros conceptos suman '+money(d.neto+d.iva+exento+nograv+otros)+' y el total es '+money(total)+'. Revisá los importes.')}
+  }else av.push('No se leyó el importe total.');
+  d.cae=m1(/CAE\s*N[°ºo]?:?\s*(\d{10,16})/i);d.caeVto=(()=>{const x=t.match(/vto\.?\s*de\s*CAE:?\s*(\d{2})\/(\d{2})\/(\d{4})/i);return x?x[3]+'-'+x[2]+'-'+x[1]:null})();
+  const falt=[['tipo',d.tipo],['punto de venta',d.pv],['número',d.num],['fecha',d.fecha],['CUIT del emisor',d.cuitEm]].filter(x=>x[1]===null||x[1]===undefined).map(x=>x[0]);
+  if(falt.length)av.push('No se pudo leer: '+falt.join(', ')+'.');
+  return {d,avisos:av,ok:!falt.length&&total!==null};
+}
+/** Datos del QR de ARCA (si la foto lo trae): son los más confiables para identificar el comprobante. */
+function fvAplicarQr(r,qr){
+  if(!qr||!qr.ok)return r;const q=qr.data,d=r.d,dif=[];
+  const pisa=(k,v,txt)=>{if(d[k]!==null&&d[k]!==undefined&&d[k]!==v)dif.push(txt);d[k]=v};
+  pisa('fecha',q.fecha,'fecha');pisa('cuitEm',q.cuit,'CUIT');pisa('pv',q.ptoVta,'punto de venta');pisa('tipo',q.tipoCmp,'tipo');pisa('num',q.nroCmp,'número');
+  if(d.total!==null&&d.total!==undefined&&Math.abs(d.total-q.importe)>0.02)dif.push('total');
+  if(d.total===null||d.total===undefined||Math.abs(d.total-q.importe)>0.02){d.total=q.importe}
+  if(q.raw&&q.raw.nroDocRec&&String(q.raw.nroDocRec).replace(/\D/g,'').length===11&&!d.cuitRec)d.cuitRec=String(q.raw.nroDocRec).replace(/\D/g,'');
+  r.qr=true;if(dif.length)r.avisos.push('El texto leído de la foto no coincidía con el QR en: '+dif.join(', ')+'. Se usó el QR.');
+  r.ok=r.ok||(d.tipo&&d.pv!==null&&d.num!==null&&d.fecha&&d.cuitEm&&d.total!==null);
+  return r;
+}
+
+/* --- flujo: leer, revisar y guardar --- */
+const fvFiles=new Map();
+const FV_STD=[27,21,10.5,5,2.5];
+const fvS=x=>x===null||x===undefined?'':String(x).replace('.',',');
+const fvN=x=>{const n=pNum(x);return n===null||isNaN(n)?0:n};
+async function fvLeerUno(f){
+  const it={id:uid()+uid(),nombre:f.name},ext=(f.name.split('.').pop()||'').toLowerCase();
+  try{
+    let r,subir=f,tipoArch='application/pdf',fuente='factura_pdf';
+    if(ext==='pdf'||f.type==='application/pdf'){
+      const e=await esPdf(f);if(e)throw new Error(e);
+      const lin=Array.from(await pdfTexto(f)).map(String);
+      if(!fvEsFactura(lin))throw new Error('No parece una factura electrónica de ARCA. Si es una liquidación de granos, hacienda o leche, cargala con "Cargar liquidación (PDF)".');
+      r=fvExtraer(lin);
+    }else if(/^image\//.test(f.type)||/\.(jpe?g|png|webp|heic|heif)$/i.test(f.name)){
+      fuente='factura_foto';const im=await tkImagenes(f);subir=im.blob;tipoArch='image/jpeg';
+      let qr=null;try{qr=parseAfipQr(await qrDeImagen(im.bmp))}catch(x){}
+      let lin=[];try{const w=await tkMotor(),o=await w.recognize(im.ocr);lin=String(o.data.text||'').split('\n').map(x=>x.trim()).filter(Boolean)}catch(x){}
+      r=lin.length&&fvEsFactura(lin)?fvExtraer(lin):{d:{tipo:null,pv:null,num:null,fecha:null,cuitEm:null,cuitRec:null,nomRec:null,total:null,exento:0,nograv:0,otros:0,neto:0,iva:0,netos:{}},avisos:[],ok:false};
+      r=fvAplicarQr(r,qr);
+      if(!r.ok&&!qr.ok)throw new Error('No pude leer la factura de la foto. Probá con más luz y de frente, o subí el PDF.');
+      r.avisos.unshift(qr&&qr.ok?'Foto leída con el QR de ARCA y reconocimiento de texto: controlá los importes contra la factura.':'Foto leída por reconocimiento de texto, sin QR: puede confundir números. Controlá cada dato contra la factura.');
+    }else if(/^xlsx?$/.test(ext))throw new Error('Este es un Excel: usá el recuadro "Mis Comprobantes Emitidos" de más abajo.');
+    else throw new Error('Solo se leen facturas en PDF o en foto (JPG, PNG).');
+    const d=r.d,cl=d.cuitEm?ui.clients.find(c=>String(c.cuit)===d.cuitEm):null;
+    Object.assign(it,{alic:'auto',cid:cl?cl.id:null,auto:!!cl,cuitEm:d.cuitEm,nomEm:d.nomEm||null,avisos:r.avisos,netos:d.netos||{},editado:false,qr:!!r.qr,cae:d.cae||null,caeVto:d.caeVto||null,fuente,
+      v:{fecha:d.fecha||'',tipo:d.tipo?String(d.tipo):'',pv:fvS(d.pv),num:fvS(d.num),cuitRec:d.cuitRec||'',nomRec:d.nomRec||'',neto:fvS(d.neto),iva:fvS(d.iva),exento:fvS(d.exento),nograv:fvS(d.nograv),otros:fvS(d.otros),total:fvS(d.total)}});
+    it.orig={v:{...it.v},netos:{...(it.netos||{})}};
+    fvFiles.set(it.id,{blob:subir,name:fuente==='factura_foto'?f.name.replace(/\.[^.]+$/,'')+'.jpg':f.name,type:tipoArch});
+  }catch(e){it.err=(e&&e.message)||String(e)}
+  return it;
+}
+async function fvCargarEx(M,cid){
+  M.ex=M.ex||{};if(!cid||M.ex[cid])return;
+  try{M.ex[cid]=(await fetchAll((a,b)=>sb.from('sales_invoices').select('tipo_cmp,punto_venta,numero').eq('client_id',cid).range(a,b))).map(x=>[Number(x.tipo_cmp),Number(x.punto_venta),Number(x.numero)].join('|'))}catch(e){M.ex[cid]=[]}
+}
+async function fvLeer(files){
+  files=[...files];if(!files.length)return;
+  const M=ui.fvt=(ui.fvt&&ui.fvt.fase==='previa')?ui.fvt:{fase:'leyendo',items:[],ex:{}};
+  M.fase='leyendo';M.n=files.length;M.k=0;draw();
+  for(const f of files){M.items.push(await fvLeerUno(f));M.k++;draw()}
+  for(const it of M.items)if(it.cid)await fvCargarEx(M,it.cid);
+  M.fase=M.items.some(i=>!i.err)?'previa':'error';draw();
+}
+function fvDrop(e){e.preventDefault();const z=e.currentTarget;z.style.background='';z.style.borderColor='';fvLeer(e.dataTransfer?e.dataTransfer.files:[])}
+const fvClave=it=>[Number(it.v.tipo),Math.round(fvN(it.v.pv)),Math.round(fvN(it.v.num))].join('|');
+/** Estado de una factura de la vista previa: nueva, ya cargada (en la base o repetida en este lote) o con problemas. */
+function fvEstado(M,i){
+  const it=M.items[i];if(it.err)return {k:'err'};
+  const cl=it.cid?ui.clients.find(c=>c.id===it.cid):null,p=[];
+  if(!cl)p.push('Elegí el cliente.');else if(esExento(cl))p.push(cl.razon_social+' es IVA Exento: no se cargan ventas.');
+  if(!pDate(it.v.fecha))p.push('La fecha no es válida.');
+  if(!TIPOS_CMP.some(t=>String(t[0])===String(it.v.tipo)))p.push('Elegí el tipo de comprobante.');
+  if(!(fvN(it.v.pv)>0)||!(fvN(it.v.num)>0))p.push('Falta el punto de venta o el número.');
+  if(!(fvN(it.v.total)>0))p.push('El total tiene que ser mayor a cero.');
+  const key=fvClave(it);
+  const ya=cl&&(M.ex[cl.id]||[]).includes(key),rep=M.items.some((o,j)=>j<i&&!o.err&&o.cid===it.cid&&fvClave(o)===key);
+  const suma=fvN(it.v.neto)+fvN(it.v.iva)+fvN(it.v.exento)+fvN(it.v.nograv)+fvN(it.v.otros),dif=fvRound(suma-fvN(it.v.total));
+  return {k:ya?'ya':rep?'rep':p.length?'mal':'ok',p,dif,cl};
+}
+function fvSet(i,k,v){const it=ui.fvt.items[i];it.v[k]=String(v).trim();if(k==='neto'||k==='iva')it.editado=true;draw()}
+/** Elige cómo se reparte el total: IVA incluido a una alícuota, exento o no gravado. */
+function fvAlic(i,val){
+  const it=ui.fvt.items[i],v=it.v;it.alic=val;
+  if(val==='auto'){Object.assign(v,it.orig.v);it.netos={...it.orig.netos};it.editado=false;return draw()}
+  const base=fvRound(fvN(v.total)-fvN(v.otros));
+  v.neto=v.iva=v.exento=v.nograv='0';
+  if(val==='ex'){v.exento=fvS(base);it.netos={}}
+  else if(val==='ng'){v.nograv=fvS(base);it.netos={}}
+  else{const r=Number(val),n=fvRound(base/(1+r/100));v.neto=fvS(n);v.iva=fvS(fvRound(base-n));it.netos={[val]:n}}
+  it.editado=false;draw();
+}
+async function fvCliente(i,cid){const M=ui.fvt,it=M.items[i];it.cid=cid||null;it.auto=false;await fvCargarEx(M,it.cid);draw()}
+function fvCancelar(){ui.fvt=null;fvFiles.clear();draw()}
+function fvQuitar(i){const M=ui.fvt;fvFiles.delete(M.items[i].id);M.items.splice(i,1);if(!M.items.length)ui.fvt=null;draw()}
+function fvRaw(it){
+  const neto=fvN(it.v.neto),iva=fvN(it.v.iva),raw={};
+  if(!it.editado&&Object.keys(it.netos||{}).length){Object.entries(it.netos).forEach(([r,n])=>{const a=String(r).replace('.',',');raw['Neto Grav. IVA '+a+'%']=n;raw['IVA '+a+'%']=fvRound(n*Number(r)/100)});
+    const s=Object.entries(it.netos).reduce((a,[r,n])=>a+fvRound(n*Number(r)/100),0);if(Math.abs(s-iva)>0.001){const k=Object.keys(it.netos)[0];if(Object.keys(it.netos).length===1)raw['IVA '+String(k).replace('.',',')+'%']=iva}}
+  else if(neto>0||iva>0){const r=neto>0?iva*100/neto:21,std=iva>0?FV_STD.reduce((b,x)=>Math.abs(x-r)<Math.abs(b-r)?x:b,21):0,a=String(std).replace('.',',');raw['Neto Grav. IVA '+a+'%']=neto;if(std>0)raw['IVA '+a+'%']=iva}
+  return raw;
+}
+async function fvGuardar(){
+  const M=ui.fvt;if(!M||M.busy)return;
+  const lista=M.items.map((it,i)=>({it,i,e:fvEstado(M,i)})).filter(x=>x.e.k==='ok');
+  if(!lista.length){flash('No hay facturas nuevas para guardar.','err');return draw()}
+  const desc=lista.filter(x=>Math.abs(x.e.dif)>1);
+  if(desc.length&&!confirm(`${desc.length} factura(s) tienen neto, IVA y otros conceptos que no suman el total (diferencia de ${money(Math.abs(desc[0].e.dif))} en la primera). ¿Guardar igual?`))return;
+  M.busy=true;draw();
+  let ok=0;const errs=[],hechas=new Set();let ult=null;
+  for(const {it,i} of lista){
+    const F=fvFiles.get(it.id),cid=it.cid,fecha=it.v.fecha,per=fecha.slice(0,7);
+    const safe=(F.name||'factura.pdf').normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^A-Za-z0-9._-]+/g,'_').slice(-80),path=`${cid}/ventas/${crypto.randomUUID()}-${safe}`;
+    try{
+      const up=await sb.storage.from('clientes').upload(path,F.blob,{contentType:F.type,upsert:false});if(up.error)throw new Error('No se pudo subir el archivo: '+errTxt(up.error));
+      try{
+        const {data:p,error:e1}=await sb.from('client_periods').upsert({client_id:cid,periodo:per+'-01'},{onConflict:'client_id,periodo'}).select('id').single();if(e1)throw e1;
+        const rc=String(it.v.cuitRec||'').replace(/\D/g,'');
+        const {error}=await sb.from('sales_invoices').insert({client_id:cid,period_id:p.id,fecha,tipo_cmp:Number(it.v.tipo),punto_venta:Math.round(fvN(it.v.pv)),numero:Math.round(fvN(it.v.num)),receptor_cuit:rc.length===11?rc:null,receptor_nombre:it.v.nomRec||null,neto_gravado:fvN(it.v.neto),no_gravado:fvN(it.v.nograv),exento:fvN(it.v.exento),otros_tributos:fvN(it.v.otros),iva:fvN(it.v.iva),importe_total:fvN(it.v.total),origen:'manual',raw:fvRaw(it),archivo_path:path,archivo_nombre:F.name,datos_extraidos:{fuente:it.fuente,cae:it.cae,cae_vto:it.caeVto,qr:it.qr,avisos:it.avisos},created_by:me.id});
+        if(error)throw error;
+      }catch(x){await sb.storage.from('clientes').remove([path]);throw x}
+      ok++;hechas.add(it.id);ult={cid,per};
+    }catch(x){errs.push(`${it.nombre}: ${/duplicate/i.test(x.message||'')?'ya estaba cargada.':errTxt(x)}`)}
+  }
+  M.busy=false;
+  M.items=M.items.filter(it=>!hechas.has(it.id));hechas.forEach(id=>fvFiles.delete(id));
+  if(ult){ui.cid=ult.cid;ui.vta.periodo=ult.per;try{await loadVentas()}catch(e){}}
+  if(!M.items.some(it=>!it.err)&&!errs.length){ui.fvt=null;fvFiles.clear()}
+  flash(`${ok} factura(s) de venta guardada(s).`+(errs.length?' No se pudieron guardar: '+errs.join(' · '):''),errs.length?'warn':'ok');
+  draw();
+}
+function fvHtml(M){
+  const tg=(t,k)=>`<span class="tag" style="background:var(--${k});color:var(--${k}t)">${t}</span>`;
+  const act=ui.clients.filter(c=>c.active!==false),nOk=M.items.filter((it,i)=>fvEstado(M,i).k==='ok').length;
+  const cards=M.items.map((it,i)=>{
+    if(it.err)return `<div class="msg err" style="margin-bottom:8px;display:flex;gap:8px;align-items:center"><span style="flex:1"><b>${esc(it.nombre)}</b>: ${esc(it.err)}</span><button class="g sm" onclick="fvQuitar(${i})">Quitar</button></div>`;
+    const e=fvEstado(M,i),v=it.v,inp=(k,t,extra='')=>`<label>${t}<input value="${esc(v[k])}" ${extra} onchange="fvSet(${i},'${k}',this.value)"></label>`;
+    const est=e.k==='ok'?tg('Nueva','grn'):e.k==='ya'?tg('Ya estaba cargada','blu'):e.k==='rep'?tg('Repetida en este lote','blu'):tg('Falta revisar','amb');
+    return `<div class="card" style="margin-bottom:10px;${e.k==='ya'||e.k==='rep'?'opacity:.7':''}"><div class="row" style="justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap"><b>${esc(it.nombre)}</b><span>${est} <button class="g sm" onclick="fvQuitar(${i})">Quitar</button></span></div>
+    <div class="s" style="margin:4px 0 8px">Emisor: ${esc(it.nomEm||'')} ${it.cuitEm?cuitF(it.cuitEm):''}${it.auto?' · cliente reconocido por el CUIT':''}${it.qr?' · leída con el QR':''}${it.cae?' · CAE '+esc(it.cae):''}</div>
+    ${it.avisos.map(a=>`<div class="msg warn" style="margin-bottom:6px">${esc(a)}</div>`).join('')}${e.p&&e.p.length?e.p.map(a=>`<div class="msg err" style="margin-bottom:6px">${esc(a)}</div>`).join(''):''}
+    ${e.k==='ya'?'<div class="msg info" style="margin-bottom:6px">Esta factura ya está cargada en Ventas: no se vuelve a cargar.</div>':''}
+    <div class="fgrid"><label>Cliente<select onchange="fvCliente(${i},this.value)"><option value="">Elegir…</option>${act.map(c=>`<option value="${c.id}" ${c.id===it.cid?'selected':''}>${esc(c.razon_social)}</option>`).join('')}</select></label>
+    <label>Tipo<select onchange="fvSet(${i},'tipo',this.value)"><option value="">Elegir…</option>${TIPOS_CMP.map(t=>`<option value="${t[0]}" ${String(t[0])===String(v.tipo)?'selected':''}>${esc(t[1])}</option>`).join('')}</select></label>
+    <label>IVA incluido en el total<select onchange="fvAlic(${i},this.value)"><option value="auto" ${it.alic==='auto'?'selected':''}>Según la factura</option>${['21','10.5','27','5','2.5'].map(r=>`<option value="${r}" ${it.alic===r?'selected':''}>${r.replace('.',',')}%</option>`).join('')}<option value="ex" ${it.alic==='ex'?'selected':''}>Exento</option><option value="ng" ${it.alic==='ng'?'selected':''}>No gravado</option></select></label>
+    ${inp('fecha','Fecha','type="date"')}${inp('pv','Punto de venta','inputmode="numeric"')}${inp('num','Número','inputmode="numeric"')}${inp('cuitRec','CUIT del cliente de la venta','inputmode="numeric"')}${inp('nomRec','Nombre del cliente de la venta')}
+    ${inp('neto','Neto gravado','inputmode="decimal"')}${inp('iva','IVA','inputmode="decimal"')}${inp('exento','Exento','inputmode="decimal"')}${inp('nograv','No gravado','inputmode="decimal"')}${inp('otros','Otros tributos','inputmode="decimal"')}${inp('total','Total','inputmode="decimal"')}</div>
+    ${e.k!=='err'&&Math.abs(e.dif||0)>1?`<div class="s" style="color:var(--ambt);margin-top:6px">Neto + IVA + exento + no gravado + otros = ${money(fvN(v.neto)+fvN(v.iva)+fvN(v.exento)+fvN(v.nograv)+fvN(v.otros))}; el total es ${money(fvN(v.total))}.</div>`:''}</div>`}).join('');
+  return `<div class="card" style="margin-bottom:12px;border:1px solid var(--blut)"><h3 style="margin-top:0">Vista previa de facturas de venta</h3>
+  <p class="s">Revisá cada una antes de guardar. Se guardan junto con su archivo y cuentan en el IVA aproximado y en el Libro IVA Digital de Ventas.</p>${cards}
+  <div class="row" style="gap:8px"><button class="b" ${nOk&&!M.busy?'':'disabled'} onclick="fvGuardar()">${M.busy?'Guardando…':`Guardar ${nOk} factura(s)`}</button><button class="g" onclick="fvCancelar()">Cancelar</button></div></div>`;
+}
+function fvCard(){
+  const M=ui.fvt;
+  return `<div class="card" ondragover="event.preventDefault();this.style.background='rgba(120,160,255,.14)';this.style.borderColor='var(--blut,#3b6fd4)'" ondragleave="this.style.background='';this.style.borderColor=''" ondrop="fvDrop(event)" style="margin-bottom:12px"><div class="row" style="gap:10px;align-items:center;flex-wrap:wrap"><div style="flex:1;min-width:240px"><b>Facturas de venta (PDF o foto)</b><span class="s">Arrastrá acá las facturas que emitió el cliente (PDF de ARCA o una foto). Se reconoce el cliente por el CUIT del emisor, se leen los datos y los revisás antes de guardar.</span></div><label class="b" style="cursor:pointer">Elegir facturas<input type="file" multiple accept=".pdf,image/*" style="display:none" onchange="fvLeer(this.files);this.value=''"></label></div>${M&&M.fase==='leyendo'?`<div class="msg info" style="margin-top:8px">Leyendo ${M.k} de ${M.n}…</div>`:''}</div>${M&&(M.fase==='previa'||M.fase==='error')?fvHtml(M):''}`;
+}
+
+/* ===== Cargas manuales: el sistema reconoce el archivo y avisa si no es lo que va en ese casillero ===== */
+const BAN_ESPERA=[
+  [/^(subirRecibo|subirVarios|subirTodos)\(/,'un recibo de sueldo',c=>c.lbl==='Recibo de sueldo'],
+  [/^cgSubir\(/,'un documento de la carga de sueldos (recibo, boleta o VEP)',c=>c.dest==='sueldos'],
+  [/^adjArch\('PRESENTACION'/,'la presentación de la declaración',c=>c.dest!=='bancos'&&c.dest!=='ventas'&&c.lbl!=='Recibo de sueldo'],
+  [/^adjArch\('VEP'/,'un VEP',c=>/VEP/.test(c.lbl||'')],
+  [/^adjArch\('COMPENSACION'/,'una compensación F.1151',c=>/Compensaci/.test(c.lbl||'')]
+];
+document.addEventListener('change',async e=>{
+  const i=e.target;if(!i||i.type!=='file'||i._banOk||!i.files||!i.files.length)return;
+  const oc=String(i.getAttribute('onchange')||''),regla=BAN_ESPERA.find(r=>r[0].test(oc));if(!regla)return;
+  e.stopImmediatePropagation();
+  const fs=[...i.files].slice(0,6);let mal=null;
+  for(const f of fs){let c=null;try{c=await banClasificar(f)}catch(x){c=null}if(c&&!c.err&&!regla[2](c)){mal={f,c};break}}
+  if(mal){
+    const dest=BAN_DEST[mal.c.dest]||'su pantalla';
+    if(!confirm(`Este archivo parece ser: ${mal.c.lbl}.\nAcá se espera ${regla[1]}.\n\nAceptar = adjuntarlo igual.\nCancelar = no adjuntarlo y dejarlo listo para cargarlo en "${dest}" con su lector.`)){
+      i.value='';BAN.cola.push({dest:mal.c.dest,files:[mal.f],tipo:mal.c.tipo,cid:mal.c.cid,per:mal.c.per});banRender();return}
+  }
+  i._banOk=true;try{i.dispatchEvent(new Event('change',{bubbles:true}))}finally{i._banOk=false}
+},true);
+
+/* ===== Sueldos: pestañas desplegables (menos ruido visual) ===== */
+(function(){
+  const st=document.createElement('style');
+  st.textContent='.sue-acc{border:1px solid var(--bd,#e3e6ec);border-radius:12px;margin:0 0 8px;background:var(--card,#fff)}.sue-acc>summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px;padding:10px 14px;font-weight:600;user-select:none}.sue-acc>summary::-webkit-details-marker{display:none}.sue-acc>summary::before{content:"\\25B8";display:inline-block;transition:transform .15s;color:var(--mut,#777)}.sue-acc[open]>summary::before{transform:rotate(90deg)}.sue-acc>summary .sue-sub{margin-left:auto;font-weight:400;font-size:12px;color:var(--mut,#777)}.sue-acc>.sue-body{padding:2px 14px 14px}.sue-acc .sue-body>.card{border:0;box-shadow:none;padding:0;background:none;margin-top:0}.sue-acc .sue-body>h3:first-child{display:none}';
+  (document.head||document.documentElement).appendChild(st);
+})();
+function sueAcc(key,title,body,o){
+  o=o||{};if(!String(body||'').trim())return '';
+  ui.sueOpen=ui.sueOpen||{};
+  const ab=o.force||ui.sueOpen[key]===true;
+  return `<details class="sue-acc" ${ab?'open':''} ontoggle="ui.sueOpen=ui.sueOpen||{};ui.sueOpen['${key}']=this.open"><summary>${title}${o.sub?`<span class="sue-sub">${o.sub}</span>`:''}</summary><div class="sue-body">${body}</div></details>`;
 }
 /* ===== Carga de sueldos: perfil "liquidador" (recibos, VEP y boletas de sindicatos) ===== */
 const isLiq=()=>prof&&prof.role==='liquidador';
@@ -3487,14 +3769,14 @@ function vSueldosPage(){
   const s=ui.sueCfg,c=sueCli(ui.sd.id);
   const R=act.filter(sueFiltroOk).map(k=>{const em=ui.sdAll.emp.filter(e=>e.client_id===k.id&&e.activo),ok=em.filter(e=>ui.sdAll.pay.some(p=>p.employee_id===e.id&&p.periodo.slice(0,7)===s.periodo&&p.tipo===s.tipo)).length;return {k,n:em.length,ok,f:aplica(k).includes('F931')?(filDe(k.id,'F931',s.periodo)?'ok':'pend'):null}}).filter(r=>r.n>0||r.f||sueTiposDe(r.k,ui.sdAll.emp).length);
   return `<h2>Sueldos</h2>
-  <p class="s" style="margin-bottom:12px">Recibos de sueldo de ${mesAnio(s.periodo+'-01')} (${esc(s.tipo)}). Cambiá el período y el tipo más abajo.</p>
-  ${sueAltaCard()}${sueMultiCard()}${sueFiltroBar()}
-  ${R.length?`<div class="tw" style="margin-bottom:18px"><table><thead><tr><th>Cliente</th><th>CUIT termina en</th><th>Empleados</th><th>Recibos cargados</th><th>Faltan</th><th>Próximo vencimiento</th><th>F.931</th><th></th></tr></thead><tbody>${R.map(r=>`<tr><td>${esc(r.k.razon_social)}${r.k.solo_sueldos?' <span class="tag" style="background:var(--gry,#e5e7eb)">Solo Sueldos</span>':''}${sueResTipos(r.k)}</td><td>${r.k.cuit.slice(-1)}</td><td>${r.n}</td><td>${r.ok}</td><td ${r.n-r.ok?'style="color:var(--redt);font-weight:600"':''}>${r.n-r.ok}</td><td>${sueResVenc(r.k)}</td><td>${r.f==='ok'?'<span class="tag" style="background:var(--grn);color:var(--grnt)">Presentado</span>':r.f==='pend'?'<span class="tag" style="background:var(--amb);color:var(--ambt)">Pendiente</span>':'<span class="s">-</span>'}</td><td><button class="g sm" onclick="cambiarClienteSd('${r.k.id}')">Abrir</button></td></tr>`).join('')}</tbody></table></div>`:'<div class="card" style="margin-bottom:18px;color:var(--mut)">No hay empleadores que coincidan con el filtro (o todavía ninguno tiene empleados cargados). Elegí un cliente o agregá un empleador y cargá el primer empleado.</div>'}
+  <p class="s" style="margin-bottom:10px">Recibos de ${mesAnio(s.periodo+'-01')} (${esc(s.tipo)})</p>
+  ${sueAltaCard()}${sueMultiCard()}
+  ${sueAcc('empl','Lista de empleadores',sueFiltroBar()+(R.length?`<div class="tw" style="margin-bottom:6px"><table><thead><tr><th>Cliente</th><th>CUIT termina en</th><th>Empleados</th><th>Recibos cargados</th><th>Faltan</th><th>Próximo vencimiento</th><th>F.931</th><th></th></tr></thead><tbody>${R.map(r=>`<tr><td>${esc(r.k.razon_social)}${r.k.solo_sueldos?' <span class="tag" style="background:var(--gry,#e5e7eb)">Solo Sueldos</span>':''}${sueResTipos(r.k)}</td><td>${r.k.cuit.slice(-1)}</td><td>${r.n}</td><td>${r.ok}</td><td ${r.n-r.ok?'style="color:var(--redt);font-weight:600"':''}>${r.n-r.ok}</td><td>${sueResVenc(r.k)}</td><td>${r.f==='ok'?'<span class="tag" style="background:var(--grn);color:var(--grnt)">Presentado</span>':r.f==='pend'?'<span class="tag" style="background:var(--amb);color:var(--ambt)">Pendiente</span>':'<span class="s">-</span>'}</td><td><button class="g sm" onclick="cambiarClienteSd('${r.k.id}')">Abrir</button></td></tr>`).join('')}</tbody></table></div>`:'<div class="card" style="margin-bottom:18px;color:var(--mut)">No hay empleadores que coincidan con el filtro (o todavía ninguno tiene empleados cargados). Elegí un cliente o agregá un empleador y cargá el primer empleado.</div>'),{sub:R.length+' empleador'+(R.length===1?'':'es')+(R.filter(r=>r.n-r.ok>0).length?' · '+R.filter(r=>r.n-r.ok>0).length+' con recibos sin cargar':'')})}
   ${sueEnvioPanel()}
-  <div class="card row" style="margin-bottom:16px"><label>Cliente o empleador<br><select onchange="cambiarClienteSd(this.value)">${act.filter(k=>sueFiltroOk(k)||k.id===ui.sd.id).map(k=>`<option value="${k.id}" ${k.id===ui.sd.id?'selected':''}>${esc(k.razon_social)}</option>`).join('')}</select></label></div>
-  <div class="card" style="padding:20px"><h3 style="margin-top:0;font-size:20px">${esc(c.razon_social)}${c.solo_sueldos?' <span class="tag" style="background:var(--gry,#e5e7eb)">Solo Sueldos</span>':''}</h3>
+  <div class="card row" style="margin:14px 0 12px"><label>Cliente o empleador<br><select onchange="cambiarClienteSd(this.value)">${act.filter(k=>sueFiltroOk(k)||k.id===ui.sd.id).map(k=>`<option value="${k.id}" ${k.id===ui.sd.id?'selected':''}>${esc(k.razon_social)}</option>`).join('')}</select></label></div>
+  <div class="card" style="padding:16px"><h3 style="margin-top:0;font-size:18px">${esc(c.razon_social)}${c.solo_sueldos?' <span class="tag" style="background:var(--gry,#e5e7eb)">Solo Sueldos</span>':''}</h3>
   <div class="row" style="gap:8px;margin-bottom:12px">${c.solo_sueldos?`<button class="g sm" onclick="sueSoloCambiar(false)">Pasar a Clientes</button><button class="dng sm" onclick="sueEliminarEmpleador()">Eliminar empleador</button>`:`<button class="g sm" onclick="sueSoloCambiar(true)">Dejar solo en Sueldos</button>`}</div>
-  ${aplica(c).includes('F931')?`<div class="card" style="margin-bottom:18px"><b>Cargas sociales (F.931) de ${mesAnio(s.periodo+'-01')}</b><div class="s" style="margin:4px 0 10px">Declaración jurada mensual de la empresa en ARCA, con el pago del VEP. Se arma con la liquidación de sueldos y es distinta de los recibos de cada empleado.</div>${cel(c,'F931',s.periodo)}</div>`:`<p class="s" style="margin-bottom:14px">Para controlar acá la presentación del F.931, tildá "Relación de dependencia" como tipo de personal de este empleador.</p>`}
+  ${aplica(c).includes('F931')?`<div class="card" style="margin-bottom:12px" title="Declaración jurada mensual de la empresa en ARCA, con el pago del VEP. Es distinta de los recibos de cada empleado."><b>Cargas sociales (F.931) de ${mesAnio(s.periodo+'-01')}</b>${cel(c,'F931',s.periodo)}</div>`:''}
   ${vSueldos(c,ui.sd)}${cgArchivosCard(c)}</div>`;
 }
 function irAnticipos(per){ui.antPer=per;show('anticipos')}
@@ -3548,6 +3830,7 @@ function vVentas(){
   <label>Período<br>${mesPick(v.periodo,`ui.vta.periodo=this.value;show('ventas')`)}</label>
   <label style="flex:1;min-width:230px">Excel de "Mis Comprobantes Emitidos" (.xls / .xlsx), o arrastralo a este recuadro<br><input type="file" id="vfile" accept=".xls,.xlsx" style="width:100%"></label>
   <button class="b" onclick="ventasPrevisualizar()">Ver vista previa</button><button class="g" onclick="ui.vta.form=!ui.vta.form;draw()">Agregar factura a mano</button><button class="g" onclick="liqAbrir()">Cargar liquidación (PDF)</button></div>
+  ${fvCard()}
   <div class="card row" style="margin-bottom:12px;align-items:center"><b>Exportar</b><button class="b" onclick="ventasExportarIva()">Libro IVA Digital Ventas (2 TXT para ARCA)</button><span class="s"><b>${R.filter(r=>!ui.vtaOut.has(r.id)).length} de ${R.length}</b> comprobantes marcados (tildá o destildá en la primera columna de la tabla).</span></div>
   ${(v.ivdAvisos||[]).length?`<div class="card" style="margin-bottom:12px"><b>Avisos de la última exportación</b>${v.ivdAvisos.map(a=>`<div class="msg warn">${esc(a)}</div>`).join('')}</div>`:''}
   ${v.form?ventaForm():''}${v.edit?ventaEditForm():''}${v.erp?erpForm():''}${liqForm()}
