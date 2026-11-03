@@ -1655,7 +1655,7 @@ async function compartirRecibo(id){
 }
 
 /* ===== Sueldos: empleadores solo de Sueldos, filtros por tipo de personal y envío de recibos por WhatsApp en tanda ===== */
-const sueClientes=()=>(ui.clientsAll||ui.clients).filter(c=>!c.solo_anticipos);
+const sueClientes=()=>(ui.clientsAll||ui.clients).filter(c=>!c.solo_anticipos||c.solo_sueldos);
 const sueCli=id=>sueClientes().find(x=>x.id===id);
 const sueFilSt=()=>ui.sueFil||(ui.sueFil={tipo:'',origen:'',q:'',faltan:false,ver:''});
 /** Empleador de verdad: tiene tipo de personal tildado, empleados cargados o es un empleador solo de Sueldos. */
@@ -3530,12 +3530,25 @@ async function antAltaCliente(e){
   if(!rs){flash('Falta el nombre o razón social.','err');return draw(),false}
   if(cuit.length!==11){flash('El CUIT/CUIL debe tener 11 dígitos.','err');return draw(),false}
   const ya=(ui.clientsAll||ui.clients).find(c=>String(c.cuit)===cuit);
-  if(ya){flash(`Ya existe "${ya.razon_social}" con ese CUIT${ya.solo_anticipos?' (solo Anticipos)':ya.solo_sueldos?' (solo Sueldos)':' (cliente del estudio)'}.`,'warn');return draw(),false}
+  if(ya){
+    if(ya.solo_anticipos){flash(`"${ya.razon_social}" ya está cargado en Anticipos.`,'warn');return draw(),false}
+    if(!ya.solo_sueldos){flash(`"${ya.razon_social}" ya es cliente del estudio: para verlo en Anticipos tildá "Ganancias: anticipos" en su pestaña Datos.`,'warn');return draw(),false}
+    if(!confirm(`Ese CUIT ya existe como "${ya.razon_social}" (solo Sueldos). ¿Querés que figure también en Anticipos? Sigue en Sueldos con sus empleados y recibos, y no aparece en Clientes.`))return draw(),false;
+    try{const imp=Array.from(new Set((ya.impuestos||[]).concat(['GAN_ANT'])));
+      const {data,error}=await sb.from('clients').update({solo_anticipos:true,impuestos:imp}).eq('id',ya.id).select('id');if(error)throw error;if(!data||!data.length)throw new Error('No tenés permiso para editar clientes.');
+      await loadClients();ui.antAltaAb=false;flash(`"${ya.razon_social}" ahora también figura en Anticipos.`)}catch(x){flash(errTxt(x),'err')}
+    draw();return false}
   try{
     const {error}=await sb.from('clients').insert({razon_social:rs,cuit,telefono:wa,impuestos:['GAN_ANT'],solo_anticipos:true});if(error)throw error;
     await loadClients();ui.antAltaAb=false;flash('Cliente agregado solo en Anticipos.');
   }catch(x){flash((x&&x.code==='23505')?'Ya existe un cliente con ese CUIT.':errTxt(x),'err')}
   draw();return false;
+}
+async function antQuitar(id){
+  const c=(ui.clientsAll||[]).find(x=>x.id===id);if(!c)return;
+  try{const {data,error}=await sb.from('clients').update({solo_anticipos:false,impuestos:(c.impuestos||[]).filter(i=>i!=='GAN_ANT')}).eq('id',id).select('id');if(error)throw error;if(!data||!data.length)throw new Error('No tenés permiso para editar clientes.');
+    await loadClients();flash('Ya no figura en Anticipos (sus anticipos marcados se conservan).')}catch(x){flash(errTxt(x),'err')}
+  draw();
 }
 async function antPasarAClientes(id){
   const c=(ui.clientsAll||[]).find(x=>x.id===id);if(!c)return;
@@ -3833,7 +3846,7 @@ function vAnticipos(){
    <div class="grid" style="flex:1;min-width:260px"><div class="card kpi"><b>${act.length}</b><span>Clientes con anticipos</span></div><div class="card kpi"><b>${hechos}</b><span>Pagados</span></div><div class="card kpi"><b>${envs}</b><span>VEP enviados</span></div><div class="card kpi"><b>${act.length-hechos-envs}</b><span>Pendientes</span></div></div></div>
   <p class="s" style="margin-bottom:12px">Marcá cada anticipo cuando quede pagado: elegí el número de anticipo (1, 2, 3...), si fue con VEP completo, compensación o VEP + compensación, y adjuntá los comprobantes. La app solo guarda tu marca; no verifica nada con ARCA.</p>
   <div class="tw"><table><thead><tr><th>Cliente</th><th>Próximo vencimiento cargado</th><th>Anticipo ${per.slice(5)}/${per.slice(0,4)}</th></tr></thead><tbody>
-  ${act.length?act.map(c=>`<tr><td>${esc(c.razon_social)}${c.solo_anticipos?' <span class="tag" style="background:var(--gry,#e5e7eb)">Solo Anticipos</span>':''}<span class="s">CUIT ${cuitF(c.cuit)}, termina en ${c.cuit.slice(-1)}</span>${c.solo_anticipos?`<div class="row" style="gap:4px;margin-top:4px"><button class="g sm" onclick="antPasarAClientes('${c.id}')">Pasar a Clientes</button><button class="dng sm" onclick="antEliminarCliente('${c.id}')">Eliminar</button></div>`:''}</td><td>${prox(c)}</td><td>${cel(c,'GAN_ANT',per)}</td></tr>`).join(''):'<tr><td colspan="3" style="color:var(--mut)">Ningún cliente tiene anticipos de Ganancias. Marcá "Ganancias: anticipos" en la pestaña Datos de cada cliente.</td></tr>'}</tbody></table></div>`;
+  ${act.length?act.map(c=>`<tr><td>${esc(c.razon_social)}${c.solo_anticipos?` <span class="tag" style="background:var(--gry,#e5e7eb)">${c.solo_sueldos?'Sueldos y Anticipos':'Solo Anticipos'}</span>`:''}<span class="s">CUIT ${cuitF(c.cuit)}, termina en ${c.cuit.slice(-1)}</span>${c.solo_anticipos?`<div class="row" style="gap:4px;margin-top:4px">${c.solo_sueldos?`<button class="g sm" onclick="antQuitar('${c.id}')">Quitar de Anticipos</button>`:`<button class="g sm" onclick="antPasarAClientes('${c.id}')">Pasar a Clientes</button><button class="dng sm" onclick="antEliminarCliente('${c.id}')">Eliminar</button>`}</div>`:''}</td><td>${prox(c)}</td><td>${cel(c,'GAN_ANT',per)}</td></tr>`).join(''):'<tr><td colspan="3" style="color:var(--mut)">Ningún cliente tiene anticipos de Ganancias. Marcá "Ganancias: anticipos" en la pestaña Datos de cada cliente.</td></tr>'}</tbody></table></div>`;
 }
 function irSueldos(cid,per){ui.cid=cid;ui.sueCfg=ui.sueCfg||{periodo:workPeriod(),tipo:'Mensual',horas:24,msg:MSG_REC,editEmp:null};ui.sueCfg.periodo=per;ui.sueCfg.editEmp=null;ui.ficha=null;show('sueldos')}
 
