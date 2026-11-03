@@ -215,7 +215,7 @@ async function boot(user){
   try{await loadClients()}catch(e){flash(errTxt(e),'err')}
   await show(prof.role==='liquidador'?'carga':'inicio');
 }
-async function loadClients(){const {data,error}=await sb.from('clients').select('*').order('razon_social');if(error)throw error;ui.clientsAll=data;ui.clients=data.filter(c=>!c.solo_sueldos);if(!ui.cid||!ui.clients.find(c=>c.id===ui.cid))ui.cid=ui.clients[0]?ui.clients[0].id:null}
+async function loadClients(){const {data,error}=await sb.from('clients').select('*').order('razon_social');if(error)throw error;ui.clientsAll=data;ui.clients=data.filter(c=>!c.solo_sueldos&&!c.solo_anticipos);if(!ui.cid||!ui.clients.find(c=>c.id===ui.cid))ui.cid=ui.clients[0]?ui.clients[0].id:null}
 async function logout(){await sb.auth.signOut()}
 
 /* ===== Navegación y carga de datos ===== */
@@ -1655,7 +1655,7 @@ async function compartirRecibo(id){
 }
 
 /* ===== Sueldos: empleadores solo de Sueldos, filtros por tipo de personal y envío de recibos por WhatsApp en tanda ===== */
-const sueClientes=()=>ui.clientsAll||ui.clients;
+const sueClientes=()=>(ui.clientsAll||ui.clients).filter(c=>!c.solo_anticipos);
 const sueCli=id=>sueClientes().find(x=>x.id===id);
 const sueFilSt=()=>ui.sueFil||(ui.sueFil={tipo:'',origen:'',q:'',faltan:false,ver:''});
 /** Empleador de verdad: tiene tipo de personal tildado, empleados cargados o es un empleador solo de Sueldos. */
@@ -2529,7 +2529,7 @@ async function antDropLeer(files){
       if(!R){const t=lin.join('\n');throw new Error(/RECIBO DE HABERES/i.test(t)?'Esto es un recibo de sueldo: cargalo desde Sueldos.':/Volante Electr[oó]nico de Pago|Nro\.?\s*VEP/i.test(t)?'Es un VEP, pero no es de Ganancias personas físicas (anticipos).':'No se reconoció: tiene que ser el VEP del anticipo de Ganancias o la compensación (F.1151) con destino Anticipos, en PDF con texto.')}
       if(R.noAnt)throw new Error('Es una compensación, pero su destino no es un anticipo de Ganancias.');
       Object.assign(it,R);
-      const cl=R.cuit?ui.clients.find(c=>String(c.cuit)===R.cuit):null;it.cid=cl?cl.id:null;
+      const cl=R.cuit?antClientes().find(c=>String(c.cuit)===R.cuit):null;it.cid=cl?cl.id:null;
       if(!it.per)it.per=workPeriod();
       /* La compensación se pega al anticipo con el mismo número que ya esté marcado para ese cliente. */
       if(cl&&R.kind==='comp'&&R.num){const x=ui.fil.filter(z=>z.client_id===cl.id&&z.impuesto==='GAN_ANT'&&z.numero_anticipo===R.num).sort((a,b)=>a.periodo<b.periodo?1:-1)[0];if(x){it.per=x.periodo.slice(0,7);it.perDeFiling=true}}
@@ -2544,7 +2544,7 @@ function antDropDrop(e){e.preventDefault();const z=e.currentTarget;z.style.backg
 function antDropSet(i,k,v){ui.antDrop.items[i][k]=v;draw()}
 function antDropCancelar(){ui.antDrop=null;antFiles.clear();draw()}
 function antPrev(it){
-  const c=it.cid?ui.clients.find(x=>x.id===it.cid):null,x=c?filDe(c.id,'GAN_ANT',it.per):null,tipo=it.kind==='vep'?'VEP':'COMPENSACION';
+  const c=it.cid?antClientes().find(x=>x.id===it.cid):null,x=c?filDe(c.id,'GAN_ANT',it.per):null,tipo=it.kind==='vep'?'VEP':'COMPENSACION';
   const ex=x?ui.ffil.find(f=>f.filing_id===x.id&&f.tipo===tipo):null;
   return {c,x,ex,pagado:!!x&&!filEnviado(x),sinAnt:!!c&&!aplica(c).includes('GAN_ANT'),ok:!!c};
 }
@@ -2573,7 +2573,7 @@ async function antDropConfirmar(){
   if(!L.length){flash('No hay nada para cargar.','warn');return draw()}
   const ok=[],omit=[],mal=[];M.fase='guardando';M.prog=0;M.total=L.length;draw();
   for(const it of L){
-    const c=ui.clients.find(z=>z.id===it.cid),tipo=it.kind==='vep'?'VEP':'COMPENSACION',etq=(it.kind==='vep'?'VEP':'Compensación')+' de '+c.razon_social;
+    const c=antClientes().find(z=>z.id===it.cid),tipo=it.kind==='vep'?'VEP':'COMPENSACION',etq=(it.kind==='vep'?'VEP':'Compensación')+' de '+c.razon_social;
     try{
       const f=antFiles.get(it.id);let x=filDe(c.id,'GAN_ANT',it.per);
       const ex=x?ui.ffil.find(z=>z.filing_id===x.id&&z.tipo===tipo):null;
@@ -3513,6 +3513,48 @@ function sueAcc(key,title,body,o){
   const ab=o.force||ui.sueOpen[key]===true;
   return `<details class="sue-acc" ${ab?'open':''} ontoggle="ui.sueOpen=ui.sueOpen||{};ui.sueOpen['${key}']=this.open"><summary>${title}${o.sub?`<span class="sue-sub">${o.sub}</span>`:''}</summary><div class="sue-body">${body}</div></details>`;
 }
+
+/* ===== Anticipos: clientes que figuran solo en Anticipos (como "solo Sueldos") ===== */
+const antClientes=()=>{const base=ui.clients||[],ex=(ui.clientsAll||[]).filter(c=>c.solo_anticipos&&!base.some(b=>b.id===c.id));return base.concat(ex).sort((a,b)=>String(a.razon_social).localeCompare(String(b.razon_social),'es'))};
+function antAltaCard(){
+  return `<details class="sue-acc" ${ui.antAltaAb?'open':''} ontoggle="ui.antAltaAb=this.open"><summary>Agregar cliente solo para Anticipos</summary><div class="sue-body">
+  <p class="s" style="margin:2px 0 10px">Para personas que solo necesitás controlar acá: se cargan con lo mínimo y no aparecen en Clientes, IVA, ventas, balances ni cumplimiento.</p>
+  <form onsubmit="return antAltaCliente(event)"><div class="fgrid">
+   <label>Nombre o razón social<input name="rs" required placeholder="Apellido y nombre"></label>
+   <label>CUIT / CUIL<input name="cuit" inputmode="numeric" required placeholder="20-12345678-9"></label>
+   <label>WhatsApp (opcional)<input name="wa" inputmode="tel" placeholder="3537 412345"></label>
+   <div class="full row"><button class="b">Agregar cliente</button></div></div></form></div></details>`;
+}
+async function antAltaCliente(e){
+  e.preventDefault();const fd=new FormData(e.target),rs=String(fd.get('rs')||'').trim(),cuit=String(fd.get('cuit')||'').replace(/\D/g,''),wa=String(fd.get('wa')||'').trim()||null;
+  if(!rs){flash('Falta el nombre o razón social.','err');return draw(),false}
+  if(cuit.length!==11){flash('El CUIT/CUIL debe tener 11 dígitos.','err');return draw(),false}
+  const ya=(ui.clientsAll||ui.clients).find(c=>String(c.cuit)===cuit);
+  if(ya){flash(`Ya existe "${ya.razon_social}" con ese CUIT${ya.solo_anticipos?' (solo Anticipos)':ya.solo_sueldos?' (solo Sueldos)':' (cliente del estudio)'}.`,'warn');return draw(),false}
+  try{
+    const {error}=await sb.from('clients').insert({razon_social:rs,cuit,telefono:wa,impuestos:['GAN_ANT'],solo_anticipos:true});if(error)throw error;
+    await loadClients();ui.antAltaAb=false;flash('Cliente agregado solo en Anticipos.');
+  }catch(x){flash((x&&x.code==='23505')?'Ya existe un cliente con ese CUIT.':errTxt(x),'err')}
+  draw();return false;
+}
+async function antPasarAClientes(id){
+  const c=(ui.clientsAll||[]).find(x=>x.id===id);if(!c)return;
+  try{const {data,error}=await sb.from('clients').update({solo_anticipos:false}).eq('id',id).select('id');if(error)throw error;if(!data||!data.length)throw new Error('No tenés permiso para editar clientes.');
+    await loadClients();flash('Ahora figura también en Clientes.')}catch(x){flash(errTxt(x),'err')}
+  draw();
+}
+async function antEliminarCliente(id){
+  const c=(ui.clientsAll||[]).find(x=>x.id===id);if(!c||!c.solo_anticipos)return;
+  const fs=ui.fil.filter(x=>x.client_id===id),n=fs.length;
+  if(!confirm(`¿Eliminar definitivamente a "${c.razon_social}"? Se borran sus ${n} anticipo(s) marcados y los archivos adjuntos. No se puede deshacer.`))return;
+  try{
+    const paths=ui.ffil.filter(f=>fs.some(x=>x.id===f.filing_id)).map(f=>f.path).filter(Boolean);
+    if(paths.length){try{await sb.storage.from('clientes').remove(paths)}catch(e){}}
+    const {error}=await sb.from('clients').delete().eq('id',id);if(error)throw error;
+    await loadClients();await loadFil();flash('Cliente eliminado.');
+  }catch(x){flash(errTxt(x),'err')}
+  draw();
+}
 /* ===== Carga de sueldos: perfil "liquidador" (recibos, VEP y boletas de sindicatos) ===== */
 const isLiq=()=>prof&&prof.role==='liquidador';
 const CG_SIND=['UATRE','OSECAC','FAECYS','IERIC','AMMA','ACTF','UOCRA','OSPRERA','SEC','UTEDYC'];
@@ -3781,16 +3823,17 @@ function vSueldosPage(){
 }
 function irAnticipos(per){ui.antPer=per;show('anticipos')}
 function vAnticipos(){
-  const per=ui.antPer||workPeriod(),act=ui.clients.filter(c=>c.active!==false&&aplica(c).includes('GAN_ANT'));
+  const per=ui.antPer||workPeriod(),act=antClientes().filter(c=>c.active!==false&&aplica(c).includes('GAN_ANT'));
   const hechos=act.filter(c=>{const x=filDe(c.id,'GAN_ANT',per);return x&&!filEnviado(x)}).length,envs=act.filter(c=>filEnviado(filDe(c.id,'GAN_ANT',per))).length;
   const prox=c=>{const d=ui.dl.filter(x=>x.impuesto==='GANANCIAS_PH'&&diasHasta(x.fecha)>=0&&delC(x,c)).sort((a,b)=>a.fecha<b.fecha?-1:1)[0];return d?`${fAR(d.fecha)}<span class="s">${cuando(diasHasta(d.fecha))}${d.verificado?'':', a confirmar'}</span>`:'<span class="s">sin fecha cargada</span>'};
   return `<h2>Anticipos de Ganancias</h2>
   ${antDropCard()}
+  ${antAltaCard()}
   <div class="card row" style="margin-bottom:14px;align-items:center"><label>Período<br>${mesPick(per,`ui.antPer=this.value;draw()`)}</label>
    <div class="grid" style="flex:1;min-width:260px"><div class="card kpi"><b>${act.length}</b><span>Clientes con anticipos</span></div><div class="card kpi"><b>${hechos}</b><span>Pagados</span></div><div class="card kpi"><b>${envs}</b><span>VEP enviados</span></div><div class="card kpi"><b>${act.length-hechos-envs}</b><span>Pendientes</span></div></div></div>
   <p class="s" style="margin-bottom:12px">Marcá cada anticipo cuando quede pagado: elegí el número de anticipo (1, 2, 3...), si fue con VEP completo, compensación o VEP + compensación, y adjuntá los comprobantes. La app solo guarda tu marca; no verifica nada con ARCA.</p>
   <div class="tw"><table><thead><tr><th>Cliente</th><th>Próximo vencimiento cargado</th><th>Anticipo ${per.slice(5)}/${per.slice(0,4)}</th></tr></thead><tbody>
-  ${act.length?act.map(c=>`<tr><td>${esc(c.razon_social)}<span class="s">CUIT ${cuitF(c.cuit)}, termina en ${c.cuit.slice(-1)}</span></td><td>${prox(c)}</td><td>${cel(c,'GAN_ANT',per)}</td></tr>`).join(''):'<tr><td colspan="3" style="color:var(--mut)">Ningún cliente tiene anticipos de Ganancias. Marcá "Ganancias: anticipos" en la pestaña Datos de cada cliente.</td></tr>'}</tbody></table></div>`;
+  ${act.length?act.map(c=>`<tr><td>${esc(c.razon_social)}${c.solo_anticipos?' <span class="tag" style="background:var(--gry,#e5e7eb)">Solo Anticipos</span>':''}<span class="s">CUIT ${cuitF(c.cuit)}, termina en ${c.cuit.slice(-1)}</span>${c.solo_anticipos?`<div class="row" style="gap:4px;margin-top:4px"><button class="g sm" onclick="antPasarAClientes('${c.id}')">Pasar a Clientes</button><button class="dng sm" onclick="antEliminarCliente('${c.id}')">Eliminar</button></div>`:''}</td><td>${prox(c)}</td><td>${cel(c,'GAN_ANT',per)}</td></tr>`).join(''):'<tr><td colspan="3" style="color:var(--mut)">Ningún cliente tiene anticipos de Ganancias. Marcá "Ganancias: anticipos" en la pestaña Datos de cada cliente.</td></tr>'}</tbody></table></div>`;
 }
 function irSueldos(cid,per){ui.cid=cid;ui.sueCfg=ui.sueCfg||{periodo:workPeriod(),tipo:'Mensual',horas:24,msg:MSG_REC,editEmp:null};ui.sueCfg.periodo=per;ui.sueCfg.editEmp=null;ui.ficha=null;show('sueldos')}
 
