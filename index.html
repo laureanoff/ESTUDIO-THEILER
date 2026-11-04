@@ -309,16 +309,15 @@ function vImportar(){
   <label>Período<br>${mesPick(ui.periodo,`ui.periodo=this.value`,'iper')}</label>
   <label style="flex:1;min-width:220px">Archivo de "Mis Comprobantes Recibidos" (.xls / .xlsx), o arrastralo a este recuadro<br><input type="file" id="ifile" accept=".xls,.xlsx"></label>
   <button class="b" onclick="previsualizar()">Ver vista previa</button></div>
-  <p style="color:var(--mut);font-size:12px">El archivo se lee en tu navegador; solo se guardan los comprobantes en la base.</p>
+  <p style="color:var(--mut);font-size:12px">El cliente y el período se eligen solos según el archivo (CUIT del encabezado o del nombre y mes con más comprobantes). El archivo se lee en tu navegador; solo se guardan los comprobantes en la base.</p>
   ${libroCard()}
   ${coopCard()}
   <h3>Historial de importaciones</h3><div class="tw"><table><thead><tr><th>Fecha</th><th>Cliente</th><th>Archivo</th><th>Leídos</th><th>Nuevos</th><th>Repetidos</th><th>Rechazados</th></tr></thead><tbody>
   ${ui.batches.length?ui.batches.map(b=>`<tr><td>${new Date(b.imported_at).toLocaleString('es-AR')}</td><td>${esc(b.clients&&b.clients.razon_social)}</td><td>${esc(b.file_name)}${b.kind==='libro_iva'?' <span class="tag" style="background:var(--blu);color:var(--blut)">Libro IVA</span>':''}</td><td>${b.rows_read}</td><td>${b.rows_new}</td><td>${b.rows_duplicate}</td><td>${b.rows_rejected}</td></tr>`).join(''):'<tr><td colspan="7" style="color:var(--mut)">Todavía no hay importaciones.</td></tr>'}</tbody></table></div>`;
 }
 async function previsualizar(){
-  const f=$('ifile').files[0],cid=$('icl').value,periodo=$('iper').value;ui.cid=cid;ui.periodo=periodo;
+  const f=$('ifile').files[0];let cid=$('icl').value,periodo=$('iper').value;ui.cid=cid;ui.periodo=periodo;
   const bad=m=>{flash(m,'err');draw()};
-  {const ex=exentoMsg(cid);if(ex)return bad(ex)}
   if(!/^\d{4}-\d{2}$/.test(periodo))return bad('Elegí el período.');
   if(!f)return bad('Subí el archivo Excel.');
   if(!/\.xlsx?$/i.test(f.name))return bad('El archivo debe ser .xls o .xlsx.');
@@ -327,6 +326,10 @@ async function previsualizar(){
   let buf,rows;try{buf=await f.arrayBuffer();const wb=XLSX.read(buf,{type:'array'});rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,raw:true,defval:null})}catch(e){return bad('No se pudo abrir el archivo: ¿está dañado?')}
   const r=parseArca(rows);if(!r.ok)return bad(r.error);
   if(r.meta.kind==='emitidos')return bad('Este Excel es de comprobantes EMITIDOS (ventas). Subilo en la sección Ventas.');
+  const D=impDetectar({cuit:r.meta.cuit,nombre:f.name,fechas:r.vs.map(v=>v.fecha)});if(D.err)return bad(D.err);
+  if(D.cid)cid=D.cid;if(D.periodo)periodo=D.periodo;ui.cid=cid;ui.periodo=periodo;
+  {const ex=exentoMsg(cid);if(ex)return bad(ex)}
+  if(D.msg)flash(D.msg);
   const c=ui.clients.find(x=>x.id===cid);
   try{
     const ex=await fetchAll((a,b)=>sb.from('vouchers').select('emisor_cuit,tipo_cmp,punto_venta,numero,fecha,importe_total').eq('client_id',cid).range(a,b));
@@ -3568,6 +3571,26 @@ async function antEliminarCliente(id){
     await loadClients();await loadFil();flash('Cliente eliminado.');
   }catch(x){flash(errTxt(x),'err')}
   draw();
+}
+
+/* ===== Importar compras: el cliente y el período se eligen solos según el archivo ===== */
+/** Deduce cliente (CUIT del encabezado o del nombre del archivo) y período (mes con más comprobantes, o el que declara el Libro). */
+function impDetectar(o){
+  const R={cid:null,periodo:null,err:null,msg:''};
+  let cuit=o.cuit&&String(o.cuit).replace(/\D/g,'');
+  if(!cuit||cuit.length!==11){const m=String(o.nombre||'').replace(/(\d{2})-(\d{8})-(\d)/g,'$1$2$3').match(/(?<!\d)(\d{11})(?!\d)/);cuit=m?m[1]:null}
+  if(cuit){const k=ui.clients.find(c=>String(c.cuit)===cuit);
+    if(k)R.cid=k.id;else R.err=`El archivo es del CUIT ${cuitF(cuit)}, que no está cargado como cliente. Cargalo en Clientes o elegí el cliente a mano.`}
+  let per=o.periodo||null;
+  if(!per&&o.fechas&&o.fechas.length){const n={};o.fechas.forEach(f=>{const p=String(f||'').slice(0,7);if(/^\d{4}-\d{2}$/.test(p))n[p]=(n[p]||0)+1});const t=Object.entries(n).sort((a,b)=>b[1]-a[1])[0];if(t)per=t[0]}
+  R.periodo=per;
+  const k=R.cid&&ui.clients.find(c=>c.id===R.cid);
+  if(k||per)R.msg='Se eligió solo '+[k?'el cliente '+k.razon_social:'',per?'el período '+MESES[+per.slice(5)-1]+' '+per.slice(0,4):''].filter(Boolean).join(' y ')+', según el archivo.';
+  return R;
+}
+function impCuitEncabezado(rows){
+  const top=[];for(let i=0;i<Math.min(rows.length,25);i++){const r=rows[i]||[];if(r.some(c=>lbNorm(c)==='cuit'))break;top.push(r.map(c=>String(c??'')).join(' '))}
+  const m=top.join(' ').match(/CUIT\D{0,20}(\d{2})-?(\d{8})-?(\d)/i);return m?m[1]+m[2]+m[3]:null;
 }
 /* ===== Carga de sueldos: perfil "liquidador" (recibos, VEP y boletas de sindicatos) ===== */
 const isLiq=()=>prof&&prof.role==='liquidador';
@@ -7647,11 +7670,11 @@ function planLibro(lib,ex,periodo){
 /* ---- Interfaz ---- */
 function libroCard(){
   return `<div class="card" style="max-width:640px;margin-top:16px"><b>Libro IVA Compras (paso 2, opcional)</b>
-  <p class="s" style="margin:4px 0 10px">Usa el cliente y el período de arriba. Se agregan solo los comprobantes del Libro que no figuran en "Mis Comprobantes" (por ejemplo, los tickets). Primero importá el Excel de ARCA.</p>
+  <p class="s" style="margin:4px 0 10px">El cliente y el período se eligen solos según el archivo (si no los trae, usa los de arriba). Se agregan solo los comprobantes del Libro que no figuran en "Mis Comprobantes" (por ejemplo, los tickets). Primero importá el Excel de ARCA.</p>
   <div class="row"><label style="flex:1;min-width:220px">Excel del Libro IVA Compras (.xls / .xlsx), o arrastralo a este recuadro<br><input type="file" id="lfile" accept=".xls,.xlsx" style="width:100%"></label><button class="b" onclick="libroPrevisualizar()">Ver vista previa del Libro</button></div></div>`;
 }
 async function libroPrevisualizar(){
-  const f=$('lfile').files[0],cid=$('icl').value,periodo=$('iper').value;ui.cid=cid;ui.periodo=periodo;const bad=m=>{flash(m,'err');draw()};
+  const f=$('lfile').files[0];let cid=$('icl').value,periodo=$('iper').value;ui.cid=cid;ui.periodo=periodo;const bad=m=>{flash(m,'err');draw()};
   if(!/^\d{4}-\d{2}$/.test(periodo))return bad('Elegí el período.');
   if(!f)return bad('Subí el Excel del Libro IVA Compras.');
   if(!/\.xlsx?$/i.test(f.name))return bad('El archivo debe ser .xls o .xlsx.');
@@ -7659,7 +7682,8 @@ async function libroPrevisualizar(){
   if(typeof XLSX==='undefined')return bad('No se pudo cargar el lector de Excel (¿sin conexión a internet?).');
   let buf,rows;try{buf=await f.arrayBuffer();const wb=XLSX.read(buf,{type:'array'});rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,raw:true,defval:null})}catch(e){return bad('No se pudo abrir el archivo: ¿está dañado?')}
   const lib=parseLibroIva(rows);if(!lib.ok)return bad(lib.error);
-  if(lib.periodo&&lib.periodo!==periodo)return bad(`El Libro es de ${lib.periodo.slice(5)}/${lib.periodo.slice(0,4)} y elegiste ${periodo.slice(5)}/${periodo.slice(0,4)}. Elegí el mismo período.`);
+  {const D=impDetectar({cuit:impCuitEncabezado(rows),nombre:f.name,periodo:lib.periodo,fechas:(lib.comprobantes||[]).map(x=>x.fecha)});if(D.err)return bad(D.err);
+   if(D.cid)cid=D.cid;if(D.periodo)periodo=D.periodo;ui.cid=cid;ui.periodo=periodo;if(D.msg)flash(D.msg)}
   if(!lib.comprobantes.length)return bad('El Libro no tiene comprobantes para leer.');
   try{
     const ex=await fetchAll((a,b)=>sb.from('vouchers').select('emisor_cuit,tipo_cmp,punto_venta,numero,fecha,importe_total,origen,proc_status').eq('client_id',cid).range(a,b));
