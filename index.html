@@ -326,6 +326,7 @@ async function previsualizar(){
   let buf,rows;try{buf=await f.arrayBuffer();const wb=XLSX.read(buf,{type:'array'});rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,raw:true,defval:null})}catch(e){return bad('No se pudo abrir el archivo: ¿está dañado?')}
   const r=parseArca(rows);if(!r.ok)return bad(r.error);
   if(r.meta.kind==='emitidos')return bad('Este Excel es de comprobantes EMITIDOS (ventas). Subilo en la sección Ventas.');
+  {const fb=r.vs.filter(v=>CMP_B.has(Number(v.tipo_cmp)));r.omitB=fb.length;if(fb.length)r.vs=r.vs.filter(v=>!CMP_B.has(Number(v.tipo_cmp)))}
   const D=impDetectar({cuit:r.meta.cuit,nombre:f.name,fechas:r.vs.map(v=>v.fecha)});if(D.err)return bad(D.err);
   if(D.cid)cid=D.cid;if(D.periodo)periodo=D.periodo;ui.cid=cid;ui.periodo=periodo;
   {const ex=exentoMsg(cid);if(ex)return bad(ex)}
@@ -342,7 +343,7 @@ async function previsualizar(){
 function vPreview(){
   const {plan:p,r,file}=ui.pend;
   return `<h2>Vista previa: ${esc(file)}</h2>${p.bloqueos.map(b=>`<div class="msg err">${esc(b)} No se puede importar.</div>`).join('')}
-  <div class="grid" style="margin-bottom:12px">${[['Leídos',r.read],['Nuevos',p.nuevos.length],['Ya existían',p.repetidos.length],['Con diferencias',p.difs.length],['Fuera del período',p.fuera.length]].map(([t,n])=>`<div class="card kpi"><b>${n}</b><span>${t}</span></div>`).join('')}</div>
+  <div class="grid" style="margin-bottom:12px">${[['Leídos',r.read],['Nuevos',p.nuevos.length],['Ya existían',p.repetidos.length],['Con diferencias',p.difs.length],['Fuera del período',p.fuera.length],['Tipo B (no se cargan)',r.omitB||0]].map(([t,n])=>`<div class="card kpi"><b>${n}</b><span>${t}</span></div>`).join('')}</div>
   <div class="msg info">IVA de los comprobantes nuevos: <b>${money(p.nuevos.reduce((a,v)=>a+sgnVal(v.tipo_cmp,v.iva),0))}</b> (las notas de crédito restan). ${p.nuevos.some(v=>v.iva===null)?'Hay comprobantes sin dato de IVA en el Excel.':''}</div>
   ${r.errors.length?`<div class="msg warn">Filas rechazadas: ${r.errors.map(e=>`fila ${e.row}: ${esc(e.message)}`).join(' · ')}</div>`:''}
   ${p.difs.length?`<div class="msg warn">Existen con datos distintos (no se modifican, revisalos): ${p.difs.map(d=>`N° ${d.v.numero} (${esc(d.motivo)})`).join(' · ')}</div>`:''}
@@ -2697,6 +2698,7 @@ function coopAnalizar(rows){
     const R={fila:i+1,cuenta,fecha,dig,pv,numero,cuit,emisor:String(g(r,'razon social')||'').trim()||'Cooperativa',det,den,poliza,cmp:t?t.cmp:null,
       g21:ab(g21),i21:ab(i21),g105:ab(g105),i105:ab(i105),exe:ab(exe),otr:ab(otr),nog,neto,iva,total:totA,sel:false,motivo:''};
     R.sel=!poliza&&!!t;R.motivo=poliza?'Póliza: no se carga':t?'':'Tipo no reconocido: elegilo para poder cargarlo';
+    if(t&&CMP_B.has(t.cmp)){R.noB=true;R.sel=false;R.motivo='Factura B: no se carga'}
     if(dig.length<9&&!poliza)R.aviso='Número sin punto de venta: se carga con punto de venta 0.';
     const k=[cuenta,cuit,t?t.cmp:'?',pv,numero].join('|');if(!poliza&&vistos.has(k)){R.sel=false;R.motivo='Repetido dentro del archivo';R.rep=true}vistos.add(k);
     let G=gruposM.get(cuenta);if(!G){G={cuenta,nombres:[],filas:[],cid:null,auto:false,exist:null};gruposM.set(cuenta,G)}
@@ -2742,24 +2744,24 @@ async function coopLeer(files){
 function coopDrop(e){e.preventDefault();const z=e.currentTarget;z.style.background='';z.style.borderColor='';coopLeer(e.dataTransfer?e.dataTransfer.files:[])}
 async function coopCliente(gi,cid){const G=ui.coop.grupos[gi];G.cid=cid||null;G.auto=false;G.via='manual';await coopExistentes(G);draw()}
 function coopSel(gi,fi,v){const R=ui.coop.grupos[gi].filas[fi];R.sel=!!v;draw()}
-function coopTipoSet(gi,fi,v){const R=ui.coop.grupos[gi].filas[fi];R.cmp=v?Number(v):null;if(R.cmp&&!R.poliza){R.motivo='';R.sel=true}else if(!R.cmp)R.sel=false;draw()}
-function coopTodos(gi,modo){const G=ui.coop.grupos[gi];G.filas.forEach(R=>{if(!R.cmp)return;R.sel=modo==='sin'?!R.poliza&&!R.rep:modo==='todos'})
+function coopTipoSet(gi,fi,v){const R=ui.coop.grupos[gi].filas[fi];R.cmp=v?Number(v):null;R.noB=!!R.cmp&&CMP_B.has(R.cmp);if(R.noB){R.sel=false;R.motivo='Factura B: no se carga'}else if(R.cmp&&!R.poliza){R.motivo='';R.sel=true}else if(!R.cmp)R.sel=false;draw()}
+function coopTodos(gi,modo){const G=ui.coop.grupos[gi];G.filas.forEach(R=>{if(!R.cmp||R.noB)return;R.sel=modo==='sin'?!R.poliza&&!R.rep:modo==='todos'})
   draw()}
 function coopCancelar(){ui.coop=null;draw()}
 const coopElegidos=G=>G.filas.filter(R=>R.sel&&R.cmp&&!coopDup(G,R));
 function coopHtml(){
   const C=ui.coop;
   const gh=C.grupos.map((G,gi)=>{
-    const el=coopElegidos(G),dup=G.filas.filter(R=>R.sel&&R.cmp&&coopDup(G,R)).length,pol=G.filas.filter(R=>R.poliza).length;
+    const el=coopElegidos(G),dup=G.filas.filter(R=>R.sel&&R.cmp&&coopDup(G,R)).length,pol=G.filas.filter(R=>R.poliza).length,nb=G.filas.filter(R=>R.noB).length;
     const filas=G.filas.map((R,fi)=>{
-      const d=coopDup(G,R),es=R.cmp&&!d,est=d?'<span class="tag" style="background:var(--grn);color:var(--grnt)">Ya estaba cargado</span>':R.poliza?'<span class="tag" style="background:var(--vio);color:var(--viot)">Póliza: no se carga</span>':R.rep?'<span class="tag" style="background:var(--amb);color:var(--ambt)">Repetido en el archivo</span>':!R.cmp?'<span class="tag" style="background:var(--amb);color:var(--ambt)">Tipo no reconocido</span>':'';
+      const d=coopDup(G,R),es=R.cmp&&!d&&!R.noB,est=R.noB?'<span class="tag" style="background:var(--vio);color:var(--viot)">Tipo B: no se carga</span>':d?'<span class="tag" style="background:var(--grn);color:var(--grnt)">Ya estaba cargado</span>':R.poliza?'<span class="tag" style="background:var(--vio);color:var(--viot)">Póliza: no se carga</span>':R.rep?'<span class="tag" style="background:var(--amb);color:var(--ambt)">Repetido en el archivo</span>':!R.cmp?'<span class="tag" style="background:var(--amb);color:var(--ambt)">Tipo no reconocido</span>':'';
       return `<tr style="${!R.sel||d?'opacity:.6':''}"><td><input type="checkbox" ${R.sel&&es?'checked':''} ${es?'':'disabled'} onchange="coopSel(${gi},${fi},this.checked)"></td><td>${fAR(R.fecha)}</td><td>${R.cmp?esc(coopTipoNom(R.cmp)):`<select onchange="coopTipoSet(${gi},${fi},this.value)"><option value="">Elegir tipo…</option>${[...TIPOS_CMP.map(x=>x),[83,'Tique']].map(([c,t])=>`<option value="${c}">${esc(t)}</option>`).join('')}</select>`}<span class="s">${esc(R.det)}</span></td><td>${R.pv}-${String(R.numero).padStart(8,'0')}</td><td>${esc(R.den)}</td><td>${money(R.neto)}</td><td>${money(R.iva)}</td><td>${money(R.total)}</td><td>${est}${R.aviso?`<span class="s">${esc(R.aviso)}</span>`:''}</td></tr>`}).join('');
     const opts=ui.clients.filter(c=>c.active!==false).map(c=>`<option value="${c.id}" ${c.id===G.cid?'selected':''}>${esc(c.razon_social)}</option>`).join('');
     const cli=G.cid?ui.clients.find(c=>c.id===G.cid):null;
     return `<div class="card" style="margin:10px 0"><div class="row" style="gap:12px;align-items:flex-end;flex-wrap:wrap"><div><b>${esc(G.nombre)}</b><span class="s">Cuenta ${esc(G.cuenta)} de la cooperativa · ${G.filas.length} comprobante(s)</span></div>
      <label>Cliente en la app<br><select onchange="coopCliente(${gi},this.value)"><option value="">Elegir cliente…</option>${opts}</select></label>
      ${cli?(G.auto&&G.via==='cuenta'?'<span class="tag" style="background:var(--grn);color:var(--grnt)">Reconocido por el número de cuenta</span>':(coopLista(cli).includes(String(G.cuenta))?'<span class="tag" style="background:var(--grn);color:var(--grnt)">Cuenta vinculada a este cliente</span>':`<span class="tag" style="background:var(--blu);color:var(--blut)">${G.auto?'Reconocido por el nombre':'Elegido a mano'}: al confirmar se vincula la cuenta ${esc(G.cuenta)} con este cliente</span>`)):'<span class="tag" style="background:var(--red);color:var(--redt)">Elegí el cliente para poder cargar</span>'}</div>
-     <div class="row" style="gap:8px;margin:8px 0;flex-wrap:wrap"><button class="g sm" onclick="coopTodos(${gi},'sin')">Marcar todos menos pólizas</button><button class="g sm" onclick="coopTodos(${gi},'todos')">Marcar todos</button><button class="g sm" onclick="coopTodos(${gi},'ninguno')">Desmarcar todos</button><span class="s">${pol?pol+' póliza(s) sin marcar. ':''}${dup?dup+' ya estaban cargados. ':''}Se cargan ${el.length}.</span></div>
+     <div class="row" style="gap:8px;margin:8px 0;flex-wrap:wrap"><button class="g sm" onclick="coopTodos(${gi},'sin')">Marcar todos menos pólizas</button><button class="g sm" onclick="coopTodos(${gi},'todos')">Marcar todos</button><button class="g sm" onclick="coopTodos(${gi},'ninguno')">Desmarcar todos</button><span class="s">${pol?pol+' póliza(s) sin marcar. ':''}${nb?nb+' comprobante(s) B sin cargar. ':''}${dup?dup+' ya estaban cargados. ':''}Se cargan ${el.length}.</span></div>
      <div class="tw"><table><thead><tr><th></th><th>Fecha</th><th>Tipo</th><th>Número</th><th>Concepto</th><th>Neto</th><th>IVA</th><th>Total</th><th>Estado</th></tr></thead><tbody>${filas}</tbody></table></div></div>`;
   }).join('');
   const n=C.grupos.reduce((a,G)=>a+(G.cid?coopElegidos(G).length:0),0),sinCli=C.grupos.some(G=>!G.cid&&G.filas.some(R=>R.sel&&R.cmp));
@@ -3592,6 +3594,9 @@ function impCuitEncabezado(rows){
   const top=[];for(let i=0;i<Math.min(rows.length,25);i++){const r=rows[i]||[];if(r.some(c=>lbNorm(c)==='cuit'))break;top.push(r.map(c=>String(c??'')).join(' '))}
   const m=top.join(' ').match(/CUIT\D{0,20}(\d{2})-?(\d{8})-?(\d)/i);return m?m[1]+m[2]+m[3]:null;
 }
+
+/* Facturas, notas de crédito y de débito B: no se cargan (ni de ARCA ni de la cooperativa). */
+const CMP_B=new Set([6,7,8,82]);
 /* ===== Carga de sueldos: perfil "liquidador" (recibos, VEP y boletas de sindicatos) ===== */
 const isLiq=()=>prof&&prof.role==='liquidador';
 const CG_SIND=['UATRE','OSECAC','FAECYS','IERIC','AMMA','ACTF','UOCRA','OSPRERA','SEC','UTEDYC'];
