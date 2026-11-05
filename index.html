@@ -2660,6 +2660,10 @@ function coopXmlFilas(txt){
 }
 async function coopLeerFilas(f){
   const buf=await f.arrayBuffer(),u8=new Uint8Array(buf),ini=new TextDecoder('latin1').decode(u8.slice(0,300));
+  const SIN='Este archivo no tiene ningún ticket: la cooperativa informó que no hay registros para listar en esa consulta (el archivo viene vacío). Revisá las fechas o la cuenta con las que lo bajaste.';
+  if(u8.length<4000){const t=new TextDecoder('latin1').decode(u8);
+    if(/no\s+ha\s+devuelto\s+ning.n\s+registro/i.test(t)||(!/<Row\b|<Workbook/i.test(t)&&/^\s*</.test(t)&&!/<table/i.test(t)))throw new Error(SIN);
+    if(!u8.length)throw new Error(SIN)}
   if(/^\s*<\?xml/i.test(ini)||/<Workbook/i.test(ini)){
     const enc=(ini.match(/encoding=['"]([^'"]+)['"]/i)||[])[1]||'utf-8';let txt;try{txt=new TextDecoder(enc).decode(u8)}catch(e){txt=new TextDecoder('windows-1252').decode(u8)}
     return coopXmlFilas(txt);
@@ -2707,6 +2711,7 @@ function coopAnalizar(rows){
   }
   const grupos=[...gruposM.values()];
   grupos.forEach(G=>{G.nombre=G.nombres.slice().sort((a,b)=>b.length-a.length)[0]||('Cuenta '+G.cuenta)});
+  if(!grupos.length&&!leidas)return {ok:false,error:'Este archivo no tiene ningún ticket: tiene las columnas pero ninguna fila con comprobantes.'};
   if(!grupos.length)return {ok:false,error:'El archivo no tiene comprobantes que se puedan leer.'+(errores.length?' Filas con problemas: '+errores.slice(0,5).map(e=>'fila '+e.fila+' ('+e.msg+')').join(', ')+'.':'')};
   return {ok:true,grupos,errores,leidas};
 }
@@ -4540,12 +4545,16 @@ async function cmpLeerFoto(f){
 }
 function cmpCliPorCuit(c){c=String(c||'').replace(/\D/g,'');return ui.clients.find(x=>String(x.cuit||'').replace(/\D/g,'')===c)||null}
 async function cmpLeer(files){
-  files=[...files].filter(f=>f&&f.name);if(!files.length||CMP.busy)return;
-  CMP.busy=true;CMP.fase='leyendo';CMP.items=[];draw();
+  files=[...files].filter(f=>f&&f.name);if(!files.length)return;
+  if(CMP.busy){CMP.cola=(CMP.cola||[]).concat(files);return}
+  CMP.busy=true;CMP.fase='leyendo';CMP.res=null;const prev=CMP.items||[];CMP.items=prev;
+  const antes=files.length;files=files.filter(f=>!prev.some(p=>p.file&&p.file.name===f.name&&p.file.size===f.size));
+  if(files.length<antes)flash((antes-files.length)+' archivo(s) ya estaban en la lista y se omitieron.','warn');
+  draw();
   let n=0;
   for(const f of files){
     n++;CMP.prog=`Leyendo ${n} de ${files.length}: ${f.name}`;const el=document.getElementById('cmpprog');if(el)el.textContent=CMP.prog;
-    const it={id:'c'+Date.now()+'_'+n,nombre:f.name,file:f,estado:'err',avisos:[],d:null,cid:null,existe:null,sel:false};
+    const it={id:'c'+Date.now()+'_'+n+'_'+Math.random().toString(36).slice(2,6),nombre:f.name,file:f,estado:'err',avisos:[],d:null,cid:null,existe:null,sel:false};
     try{
       if(f.size>15*1048576)throw new Error('El archivo supera los 15 MB.');
       const esImg=/^image\//.test(f.type)||/\.(jpe?g|png|webp|heic|heif)$/i.test(f.name),esP=/\.pdf$/i.test(f.name)||f.type==='application/pdf';
@@ -4562,11 +4571,14 @@ async function cmpLeer(files){
       it.fuente=L.qr?(L.texto.trim()?'QR + texto':'QR'):'texto';
       if(!d.nombre){const nm=await cmpNombreProv(d.cuit);d.nombre=nm||cmpNombreTexto(L.texto)||''}
       await cmpClasificar(it);
+      const k=x=>x.d&&[x.cid,x.d.cuit,x.d.tipo,x.d.pv,x.d.num].join('|');
+      if(['nuevo','marcar','adjuntar','yaTenia'].includes(it.estado)&&CMP.items.some(x=>k(x)===k(it)&&x.estado!=='err')){it.estado='rep';it.sel=false;it.motivo='Es el mismo comprobante que otro archivo de esta lista.'}
     }catch(e){it.estado='err';it.error=e.message||String(e)}
     CMP.items.push(it);
     await new Promise(r=>setTimeout(r,0));
   }
   CMP.busy=false;CMP.fase='previa';draw();
+  if(CMP.cola&&CMP.cola.length){const c=CMP.cola;CMP.cola=[];await cmpLeer(c)}
 }
 async function cmpNombreProv(cuit){
   try{const q=await sb.from('vouchers').select('emisor_nombre').eq('emisor_cuit',cuit).not('emisor_nombre','is',null).limit(5);return ((q.data||[]).map(x=>x.emisor_nombre).find(Boolean))||null}catch(e){return null}
@@ -4609,7 +4621,7 @@ function cmpCompleto(it){
   else{const s=cmpR2(d.neto+d.iva+(d.otros||0)+(d.nog||0)+(d.exe||0));if(Math.abs(s-d.total)>0.06)f.push(`que cierren los importes (suman ${money(s)}, el total es ${money(d.total)})`)}
   return f;
 }
-const CMP_EST={nuevo:['Nuevo: se carga','grn'],marcar:['Ya cargado: se marca recibido (digital)','blu'],adjuntar:['Ya estaba recibido: se guarda el archivo','blu'],yaTenia:['Ya estaba recibido y con archivo','gry'],noB:['Tipo B: no se carga','amb'],exento:['Cliente exento','amb'],sinCliente:['Falta elegir el cliente','amb'],err:['No se pudo leer','red']};
+const CMP_EST={nuevo:['Nuevo: se carga','grn'],marcar:['Ya cargado: se marca recibido (digital)','blu'],adjuntar:['Ya estaba recibido: se guarda el archivo','blu'],yaTenia:['Ya estaba recibido y con archivo','gry'],rep:['Repetido en la lista','amb'],noB:['Tipo B: no se carga','amb'],exento:['Cliente exento','amb'],sinCliente:['Falta elegir el cliente','amb'],err:['No se pudo leer','red']};
 function cmpDrop(e){e.preventDefault();const z=e.currentTarget;z.style.background='';z.style.borderColor='';cmpLeer(e.dataTransfer?e.dataTransfer.files:[])}
 function cmpZona(){
   return `<div ondragover="event.preventDefault();this.style.background='rgba(120,160,255,.14)';this.style.borderColor='var(--blut,#3b6fd4)'" ondragleave="this.style.background='';this.style.borderColor=''" ondrop="cmpDrop(event)" style="border:2px dashed var(--bd,#cbd5e1);border-radius:12px;padding:18px;text-align:center"><div><b>Arrastrá acá facturas en PDF o fotos</b> (todas juntas, de distintos clientes si hace falta)</div><div class="s" style="margin:4px 0 10px">Cada una se lee por su QR de ARCA y por su texto. Si ya está cargada se marca como recibida (digital); si no, se carga con todos sus datos. Los comprobantes tipo B no se cargan.</div>
@@ -4639,9 +4651,12 @@ function cmpFila(it){
   const ed=it.estado==='nuevo'||it.estado==='sinCliente';
   const inp=(k,ph)=>ed?`<input value="${d[k]===null||d[k]===undefined?'':String(d[k]).replace('.',',')}" placeholder="${ph}" inputmode="decimal" style="width:92px;text-align:right${d[k]===null?';border-color:#d9a400':''}" onchange="cmpCampo('${it.id}','${k}',this.value)">`:(d[k]===null||d[k]===undefined?'-':money(d[k]));
   const nombre=ed?`<input value="${esc(d.nombre||'')}" placeholder="Proveedor" style="width:160px${d.nombre?'':';border-color:#d9a400'}" onchange="cmpCampo('${it.id}','nombre',this.value)">`:esc((it.existe&&it.existe.emisor_nombre)||d.nombre||'');
-  const notas=[...(it.dif.length?['Diferencias con lo cargado: '+it.dif.join('; ')+'. No se marcó solo: tildalo si es el mismo.']:[]),...(it.estado==='nuevo'?cmpCompleto(it).map(x=>'Falta revisar '+x+'.'):[]),...(it.motivo?[it.motivo]:[]),...it.avisos.filter(a=>!/cliente/i.test(a)||!it.cid)].filter(Boolean);
-  return `<tr>${base}<td>${cli}</td><td style="min-width:120px">${esc(tipoNombre(d.tipo))}<div class="s" style="white-space:nowrap">${nroF(d.pv,d.num)} · ${fAR(d.fecha)}</div></td><td style="min-width:170px">${nombre}<div class="s" style="white-space:nowrap">${cuitF(d.cuit)}</div></td><td>${inp('neto','Neto')}</td><td>${inp('iva','IVA')}</td><td>${inp('otros','0,00')}</td><td>${inp('total','Total')}</td><td><span class="tag" style="background:var(--${e[1]==='grn'?'grn':e[1]==='red'?'redb':'blu'},#eee)">${e[0]}</span>${notas.length?`<div class="s" style="margin-top:4px;max-width:260px">${notas.map(esc).join('<br>')}</div>`:''}</td></tr>`;
+  const notas=[...(it.dif.length?['Diferencias con lo cargado: '+it.dif.join('; ')+'.']:[]),...(it.estado==='nuevo'?cmpCompleto(it).map(x=>'Falta revisar '+x+'.'):[]),...(it.motivo?[it.motivo]:[]),...it.avisos.filter(a=>!/cliente/i.test(a)||!it.cid)].filter(Boolean);
+  return `<tr>${base}<td>${cli}</td><td style="min-width:120px">${esc(tipoNombre(d.tipo))}<div class="s" style="white-space:nowrap">${nroF(d.pv,d.num)} · ${fAR(d.fecha)}</div></td><td style="min-width:170px">${nombre}<div class="s" style="white-space:nowrap">${cuitF(d.cuit)}</div></td><td>${inp('neto','Neto')}</td><td>${inp('iva','IVA')}</td><td>${inp('otros','0,00')}</td><td>${inp('total','Total')}</td><td><span class="tag" style="background:var(--${e[1]==='grn'?'grn':e[1]==='red'?'redb':'blu'},#eee)">${e[0]}</span>${notas.length?`<div class="s" style="margin-top:4px;max-width:260px">${notas.map(esc).join('<br>')}</div>`:''}${it.dif.length&&it.existe&&['marcar','adjuntar'].includes(it.estado)?`<div class="row" style="margin-top:6px;gap:6px"><button class="g sm" onclick="cmpVerArchivo('${it.id}')">Ver el archivo</button><button class="g sm" onclick="cmpVerComp('${it.id}')">Ver en Comprobantes</button>${it.forzar?'<span class="s">Se marcará igual</span><button class="g sm" onclick="cmpForzar(\'${it.id}\',false)">Quitar</button>':`<button class="b sm" onclick="cmpForzar('${it.id}',true)">Marcar igual</button>`}</div>`:''}</td></tr>`;
 }
+function cmpVerArchivo(id){const it=CMP.items.find(x=>x.id===id);if(!it)return;const u=URL.createObjectURL(it.blob||it.file);window.open(u,'_blank');setTimeout(()=>URL.revokeObjectURL(u),60000)}
+function cmpVerComp(id){const it=CMP.items.find(x=>x.id===id);if(!it||!it.existe)return;const per=it.existe.client_periods&&it.existe.client_periods.periodo;ui.cid=it.cid;if(per)ui.periodo=per.slice(0,7);ui.q=String(it.d.num);ui.filtro='';show('comprobantes')}
+function cmpForzar(id,v){const it=CMP.items.find(x=>x.id===id);if(!it)return;it.forzar=!!v;it.sel=!!v;draw()}
 function cmpSel(id,v){const it=CMP.items.find(x=>x.id===id);if(it){it.sel=!!v;draw()}}
 function cmpCampo(id,k,v){
   const it=CMP.items.find(x=>x.id===id);if(!it)return;const d=it.d;
@@ -4690,7 +4705,7 @@ async function cmpConfirmar(){
         let q=sb.from('vouchers').update(cambios).eq('id',v.id);if(it.estado==='marcar')q=q.in('doc_status',['no_recibida','pendiente_revision']);
         const {data,error}=await q.select('id');if(error)throw error;
         if(!data.length)throw new Error('otra persona ya lo cambió');
-        if(it.estado==='marcar'){const {error:e2}=await sb.from('document_receipts').insert({voucher_id:v.id,method:'archivo',received_by:me.id,match_result:'comprobante_suelto'});if(e2)throw e2}
+        if(it.estado==='marcar'){const {error:e2}=await sb.from('document_receipts').insert({voucher_id:v.id,method:'archivo',received_by:me.id,match_result:it.dif.length?'comprobante_suelto_con_diferencias: '+it.dif.join('; ').slice(0,300):'comprobante_suelto'});if(e2)throw e2}
         ok.push(`${cli?cli.razon_social+': ':''}${rotulo}, ${hizo.join(' y ')}`);
       }
       QRS.list.unshift(`${new Date().toLocaleTimeString('es-AR')}, ${cli?cli.razon_social+', ':''}${d.nombre||''}, ${nroF(d.pv,d.num)} (archivo)`);
