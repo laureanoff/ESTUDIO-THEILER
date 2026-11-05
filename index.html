@@ -219,7 +219,7 @@ async function loadClients(){const {data,error}=await sb.from('clients').select(
 async function logout(){await sb.auth.signOut()}
 
 /* ===== Navegación y carga de datos ===== */
-const TABS=[['inicio','Inicio'],['avisos','Avisos'],['cumplimiento','Cumplimiento'],['vencimientos','Vencimientos'],['clientes','Clientes'],['balances','Preparación de balances'],['bancos','Resúmenes bancarios'],['importar','Importar compras'],['escanear','Escanear QR'],['comprobantes','Comprobantes de compra'],['ventas','Ventas'],['iva','IVA aproximado'],['reclamos','Reclamos'],['anticipos','Anticipos'],['sueldos','Sueldos'],['carga','Carga de sueldos']];
+const TABS=[['inicio','Inicio'],['avisos','Avisos'],['cumplimiento','Cumplimiento'],['vencimientos','Vencimientos'],['clientes','Clientes'],['balances','Preparación de balances'],['bancos','Resúmenes bancarios'],['importar','Importar compras'],['escanear','Escanear QR'],['comprobantes','Comprobantes de compra'],['ventas','Ventas'],['iva','IVA aproximado'],['reclamos','Reclamos'],['anticipos','Anticipos'],['sueldos','Sueldos'],['carga','Carga de sueldos'],['pdf','Herramientas PDF']];
 async function show(t){
   if(isLiq()&&t!=='carga')t='carga';
   if(t==='admin'&&!isAdmin()){flash('Esa sección es solo para administradores.','err');t='inicio'}
@@ -253,7 +253,7 @@ function draw(){
   $('nav').innerHTML='<h1>Estudio Theiler</h1>'+(isLiq()?'':'<button class="g" style="margin:0 0 10px;width:100%" onclick="busqAbrir()">Buscar (Ctrl+K)</button>')+(isLiq()?TABS.filter(x=>x[0]==='carga'):TABS).concat(isAdmin()&&!isLiq()?[['admin','Administración']]:[]).map(([k,t])=>`<button class="${ui.tab===k?'on':''}" onclick="show('${k}')">${t}${navBadge(k)}</button>`).join('')+
    `<div class="me">${esc(prof.username||prof.full_name||me.email)}<br>${esc(prof.role)}<br><button class="g" onclick="logout()">Cerrar sesión</button><br><span style="display:block;margin-top:10px;font-size:11px;opacity:.7">Versión: ${APP_VERSION}</span></div>`;
   const m=ui.msg?`<div class="msg ${ui.msg.k}">${esc(ui.msg.t)}</div>`:'';ui.msg=null;window._fm=m;
-  $('main').innerHTML=(ui.ficha?'':m)+({inicio:vInicio,clientes:vClientes,importar:vImportar,escanear:vEscanear,comprobantes:vComp,vencimientos:vVenc,anticipos:vAnticipos,sueldos:vSueldosPage,carga:vCarga,ventas:vVentas,iva:vIva,admin:vAdmin,balances:vBalances,bancos:vBancos,cumplimiento:vCumplimiento,avisos:vAvisos,reclamos:vReclamos})[ui.tab]()+vFicha();
+  $('main').innerHTML=(ui.ficha?'':m)+({inicio:vInicio,clientes:vClientes,importar:vImportar,escanear:vEscanear,comprobantes:vComp,vencimientos:vVenc,anticipos:vAnticipos,sueldos:vSueldosPage,carga:vCarga,ventas:vVentas,iva:vIva,admin:vAdmin,balances:vBalances,bancos:vBancos,cumplimiento:vCumplimiento,avisos:vAvisos,reclamos:vReclamos,pdf:vPdf})[ui.tab]()+vFicha();
   document.body.style.overflow=ui.ficha?'hidden':'';
 }
 function vInicioAnterior(){
@@ -3628,6 +3628,752 @@ async function liqLeerArchivo(f){
     else if(per)L.info=[`Se eligió solo el período ${MESES[+per.slice(5)-1]+' '+per.slice(0,4)}, según el PDF. No se encontró el CUIT de ningún cliente: se usa el cliente elegido arriba (${cl?cl.razon_social:''}).`,...L.info];
   }catch(x){L.avisos=['No se pudo leer el PDF: '+(x.message||x)+' Cargá los importes a mano.'];L.confianza='baja'}
   L.leyendo=false;draw();
+}
+
+/* ===== Herramientas PDF: motor (todo se procesa en el navegador, nada se sube a ningún servidor) ===== */
+const PT_MAX_MB=80;
+async function ptLib(que){
+  const L={
+    jszip:['JSZip',['https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js','https://unpkg.com/jszip@3.10.1/dist/jszip.min.js'],'el compresor ZIP'],
+    docx:['docx',['https://cdn.jsdelivr.net/npm/docx@9.8.1/dist/index.iife.js','https://unpkg.com/docx@9.8.1/dist/index.iife.js'],'el generador de Word'],
+    pptx:['PptxGenJS',['https://cdn.jsdelivr.net/npm/pptxgenjs@4.0.1/dist/pptxgen.bundle.js','https://unpkg.com/pptxgenjs@4.0.1/dist/pptxgen.bundle.js'],'el generador de PowerPoint']
+  }[que];
+  if(!L)return;
+  if(typeof window[L[0]]==='undefined'){for(const u of L[1]){try{await cargarScript(u);if(typeof window[L[0]]!=='undefined')break}catch(e){}}}
+  if(typeof window[L[0]]==='undefined')throw new Error('No se pudo cargar '+L[2]+' (¿sin conexión a internet?).');
+}
+const ptBase=n=>String(n||'archivo').replace(/\.[^.\\/]+$/,'').replace(/[\\/:*?"<>|]+/g,'_').slice(0,80)||'archivo';
+const ptExt=n=>((String(n||'').match(/\.([^.\\/]+)$/)||[])[1]||'').toLowerCase();
+const ptTam=n=>n<1024?n+' B':n<1048576?Math.round(n/1024)+' KB':(n/1048576).toFixed(1).replace('.',',')+' MB';
+const ptBuf=f=>f.arrayBuffer();
+
+/** "1-3, 5, 8-" → [[0,1,2],[4],[7..n-1]] (una lista por cada tramo). Lanza un error claro si algo no cierra. */
+function ptRangos(txt,n){
+  const out=[];
+  for(const parte of String(txt||'').split(/[,;]+/).map(s=>s.trim()).filter(Boolean)){
+    const m=parte.match(/^(\d+)?\s*(?:-|–|a)\s*(\d+)?$/i)||parte.match(/^(\d+)$/);
+    if(!m)throw new Error('No entiendo "'+parte+'". Usá números y rangos separados por coma, por ejemplo: 1-3, 5, 8-10.');
+    let a,b;
+    if(m.length===2){a=b=+m[1]}else{a=m[1]?+m[1]:1;b=m[2]?+m[2]:n}
+    if(a<1||b<1||a>n||b>n)throw new Error('El tramo "'+parte+'" se sale del documento (tiene '+n+' página'+(n===1?'':'s')+').');
+    if(a>b)throw new Error('El tramo "'+parte+'" está al revés: ponelo de menor a mayor.');
+    const l=[];for(let i=a;i<=b;i++)l.push(i-1);out.push(l);
+  }
+  if(!out.length)throw new Error('Escribí qué páginas querés (por ejemplo: 1-3, 5).');
+  return out;
+}
+
+/* ---------- PDF → texto con posiciones (pdf.js) ---------- */
+/** Agrupa los fragmentos de texto de una página en renglones; separa en celdas cuando hay un hueco grande. */
+async function ptLineas(page){
+  const tc=await page.getTextContent(),it=[];
+  for(const t of tc.items){
+    if(typeof t.str!=='string'||!t.transform)continue;
+    const fs=Math.hypot(t.transform[0],t.transform[1])||t.height||10;
+    if(!t.str.trim()&&!t.str.length)continue;
+    it.push({x:t.transform[4],y:t.transform[5],w:t.width||0,fs,s:t.str});
+  }
+  it.sort((a,b)=>b.y-a.y||a.x-b.x);
+  const ls=[];
+  for(const t of it){
+    const l=ls.find(z=>Math.abs(z.y-t.y)<=Math.max(2,Math.min(z.fs,t.fs)*.45));
+    if(l){l.it.push(t);l.fs=Math.max(l.fs,t.fs)}else ls.push({y:t.y,fs:t.fs,it:[t]});
+  }
+  ls.sort((a,b)=>b.y-a.y);
+  for(const l of ls){
+    l.it.sort((a,b)=>a.x-b.x);
+    const cel=[];let cur=null;
+    for(const t of l.it){
+      if(!t.s.trim()&&cur){cur.s+=t.s;cur.x1=Math.max(cur.x1,t.x+t.w);continue}
+      if(!t.s.trim())continue;
+      const hueco=cur?t.x-cur.x1:0,lim=Math.max(9,l.fs*1.1);
+      if(cur&&hueco<=lim){const sp=hueco>l.fs*.18&&!/\s$/.test(cur.s)&&!/^\s/.test(t.s)?' ':'';cur.s+=sp+t.s;cur.x1=t.x+t.w}
+      else{cur={x0:t.x,x1:t.x+t.w,s:t.s};cel.push(cur)}
+    }
+    cel.forEach(c=>c.s=c.s.replace(/\s+/g,' ').trim());
+    l.cel=cel.filter(c=>c.s);l.texto=l.cel.map(c=>c.s).join(' ');
+    l.x0=l.cel.length?l.cel[0].x0:0;l.x1=l.cel.length?l.cel[l.cel.length-1].x1:0;
+  }
+  return ls.filter(l=>l.cel.length);
+}
+/** Número con coma decimal ("1.234,56") → número; si no se parece a uno, devuelve el texto. */
+function ptNumero(s){
+  const t=String(s).trim();
+  if(/^-?\$?\s?\d{1,3}(\.\d{3})*,\d{1,4}$/.test(t)||/^-?\$?\s?\d+,\d{1,4}$/.test(t)){const v=parseFloat(t.replace(/[$\s.]/g,'').replace(',','.'));if(isFinite(v))return v}
+  return s;
+}
+/** Renglones de una página → filas de planilla con columnas alineadas por posición. */
+/** Renglones que llegan como un solo texto ("01/10 TRANSF 1523 854.000,00 41.133.069,48"): fecha, detalle e importes se separan por su forma. */
+function ptPartirTexto(txt){
+  const AM=/^-?\$?\d{1,3}(\.\d{3})*,\d{2}-?$|^-?\$?\d+,\d{2}-?$/,tk=String(txt).trim().split(/\s+/);
+  const imp=[];while(tk.length>1&&AM.test(tk[tk.length-1])&&imp.length<4)imp.unshift(tk.pop());
+  let fecha='';if(tk.length>1&&/^\d{1,2}\/\d{1,2}(\/\d{2,4})?$/.test(tk[0]))fecha=tk.shift();
+  return imp.length?{fecha,det:tk.join(' '),imp}:null;
+}
+function ptFilasPlanilla(lineas,numeros){
+  {const un=lineas.filter(l=>l.cel.length===1),pr=un.map(l=>ptPartirTexto(l.texto));const ok=pr.filter(Boolean).length;
+   if(ok>=5&&ok>=lineas.length*.4){
+     const M=Math.max(...pr.filter(Boolean).map(p=>p.imp.length));
+     return lineas.map(l=>{const p=l.cel.length===1?ptPartirTexto(l.texto):null;
+       if(!p)return [l.texto];
+       const f=[p.fecha,p.det];const fill=Array(M).fill('');p.imp.forEach((a,i)=>fill[M-p.imp.length+i]=a);f.push(...fill);
+       return numeros?f.map(ptNumero):f})}}
+  /* Columnas: se calculan con los renglones de tipo tabla (3+ celdas). Los importes se alinean por su borde derecho y el texto por el izquierdo.
+     Una columna solo existe si la usan varios renglones; lo demás (encabezados sueltos) se acomoda en la columna más cercana. */
+  const esNum=s=>/^-?\$?\s?\d{1,3}(\.\d{3})*,\d{1,4}$|^-?\$?\s?\d+,\d{1,4}$/.test(String(s).trim());
+  let base=lineas.filter(l=>l.cel.length>=3);if(base.length<3)base=lineas;
+  const pts=[];base.forEach(l=>l.cel.forEach(c=>pts.push({r:esNum(c.s),a:esNum(c.s)?c.x1:c.x0,cx:(c.x0+c.x1)/2})));
+  const grupo=tipo=>{const v=pts.filter(p=>p.r===tipo).sort((a,b)=>a.a-b.a),gs=[];v.forEach(p=>{const g=gs[gs.length-1];if(g&&p.a-g.fin<=7){g.m.push(p);g.fin=p.a}else gs.push({m:[p],fin:p.a})});return gs};
+  const minN=Math.max(2,Math.round(base.length*.2));
+  let cols=[];[false,true].forEach(t=>grupo(t).forEach(g=>{if(g.m.length>=minN||!cols.length&&g.m.length>=2)cols.push({r:t,a:g.m.reduce((s,p)=>s+p.a,0)/g.m.length,cx:g.m.reduce((s,p)=>s+p.cx,0)/g.m.length})}));
+  if(!cols.length)cols=[{r:false,a:0,cx:0}];
+  cols.sort((a,b)=>a.cx-b.cx);
+  const colDe=c=>{const num=esNum(c.s),a=num?c.x1:c.x0,cx=(c.x0+c.x1)/2;let k=-1,d=1e9;cols.forEach((q,i)=>{if(q.r===num){const dd=Math.abs(q.a-a);if(dd<=8&&dd<d){d=dd;k=i}}});
+    if(k<0)cols.forEach((q,i)=>{const dd=Math.abs(q.cx-cx);if(dd<d){d=dd;k=i}});return k};
+  return lineas.map(l=>{const f=Array(cols.length).fill('');l.cel.forEach(c=>{const k=colDe(c);f[k]=f[k]?f[k]+' '+c.s:c.s});while(f.length&&f[f.length-1]==='')f.pop();return numeros?f.map(ptNumero):f});
+}
+
+/* ---------- Motor de dibujo de PDF con pdf-lib (texto, tablas, imágenes) ---------- */
+class PtPdf{
+  constructor(o){o=o||{};this.W=o.w||595.28;this.H=o.h||841.89;this.m=o.m||44;this.base=o.size||11}
+  async init(){
+    const P=PDFLib;this.pdf=await P.PDFDocument.create();
+    const S=P.StandardFonts;this.F={r:await this.pdf.embedFont(S.Helvetica),b:await this.pdf.embedFont(S.HelveticaBold),i:await this.pdf.embedFont(S.HelveticaOblique),bi:await this.pdf.embedFont(S.HelveticaBoldOblique),m:await this.pdf.embedFont(S.Courier)};
+    this.cs=new Set(this.F.r.getCharacterSet());this.nueva();return this;
+  }
+  nueva(){this.p=this.pdf.addPage([this.W,this.H]);this.y=this.H-this.m;this.nPag=(this.nPag||0)+1}
+  get cw(){return this.W-2*this.m}
+  /** Deja solo caracteres que la fuente estándar puede escribir. */
+  san(s){
+    s=String(s??'').replace(/[\r\n\t\u2028\u2029]+/g,' ').replace(/[\u2013\u2014\u2212]/g,'-').replace(/[\u2192\u21d2]/g,'->').replace(/[\u2022\u25cf\u25aa\u25e6]/g,'\u2022').replace(/\u00a0|\u2009|\u202f/g,' ').replace(/[\u200b-\u200f\ufeff]/g,'');
+    let o='';for(const ch of s){const c=ch.codePointAt(0);o+=this.cs.has(c)?ch:(c>0x2fff?'':'?')}return o;
+  }
+  fnt(r){return this.F[r.m?'m':(r.b&&r.i?'bi':r.b?'b':r.i?'i':'r')]}
+  espacio(h){if(this.y-h<this.m)this.nueva()}
+  /** Párrafo con tramos de distinto estilo [{t,b,i,u,size}] y ajuste de línea. */
+  parrafo(runs,o){
+    o=o||{};const size0=o.size||this.base,x0=this.m+(o.indent||0),ancho=this.cw-(o.indent||0);
+    const toks=[];
+    for(const r of runs){
+      if(r.br){toks.push({br:1});continue}
+      const sz=r.size||size0;
+      String(r.t??'').split(/(\s+)/).forEach(w=>{if(w==='')return;toks.push({w:/^\s+$/.test(w)?' ':this.san(w),sp:/^\s+$/.test(w),f:this.fnt(r),sz,u:r.u,col:r.col})});
+    }
+    const lns=[];let ln={t:[],w:0,sz:size0};
+    const cierra=()=>{while(ln.t.length&&ln.t[ln.t.length-1].sp){ln.w-=ln.t[ln.t.length-1].ww;ln.t.pop()}lns.push(ln);ln={t:[],w:0,sz:size0}};
+    for(const t of toks){
+      if(t.br){cierra();continue}
+      t.ww=t.f.widthOfTextAtSize(t.w,t.sz);
+      if(t.sp&&!ln.t.length)continue;
+      if(!t.sp&&ln.w+t.ww>ancho&&ln.t.length)cierra();
+      ln.t.push(t);ln.w+=t.ww;ln.sz=Math.max(ln.sz===size0&&!ln.t.length?0:ln.sz,t.sz);
+    }
+    if(ln.t.length||!lns.length)cierra();
+    if(o.antes)this.y-=o.antes;
+    const al=o.align||'left';let primera=true;
+    for(const l of lns){
+      const sz=Math.max(size0,...l.t.map(t=>t.sz)),lh=sz*1.28;
+      this.espacio(lh);
+      let x=x0;if(al==='center')x=x0+(ancho-l.w)/2;else if(al==='right')x=x0+ancho-l.w;
+      const by=this.y-sz;
+      if(primera&&o.marca){const f=this.F.r,mw=f.widthOfTextAtSize(this.san(o.marca),sz);this.p.drawText(this.san(o.marca),{x:x0-mw-4,y:by,size:sz,font:f})}
+      primera=false;
+      for(const t of l.t){
+        if(!t.sp&&t.w){this.p.drawText(t.w,{x,y:by,size:t.sz,font:t.f,color:t.col?PDFLib.rgb(...t.col):PDFLib.rgb(0,0,0)});
+          if(t.u)this.p.drawLine({start:{x,y:by-1.5},end:{x:x+t.ww,y:by-1.5},thickness:.6})}
+        x+=t.ww;
+      }
+      this.y-=lh;
+    }
+    this.y-=(o.despues??sizeGap(size0));
+  }
+  linea(){this.espacio(10);this.y-=4;this.p.drawLine({start:{x:this.m,y:this.y},end:{x:this.W-this.m,y:this.y},thickness:.7,color:PDFLib.rgb(.6,.6,.6)});this.y-=8}
+  /** Tabla: filas de celdas {t,b,span}; ancho de columnas según el contenido. */
+  tabla(filas,o){
+    o=o||{};const nc=Math.max(1,...filas.map(f=>f.reduce((a,c)=>a+(c.span||1),0)));
+    const sz=o.size||(nc>12?6:nc>9?7:nc>6?8:9.5),pad=3.2,F=this.F;
+    const w=Array(nc).fill(0);
+    filas.forEach((f,fi)=>{let k=0;f.forEach(c=>{const sp=c.span||1;if(sp===1){const f2=(c.b||(o.cab&&fi===0))?F.b:F.r;const tw=Math.max(...String(c.t??'').split('\n').map(s=>f2.widthOfTextAtSize(this.san(s),sz)),0);w[k]=Math.max(w[k],Math.min(tw,this.cw))}k+=sp})});
+    w.forEach((v,i)=>w[i]=Math.max(v+2*pad,14));
+    let tot=w.reduce((a,b)=>a+b,0);
+    if(tot>this.cw){const k=this.cw/tot,fijo=w.map(v=>v<=60);const libre=w.reduce((a,v,i)=>a+(fijo[i]?0:v),0),fx=w.reduce((a,v,i)=>a+(fijo[i]?v:0),0);const kk=Math.max(.2,(this.cw-fx)/Math.max(1,libre));w.forEach((v,i)=>{w[i]=fijo[i]?v:v*kk});tot=w.reduce((a,b)=>a+b,0);if(tot>this.cw+1)w.forEach((v,i)=>w[i]=v*k)}
+    else if(o.estirar){const k=this.cw/tot;w.forEach((v,i)=>w[i]=v*k);tot=this.cw}
+    const lh=sz*1.25;let filaN=0;
+    for(const f of filas){
+      let k=0;const cel=f.map(c=>{const sp=c.span||1,ww=w.slice(k,k+sp).reduce((a,b)=>a+b,0),fo=(c.b||(o.cab&&filaN===0))?F.b:F.r;k+=sp;
+        const ls=[];String(c.t??'').split('\n').forEach(par=>{let cur='';this.san(par).split(/(\s+)/).forEach(tok=>{if(!tok)return;const pr=cur+tok;if(fo.widthOfTextAtSize(pr,sz)>ww-2*pad&&cur.trim()){ls.push(cur.trim());cur=/^\s+$/.test(tok)?'':tok}else cur=pr});ls.push(cur.trim())});
+        // palabras más largas que la celda: se cortan
+        const L2=[];ls.forEach(s=>{let r=s;while(fo.widthOfTextAtSize(r,sz)>ww-2*pad&&r.length>1){let n=r.length;while(n>1&&fo.widthOfTextAtSize(r.slice(0,n),sz)>ww-2*pad)n--;L2.push(r.slice(0,n));r=r.slice(n)}L2.push(r)});
+        return {ww,ls:L2,fo,al:c.al}});
+      const h=Math.max(...cel.map(c=>c.ls.length))*lh+2*pad*.8;
+      if(this.y-h<this.m){this.nueva()}
+      let x=this.m;
+      cel.forEach(c=>{
+        if(o.cab&&filaN===0)this.p.drawRectangle({x,y:this.y-h,width:c.ww,height:h,color:PDFLib.rgb(.9,.92,.96)});
+        this.p.drawRectangle({x,y:this.y-h,width:c.ww,height:h,borderColor:PDFLib.rgb(.65,.65,.65),borderWidth:.5});
+        c.ls.forEach((s,j)=>{const tw=c.fo.widthOfTextAtSize(s,sz),tx=c.al==='right'?x+c.ww-pad-tw:x+pad;this.p.drawText(s,{x:tx,y:this.y-pad*.8-sz-(j*lh)+1,size:sz,font:c.fo})});
+        x+=c.ww});
+      this.y-=h;filaN++;
+    }
+    this.y-=8;
+  }
+  async imagen(bytes,tipo,o){
+    o=o||{};let im;try{im=tipo==='png'?await this.pdf.embedPng(bytes):await this.pdf.embedJpg(bytes)}catch(e){return false}
+    const max=o.maxW||this.cw;let w=im.width,h=im.height;const k=Math.min(1,max/w,(this.H-2*this.m)/h);w*=k;h*=k;
+    this.espacio(h);this.p.drawImage(im,{x:o.align==='center'?this.m+(this.cw-w)/2:this.m,y:this.y-h,width:w,height:h});this.y-=h+8;return true;
+  }
+  async blocks(bl){
+    for(const b of bl){
+      if(b.t==='p')this.parrafo(b.runs,b);
+      else if(b.t==='tabla')this.tabla(b.filas,b);
+      else if(b.t==='img')await this.imagen(b.bytes,b.tipo,b);
+      else if(b.t==='hr')this.linea();
+      else if(b.t==='salto')this.nueva();
+    }
+  }
+  async guardar(){return new Blob([await this.pdf.save()],{type:'application/pdf'})}
+}
+function sizeGap(s){return Math.max(3,s*.45)}
+
+/* ---------- Word (.docx) → bloques ---------- */
+async function ptDocxBloques(buf){
+  await ptLib('jszip');
+  const z=await JSZip.loadAsync(buf);
+  const lee=async n=>{const f=z.file(n);return f?await f.async('string'):null};
+  const doc=await lee('word/document.xml');if(!doc)throw new Error('No parece un archivo .docx de Word (los .doc viejos hay que guardarlos primero como .docx).');
+  const X=s=>new DOMParser().parseFromString(s,'application/xml');
+  const W='http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+  const el=(n,t)=>[...n.childNodes].filter(c=>c.nodeType===1&&c.localName===t);
+  const un=(n,t)=>el(n,t)[0]||null;
+  const at=(n,a)=>n?(n.getAttributeNS(W,a)??n.getAttribute('w:'+a)):null;
+  const rels={};const rx=await lee('word/_rels/document.xml.rels');
+  if(rx)[...X(rx).getElementsByTagName('Relationship')].forEach(r=>rels[r.getAttribute('Id')]=r.getAttribute('Target'));
+  // estilos
+  const est={};let defSz=22;
+  const sx=await lee('word/styles.xml');
+  if(sx){const sd=X(sx);
+    const dd=sd.getElementsByTagNameNS(W,'rPrDefault')[0];if(dd){const s=dd.getElementsByTagNameNS(W,'sz')[0];if(s)defSz=+at(s,'val')||22}
+    [...sd.getElementsByTagNameNS(W,'style')].forEach(s=>{const id=at(s,'styleId'),rp=un(s,'rPr'),pp=un(s,'pPr');
+      est[id]={name:(at(un(s,'name'),'val')||'').toLowerCase(),base:at(un(s,'basedOn'),'val'),sz:rp&&un(rp,'sz')?+at(un(rp,'sz'),'val'):null,b:rp&&un(rp,'b')?at(un(rp,'b'),'val')!=='0':null,i:rp&&un(rp,'i')?at(un(rp,'i'),'val')!=='0':null,jc:pp&&un(pp,'jc')?at(un(pp,'jc'),'val'):null,num:pp&&un(pp,'numPr')&&un(un(pp,'numPr'),'numId')?{id:at(un(un(pp,'numPr'),'numId'),'val'),lv:un(un(pp,'numPr'),'ilvl')?at(un(un(pp,'numPr'),'ilvl'),'val'):'0'}:null}})}
+  const estilo=id=>{const o={};const cad=[];let k=id,n=0;while(k&&est[k]&&n++<8){cad.unshift(est[k]);k=est[k].base}cad.forEach(e=>{['sz','b','i','jc','num'].forEach(p=>{if(e[p]!==null&&e[p]!==undefined)o[p]=e[p]});o.name=e.name||o.name});return o};
+  // numeración
+  const num={};const nx=await lee('word/numbering.xml');
+  if(nx){const nd=X(nx),abs={};
+    [...nd.getElementsByTagNameNS(W,'abstractNum')].forEach(a=>{const m={};[...a.getElementsByTagNameNS(W,'lvl')].forEach(l=>{m[at(l,'ilvl')]=at(un(l,'numFmt'),'val')});abs[at(a,'abstractNumId')]=m});
+    [...nd.getElementsByTagNameNS(W,'num')].forEach(n=>{const a=at(un(n,'abstractNumId'),'val');num[at(n,'numId')]=abs[a]||{}})}
+  const cont={};
+  const imgs=async rid=>{const t=rels[rid];if(!t)return null;const p=t.replace(/^\/?(word\/)?/,'word/').replace('word/../','');const f=z.file(p.startsWith('word/')?p:'word/'+p);if(!f)return null;const tipo=/\.png$/i.test(p)?'png':/\.jpe?g$/i.test(p)?'jpg':null;return tipo?{bytes:await f.async('uint8array'),tipo}:null};
+  const HEAD={1:20,2:16,3:14,4:12.5,5:11.5,6:11};
+  const parrafo=async p=>{
+    const pp=un(p,'pPr'),sid=pp&&un(pp,'pStyle')?at(un(pp,'pStyle'),'val'):null,st=sid?estilo(sid):{};
+    let jc=pp&&un(pp,'jc')?at(un(pp,'jc'),'val'):st.jc,align=jc==='center'?'center':jc==='right'||jc==='end'?'right':'left';
+    const hm=(st.name||'').match(/^(?:heading|t[ií]tulo)\s*(\d)/),esTit=/^(title|t[ií]tulo)$/.test(st.name||'');
+    const base=(st.sz||defSz)/2;
+    const runs=[],extra=[];
+    const corre=async r=>{
+      const rp=un(r,'rPr');
+      const o={b:rp&&un(rp,'b')?at(un(rp,'b'),'val')!=='0':(st.b||!!hm||esTit),i:rp&&un(rp,'i')?at(un(rp,'i'),'val')!=='0':!!st.i,u:rp&&un(rp,'u')&&at(un(rp,'u'),'val')!=='none',size:rp&&un(rp,'sz')?+at(un(rp,'sz'),'val')/2:(hm?HEAD[hm[1]]:esTit?24:base)};
+      if(rp&&un(rp,'rFonts')&&/courier|consolas|mono/i.test(at(un(rp,'rFonts'),'ascii')||''))o.m=true;
+      for(const c of r.childNodes){if(c.nodeType!==1)continue;
+        if(c.localName==='t')runs.push({...o,t:c.textContent});
+        else if(c.localName==='tab')runs.push({...o,t:'    '});
+        else if(c.localName==='br'){if(at(c,'type')==='page')extra.push({t:'salto'});else runs.push({br:1})}
+        else if(c.localName==='drawing'||c.localName==='pict'){
+          const bl=c.getElementsByTagNameNS('http://schemas.openxmlformats.org/drawingml/2006/main','blip')[0];
+          if(bl){const rid=bl.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships','embed')||bl.getAttribute('r:embed');const im=await imgs(rid);if(im)extra.push({t:'img',...im,align})}}}
+    };
+    for(const c of p.childNodes){if(c.nodeType!==1)continue;
+      if(c.localName==='r')await corre(c);
+      else if(c.localName==='hyperlink'||c.localName==='ins'||c.localName==='smartTag'||c.localName==='sdt')for(const r of c.getElementsByTagNameNS(W,'r'))await corre(r)}
+    let marca=null,indent=0;
+    const np=pp&&un(pp,'numPr'),ns=np&&un(np,'numId')?{id:at(un(np,'numId'),'val'),lv:un(np,'ilvl')?at(un(np,'ilvl'),'val'):'0'}:st.num;
+    if(ns&&ns.id&&ns.id!=='0'){const id=ns.id,lv=ns.lv||'0',fmt=(num[id]||{})[lv]||'bullet';
+      indent=18*(1+ +lv);
+      if(fmt==='bullet')marca='\u2022';else{const k=id+'|'+lv;cont[k]=(cont[k]||0)+1;const n=cont[k];marca=(fmt==='lowerLetter'?String.fromCharCode(96+((n-1)%26)+1):fmt==='upperLetter'?String.fromCharCode(64+((n-1)%26)+1):n)+'.'}}
+    const out=[];
+    const hay=runs.some(r=>r.br||String(r.t||'').trim());
+    if(hay)out.push({t:'p',runs,align,size:esTit?24:hm?HEAD[hm[1]]:base,marca,indent,antes:hm?6:0,despues:hm?4:Math.max(3,base*.4)});
+    else if(!extra.length)out.push({t:'p',runs:[{t:' '}],size:base*.6,despues:0});
+    return out.concat(extra);
+  };
+  const tabla=async t=>{
+    const filas=[];
+    for(const tr of el(t,'tr')){const f=[];
+      for(const tc of el(tr,'tc')){
+        const pr=un(tc,'tcPr'),gs=pr&&un(pr,'gridSpan')?+at(un(pr,'gridSpan'),'val'):1;
+        const txt=[];for(const p of el(tc,'p')){txt.push([...p.getElementsByTagNameNS(W,'t')].map(x=>x.textContent).join(''))}
+        const b=[...tc.getElementsByTagNameNS(W,'b')].length>0&&!txt.join('').trim().length===false&&[...tc.getElementsByTagNameNS(W,'r')].every(r=>{const rp=un(r,'rPr');return rp&&un(rp,'b')});
+        f.push({t:txt.join('\n').replace(/\n+$/,''),span:gs>1?gs:undefined,b})}
+      if(f.length)filas.push(f)}
+    return filas.length?[{t:'tabla',filas,cab:true}]:[];
+  };
+  const body=X(doc).getElementsByTagNameNS(W,'body')[0],bl=[];
+  for(const c of body.childNodes){if(c.nodeType!==1)continue;
+    if(c.localName==='p')bl.push(...await parrafo(c));
+    else if(c.localName==='tbl')bl.push(...await tabla(c))}
+  return bl;
+}
+
+/* ---------- HTML → bloques ---------- */
+async function ptHtmlBloques(html){
+  const d=new DOMParser().parseFromString(html,'text/html');
+  d.querySelectorAll('script,style,noscript,head,template').forEach(n=>n.remove());
+  const bl=[],HS={H1:22,H2:18,H3:15,H4:13,H5:12,H6:11};
+  const BLQ=new Set(['P','DIV','UL','OL','LI','TABLE','H1','H2','H3','H4','H5','H6','BLOCKQUOTE','PRE','HR','SECTION','ARTICLE','HEADER','FOOTER','MAIN','FIGURE','FORM','DL','DT','DD','ADDRESS','FIELDSET','NAV','ASIDE','CENTER']);
+  const alinea=e=>{const a=(e.getAttribute&&(e.style&&e.style.textAlign||e.getAttribute('align')))||'';return /center/i.test(a)?'center':/right/i.test(a)?'right':'left'};
+  const imgBytes=async src=>{
+    try{
+      let m=String(src||'').match(/^data:image\/(png|jpe?g|webp|gif|bmp);base64,(.*)$/i);if(!m)return null;
+      const bin=atob(m[2]),u=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u[i]=bin.charCodeAt(i);
+      if(/png/i.test(m[1]))return {bytes:u,tipo:'png'};if(/jpe?g/i.test(m[1]))return {bytes:u,tipo:'jpg'};
+      const bm=await createImageBitmap(new Blob([u],{type:'image/'+m[1]})),c=document.createElement('canvas');c.width=bm.width;c.height=bm.height;c.getContext('2d').drawImage(bm,0,0);
+      const b=await new Promise(ok=>c.toBlob(ok,'image/png'));return {bytes:new Uint8Array(await b.arrayBuffer()),tipo:'png'};
+    }catch(e){return null}
+  };
+  const inline=(n,st,runs,extra)=>{
+    if(n.nodeType===3){runs.push({...st,t:n.textContent.replace(/\s+/g,' ')});return}
+    if(n.nodeType!==1)return;const t=n.tagName;
+    if(t==='BR'){runs.push({br:1});return}
+    if(t==='IMG'){extra.push(n);return}
+    const s={...st};if(/^(B|STRONG|TH)$/.test(t))s.b=true;if(/^(I|EM|CITE)$/.test(t))s.i=true;if(t==='U'||t==='A')s.u=true;if(/^(CODE|KBD|SAMP|TT)$/.test(t))s.m=true;
+    if(n.style){if(/bold|[6-9]00/.test(n.style.fontWeight||''))s.b=true;if(/italic/.test(n.style.fontStyle||''))s.i=true}
+    if(t==='SUB'||t==='SUP')s.size=(st.size||11)*.75;
+    n.childNodes.forEach(c=>inline(c,s,runs,extra));
+  };
+  const flush=async(runs,extra,o)=>{
+    while(runs.length&&runs[0].t&&!runs[0].t.trim())runs.shift();
+    if(runs.some(r=>r.br||(r.t&&r.t.trim())))bl.push({t:'p',runs:runs.slice(),...o});
+    for(const im of extra){const b=await imgBytes(im.getAttribute('src'));if(b)bl.push({t:'img',...b})}
+    runs.length=0;extra.length=0;
+  };
+  const bloque=async(n,st,ctx)=>{
+    if(n.nodeType!==1)return;const t=n.tagName;
+    if(t==='HR'){bl.push({t:'hr'});return}
+    if(t==='TABLE'){
+      const filas=[];n.querySelectorAll('tr').forEach(tr=>{if(tr.closest('table')!==n)return;const f=[];[...tr.children].forEach(c=>{if(!/^(TD|TH)$/.test(c.tagName))return;const sp=+c.getAttribute('colspan')||1;f.push({t:c.textContent.replace(/\s+/g,' ').trim(),b:c.tagName==='TH',span:sp>1?sp:undefined})});if(f.length)filas.push(f)});
+      if(filas.length)bl.push({t:'tabla',filas,cab:!!n.querySelector('th')});return}
+    if(t==='UL'||t==='OL'){let k=0;for(const li of n.children){if(li.tagName!=='LI')continue;k++;const runs=[],extra=[];
+        for(const c of li.childNodes){if(c.nodeType===1&&/^(UL|OL)$/.test(c.tagName)){await flush(runs,extra,{marca:t==='OL'?k+'.':'\u2022',indent:ctx.indent+18,size:11,despues:2});await bloque(c,st,{indent:ctx.indent+18});}else inline(c,st,runs,extra)}
+        await flush(runs,extra,{marca:t==='OL'?k+'.':'\u2022',indent:ctx.indent+18,size:11,despues:2})}
+      return}
+    if(HS[t]){const runs=[],extra=[];n.childNodes.forEach(c=>inline(c,{...st,b:true,size:HS[t]},runs,extra));await flush(runs,extra,{size:HS[t],align:alinea(n),antes:6,despues:4});return}
+    const hayBloques=[...n.children].some(c=>BLQ.has(c.tagName));
+    if(t==='P'||t==='PRE'||t==='BLOCKQUOTE'&&!hayBloques||!hayBloques&&BLQ.has(t)){
+      const runs=[],extra=[];n.childNodes.forEach(c=>inline(c,t==='PRE'?{...st,m:true}:st,runs,extra));
+      await flush(runs,extra,{size:11,align:alinea(n),indent:ctx.indent+(t==='BLOCKQUOTE'?18:0)});return}
+    if(!hayBloques){const runs=[],extra=[];n.childNodes.forEach(c=>inline(c,st,runs,extra));await flush(runs,extra,{size:11,align:alinea(n),indent:ctx.indent});return}
+    let runs=[],extra=[];
+    for(const c of n.childNodes){
+      if(c.nodeType===1&&BLQ.has(c.tagName)){await flush(runs,extra,{size:11,indent:ctx.indent});await bloque(c,st,{indent:ctx.indent+(c.tagName==='BLOCKQUOTE'?18:0)})}
+      else inline(c,st,runs,extra)}
+    await flush(runs,extra,{size:11,indent:ctx.indent});
+  };
+  await bloque(d.body,{},{indent:0});
+  return bl;
+}
+
+/* ---------- Excel / CSV → bloques ---------- */
+function ptXlsBloques(wb){
+  const bl=[];let anch=0;
+  wb.SheetNames.forEach((n,i)=>{
+    const ws=wb.Sheets[n];let f=XLSX.utils.sheet_to_json(ws,{header:1,raw:false,defval:''});
+    f=f.filter(r=>r.some(c=>String(c).trim()!==''));if(!f.length)return;
+    const nc=Math.max(...f.map(r=>r.length));anch=Math.max(anch,nc);
+    if(i>0&&bl.length)bl.push({t:'salto'});
+    if(wb.SheetNames.length>1)bl.push({t:'p',runs:[{t:n,b:true,size:13}],size:13,despues:6});
+    bl.push({t:'tabla',cab:true,filas:f.map(r=>Array.from({length:nc},(_,k)=>({t:String(r[k]??''),al:/^-?[\d.]+,\d+$|^-?[\d.,]+%?$/.test(String(r[k]??'').trim())&&String(r[k]).trim()!==''?'right':undefined})))});
+  });
+  return {bl,anch};
+}
+
+/* ---------- PowerPoint (.pptx) → PDF simplificado (textos e imágenes en su posición) ---------- */
+async function ptPptxAPdf(buf){
+  await ptLib('jszip');
+  const z=await JSZip.loadAsync(buf),lee=async n=>{const f=z.file(n);return f?await f.async('string'):null};
+  const X=s=>new DOMParser().parseFromString(s,'application/xml');
+  const pres=await lee('ppt/presentation.xml');if(!pres)throw new Error('No parece un archivo .pptx de PowerPoint (los .ppt viejos hay que guardarlos primero como .pptx).');
+  const sz=X(pres).getElementsByTagNameNS('*','sldSz')[0],cx=sz?+sz.getAttribute('cx'):9144000,cy=sz?+sz.getAttribute('cy'):5143500,E=12700;
+  const W=cx/E,H=cy/E;
+  const slides=Object.keys(z.files).map(n=>(n.match(/^ppt\/slides\/slide(\d+)\.xml$/)||[])[1]).filter(Boolean).map(Number).sort((a,b)=>a-b);
+  if(!slides.length)throw new Error('La presentación no tiene diapositivas.');
+  const pdf=await PDFLib.PDFDocument.create(),S=PDFLib.StandardFonts,fr=await pdf.embedFont(S.Helvetica),fb=await pdf.embedFont(S.HelveticaBold);
+  const cs=new Set(fr.getCharacterSet());const san=s=>{let o='';for(const ch of String(s).replace(/[\u2013\u2014]/g,'-').replace(/\u00a0/g,' ').replace(/[\r\n\t\v]+/g,' ')){const c=ch.codePointAt(0);o+=cs.has(c)?ch:(c>0x2fff?'':'?')}return o};
+  const A='http://schemas.openxmlformats.org/drawingml/2006/main',R='http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+  let nImg=0;
+  for(const n of slides){
+    const pg=pdf.addPage([W,H]);
+    const sx=X(await lee('ppt/slides/slide'+n+'.xml')),rel={},rx=await lee('ppt/slides/_rels/slide'+n+'.xml.rels');
+    if(rx)[...X(rx).getElementsByTagName('Relationship')].forEach(r=>rel[r.getAttribute('Id')]=r.getAttribute('Target'));
+    const tree=sx.getElementsByTagNameNS('*','spTree')[0];if(!tree)continue;
+    let yLibre=H-30;
+    const caja=nd=>{const x=nd.getElementsByTagNameNS(A,'xfrm')[0];if(!x)return null;const o=x.getElementsByTagNameNS(A,'off')[0],e=x.getElementsByTagNameNS(A,'ext')[0];if(!o||!e)return null;return {x:+o.getAttribute('x')/E,y:+o.getAttribute('y')/E,w:+e.getAttribute('cx')/E,h:+e.getAttribute('cy')/E}};
+    for(const nd of tree.children){
+      if(nd.localName==='pic'){
+        const bl=nd.getElementsByTagNameNS(A,'blip')[0],c=caja(nd);if(!bl||!c)continue;
+        const t=rel[bl.getAttributeNS(R,'embed')||bl.getAttribute('r:embed')];if(!t)continue;
+        const p='ppt/'+t.replace(/^\.\.\//,'').replace(/^\/?ppt\//,''),f=z.file(p),tipo=/\.png$/i.test(p)?'png':/\.jpe?g$/i.test(p)?'jpg':null;
+        if(f&&tipo){try{const b=await f.async('uint8array'),im=tipo==='png'?await pdf.embedPng(b):await pdf.embedJpg(b);pg.drawImage(im,{x:c.x,y:H-c.y-c.h,width:c.w,height:c.h});nImg++}catch(e){}}
+      }else if(nd.localName==='sp'||nd.localName==='graphicFrame'){
+        const esTit=!!nd.querySelector&&[...nd.getElementsByTagNameNS('*','ph')].some(p=>/title|ctrTitle/i.test(p.getAttribute('type')||''));
+        let c=caja(nd);const ps=[...nd.getElementsByTagNameNS(A,'p')];
+        const lns=[];
+        ps.forEach(p=>{const rs=[...p.getElementsByTagNameNS(A,'r')],t=rs.map(r=>r.getElementsByTagNameNS(A,'t')[0]?.textContent||'').join('');if(!t.trim())return;
+          const rp=rs[0]&&rs[0].getElementsByTagNameNS(A,'rPr')[0],szA=rp&&rp.getAttribute('sz')?+rp.getAttribute('sz')/100:null,b=rp&&rp.getAttribute('b')==='1';
+          const al=(p.getElementsByTagNameNS(A,'pPr')[0]||{getAttribute:()=>null}).getAttribute('algn');
+          lns.push({t,sz:szA||(esTit?30:18),b:b||esTit,al})});
+        if(!lns.length)continue;
+        const sinPos=!c;if(sinPos)c={x:40,y:H-yLibre,w:W-80,h:0};
+        let y=H-c.y;
+        for(const l of lns){
+          let sz=l.sz;const f=l.b?fb:fr,pal=san(l.t).split(' ');let cur='';const filas=[];
+          pal.forEach(w=>{const pr=cur?cur+' '+w:w;if(f.widthOfTextAtSize(pr,sz)>c.w&&cur){filas.push(cur);cur=w}else cur=pr});filas.push(cur);
+          for(const s of filas){y-=sz*1.2;if(y<8)break;const tw=f.widthOfTextAtSize(s,sz),x=l.al==='ctr'?c.x+(c.w-tw)/2:l.al==='r'?c.x+c.w-tw:c.x;pg.drawText(s,{x,y:y+sz*.2,size:sz,font:f})}
+          y-=sz*.3}
+        if(sinPos)yLibre=y-6;
+      }
+    }
+  }
+  return {blob:new Blob([await pdf.save()],{type:'application/pdf'}),n:slides.length,imgs:nImg};
+}
+
+/* ===== Herramientas PDF: pantalla y herramientas ===== */
+const PT_T={
+  unir:{c:'Juntá varios PDF en uno solo.',g:0,n:'Unir PDF',d:'Juntá varios PDF en uno solo, en el orden que quieras.',acc:'.pdf',multi:true,ico:'⧉'},
+  dividir:{c:'Separá un PDF en varios.',g:0,n:'Dividir PDF',d:'Separá un PDF en varios: por tramos, página por página o cada tantas páginas.',acc:'.pdf',ico:'✂'},
+  eliminar:{c:'Sacá las páginas que sobran.',g:0,n:'Eliminar páginas',d:'Marcá las páginas que sobran y descargá el PDF sin ellas.',acc:'.pdf',pag:true,ico:'🗑'},
+  extraer:{c:'Quedate solo con las páginas que elijas.',g:0,n:'Extraer páginas',d:'Elegí solo las páginas que querés y armá un PDF nuevo con ellas.',acc:'.pdf',pag:true,ico:'⤓'},
+  ordenar:{c:'Reordená y girá las páginas.',g:0,n:'Ordenar PDF',d:'Arrastrá las páginas para cambiar el orden, girá las que están de costado o quitá las que sobran.',acc:'.pdf',pag:true,ico:'⇅'},
+  scan:{c:'De fotos de papeles a un PDF prolijo.',g:0,n:'Escanear a PDF',d:'Sacá fotos a papeles con el celular (o elegí fotos) y obtené un PDF prolijo, con el documento recortado y limpio.',acc:'image/*',multi:true,img:true,cam:true,ico:'📷'},
+  jpg2pdf:{c:'Imágenes a un PDF.',g:1,n:'JPG a PDF',d:'Convertí una o varias imágenes (JPG, PNG, WEBP) en un PDF.',acc:'.jpg,.jpeg,.png,.webp,.gif,.bmp,image/*',multi:true,img:true,ico:'🖼'},
+  word2pdf:{c:'Un documento .docx a PDF.',g:1,n:'WORD a PDF',d:'Convertí un documento .docx a PDF (texto, títulos, listas, tablas e imágenes; no respeta fuentes ni diseño exacto).',acc:'.docx',ico:'W'},
+  ppt2pdf:{c:'Una presentación .pptx a PDF (simplificado).',g:1,n:'POWERPOINT a PDF',d:'Convertí un .pptx a PDF en versión simplificada: textos e imágenes de cada diapositiva en su lugar, sin fondos ni formas.',acc:'.pptx',ico:'P'},
+  xls2pdf:{c:'Una planilla a PDF.',g:1,n:'EXCEL a PDF',d:'Convertí una planilla (.xlsx, .xls o .csv) a PDF, una tabla por hoja.',acc:'.xls,.xlsx,.xlsm,.csv',ico:'X'},
+  html2pdf:{c:'Código o archivo HTML a PDF.',g:1,n:'HTML a PDF',d:'Pegá el código HTML o elegí un archivo .html y obtené un PDF (sin estilos CSS ni imágenes que estén en internet).',acc:'.html,.htm',html:true,ico:'‹›'},
+  pdf2jpg:{c:'Cada página como imagen.',g:2,n:'PDF a JPG',d:'Convertí cada página de un PDF en una imagen JPG.',acc:'.pdf',ico:'🖼'},
+  pdf2word:{c:'El texto del PDF en un Word editable.',g:2,n:'PDF a WORD',d:'Pasá el texto de un PDF a un documento Word editable. Si el PDF es una foto o escaneo, lee el texto con reconocimiento (OCR).',acc:'.pdf',ico:'W'},
+  pdf2ppt:{c:'Una diapositiva por página.',g:2,n:'PDF a POWERPOINT',d:'Una diapositiva por cada página del PDF (cada página queda como imagen, con su texto en las notas).',acc:'.pdf',ico:'P'},
+  pdf2xls:{c:'Tablas y listados a una planilla.',g:2,n:'PDF a EXCEL',d:'Pasá a una planilla las tablas y listados de un PDF (resúmenes, liquidaciones, etc.). Funciona con PDF que tienen texto.',acc:'.pdf',ico:'X'}
+};
+const PT_G=['Organizar PDF','Convertir a PDF','Convertir desde PDF'];
+const PT={tool:null,files:[],pages:[],busy:null,out:[],msg:null,o:{},html:'',tok:0,drag:null};
+const ptEs=(id,v)=>{const e=$(id);if(e)e.textContent=v};
+function ptLimpiarSalida(){PT.out.forEach(o=>{try{URL.revokeObjectURL(o.url)}catch(e){}});PT.out=[]}
+function ptLimpiarArchivos(){PT.files.forEach(f=>{if(f.url)try{URL.revokeObjectURL(f.url)}catch(e){}});PT.files=[];PT.pages=[]}
+function ptElegir(k){
+  PT.tok++;ptLimpiarSalida();ptLimpiarArchivos();PT.tool=k;PT.msg=null;PT.busy=null;PT.html='';
+  PT.o={modo:'rangos',rangos:'',n:1,dpi:150,calidad:.88,tam:k==='scan'?'A4':'A4',margen:k==='scan'?'0':'10',mejorar:true,recortar:k==='scan',ocr:true,unaHoja:false,numeros:true,marcar:''};
+  draw();window.scrollTo(0,0);
+}
+function ptVolver(){PT.tok++;ptLimpiarSalida();ptLimpiarArchivos();PT.tool=null;PT.msg=null;PT.busy=null;draw()}
+const ptProg=t=>{PT.busy=t;ptEs('pt_busy',t)};
+const ptOpt=(k,v)=>{PT.o[k]=v};
+async function ptRun(fn){
+  if(PT.busy)return;PT.msg=null;ptLimpiarSalida();PT.busy='Procesando…';draw();
+  try{await fn()}catch(e){PT.msg={k:'err',t:(e&&e.message)||String(e)}}
+  PT.busy=null;draw();
+}
+function ptSalida(nombre,blob){PT.out.push({name:nombre,blob,url:URL.createObjectURL(blob),size:blob.size})}
+function ptDescargar(i){const o=PT.out[i];if(!o)return;const a=document.createElement('a');a.href=o.url;a.download=o.name;document.body.appendChild(a);a.click();a.remove()}
+async function ptZip(){
+  try{await ptLib('jszip');const z=new JSZip();PT.out.forEach(o=>z.file(o.name,o.blob));
+    const b=await z.generateAsync({type:'blob',compression:'STORE'}),a=document.createElement('a'),u=URL.createObjectURL(b);a.href=u;a.download=ptBase(PT.files[0]?PT.files[0].name:'archivos')+'.zip';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),4000)}
+  catch(e){flash((e&&e.message)||String(e),'err')}
+}
+const ptPad=(n,t)=>String(n).padStart(String(t).length>2?String(t).length:2,'0');
+
+/* ---------- carga de archivos ---------- */
+function ptAcepta(f,T){
+  const e=ptExt(f.name),lst=T.acc.split(',').map(s=>s.trim());
+  return lst.some(a=>a==='image/*'?(f.type||'').startsWith('image/'):a.startsWith('.')&&a.slice(1)===e)||(T.img&&(f.type||'').startsWith('image/'));
+}
+async function ptElegidos(inp){const fs=[...inp.files];inp.value='';await ptAgregar(fs)}
+function ptDrop(e){e.preventDefault();const z=e.currentTarget;z.classList.remove('hov');ptAgregar([...(e.dataTransfer?e.dataTransfer.files:[])])}
+async function ptAgregar(fs){
+  const T=PT_T[PT.tool];if(!T||!fs.length)return;
+  const ok=[],mal=[];
+  fs.forEach(f=>{if(!ptAcepta(f,T))mal.push(f.name+' (tipo no admitido)');else if(f.size>PT_MAX_MB*1048576)mal.push(f.name+' (supera '+PT_MAX_MB+' MB)');else ok.push(f)});
+  if(!T.multi&&ok.length>1){mal.push('Esta herramienta recibe de a un archivo: se tomó '+ok[0].name+'.');ok.length=1}
+  PT.msg=mal.length?{k:'warn',t:'No se agregó: '+mal.join('; ')}:null;
+  if(!ok.length){draw();return}
+  if(!T.multi){ptLimpiarArchivos();ptLimpiarSalida()}else ptLimpiarSalida();
+  for(const f of ok){const it={id:Math.random().toString(36).slice(2),file:f,name:f.name,size:f.size,rot:0};if(T.img)it.url=URL.createObjectURL(f);PT.files.push(it)}
+  draw();
+  if(T.pag){PT.busy='Preparando las páginas…';draw();try{await ptCargarPaginas()}catch(e){PT.msg={k:'err',t:(e&&e.message)||String(e)};ptLimpiarArchivos()}PT.busy=null;draw();return}
+  if(/^(unir|dividir)$/.test(PT.tool)){
+    try{await suePdfLib();for(const it of PT.files){if(it.pages)continue;const d=await PDFLib.PDFDocument.load(await ptBuf(it.file),{ignoreEncryption:true});it.pages=d.getPageCount()}}
+    catch(e){const f=PT.files.find(x=>!x.pages);PT.msg={k:'err',t:'No se pudo abrir '+(f?f.name:'el PDF')+': ¿está dañado o protegido con contraseña?'};if(f)PT.files=PT.files.filter(x=>x!==f);draw()}
+    draw();
+  }
+}
+/** Miniaturas de cada página para elegir, borrar u ordenar. */
+async function ptCargarPaginas(){
+  const tok=++PT.tok,it=PT.files[0];await suePdfjs();
+  const pdf=await pdfjsLib.getDocument({data:new Uint8Array(await ptBuf(it.file))}).promise;
+  it.pages=pdf.numPages;PT.pages=[];
+  for(let i=1;i<=pdf.numPages;i++)PT.pages.push({i:i-1,thumb:null,rot:0,mark:false});
+  PT.busy=null;draw();
+  const tope=Math.min(pdf.numPages,400);
+  for(let i=1;i<=tope;i++){
+    if(tok!==PT.tok)return;
+    try{const pg=await pdf.getPage(i),v0=pg.getViewport({scale:1}),sc=220/Math.max(v0.width,v0.height),v=pg.getViewport({scale:sc}),c=document.createElement('canvas');c.width=Math.round(v.width);c.height=Math.round(v.height);
+      await pg.render({canvasContext:c.getContext('2d'),viewport:v}).promise;
+      const o=PT.pages.find(p=>p.i===i-1);if(o){o.thumb=c.toDataURL('image/jpeg',.6);o.rot0=((pg.rotate||0)%360)}}catch(e){}
+    if(i%6===0||i===tope)ptGridRefresh();
+  }
+}
+function ptGridRefresh(){const g=$('pt_grid');if(g)g.innerHTML=ptGridHtml()}
+
+/* ---------- herramientas ---------- */
+async function ptDividir(){
+  await suePdfLib();const it=PT.files[0],src=await PDFLib.PDFDocument.load(await ptBuf(it.file),{ignoreEncryption:true}),n=src.getPageCount(),base=ptBase(it.name),o=PT.o;
+  let grupos;
+  if(o.modo==='cada')grupos=Array.from({length:n},(_,i)=>[i]);
+  else if(o.modo==='n'){const k=Math.max(1,Math.floor(+o.n||1));grupos=[];for(let i=0;i<n;i+=k)grupos.push(Array.from({length:Math.min(k,n-i)},(_,j)=>i+j))}
+  else grupos=ptRangos(o.rangos,n);
+  let k=0;
+  for(const g of grupos){k++;ptProg('Armando el archivo '+k+' de '+grupos.length+'…');
+    const d=await PDFLib.PDFDocument.create(),cp=await d.copyPages(src,g);cp.forEach(p=>d.addPage(p));
+    const nom=g.length===1?base+'_pag_'+ptPad(g[0]+1,n):base+'_pag_'+ptPad(g[0]+1,n)+'-'+ptPad(g[g.length-1]+1,n);
+    ptSalida(nom+'.pdf',new Blob([await d.save()],{type:'application/pdf'}));await new Promise(r=>setTimeout(r,0))}
+}
+async function ptUnir(){
+  if(PT.files.length<2)throw new Error('Agregá al menos dos PDF para unirlos.');
+  await suePdfLib();const out=await PDFLib.PDFDocument.create();let k=0;
+  for(const f of PT.files){k++;ptProg('Uniendo '+k+' de '+PT.files.length+'…');
+    const s=await PDFLib.PDFDocument.load(await ptBuf(f.file),{ignoreEncryption:true}),cp=await out.copyPages(s,s.getPageIndices());cp.forEach(p=>out.addPage(p))}
+  ptSalida('unido.pdf',new Blob([await out.save()],{type:'application/pdf'}));
+}
+async function ptPaginasAPdf(modo){
+  await suePdfLib();const it=PT.files[0],src=await PDFLib.PDFDocument.load(await ptBuf(it.file),{ignoreEncryption:true});
+  let lst;
+  if(modo==='eliminar'){const m=PT.pages.filter(p=>p.mark).length;if(!m)throw new Error('Marcá al menos una página para eliminar (tocándola).');lst=PT.pages.filter(p=>!p.mark);if(!lst.length)throw new Error('No podés eliminar todas las páginas.')}
+  else if(modo==='extraer'){lst=PT.pages.filter(p=>p.mark);if(!lst.length)throw new Error('Tocá las páginas que querés extraer.')}
+  else{lst=PT.pages.slice();if(!lst.length)throw new Error('No quedan páginas.')}
+  const d=await PDFLib.PDFDocument.create(),cp=await d.copyPages(src,lst.map(p=>p.i));
+  cp.forEach((p,k)=>{const r=lst[k].rot||0;if(r)p.setRotation(PDFLib.degrees(((p.getRotation().angle+r)%360+360)%360));d.addPage(p)});
+  const suf={eliminar:'_sin_paginas',extraer:'_extracto',ordenar:'_ordenado'}[modo];
+  ptSalida(ptBase(it.name)+suf+'.pdf',new Blob([await d.save()],{type:'application/pdf'}));
+}
+const ptMarcarTxt=()=>{
+  try{const n=PT.pages.length,r=ptRangos(PT.o.marcar,n);PT.pages.forEach(p=>p.mark=false);r.flat().forEach(i=>{if(PT.pages.find(p=>p.i===i))PT.pages.find(p=>p.i===i).mark=true});PT.msg=null}catch(e){PT.msg={k:'err',t:e.message}}
+  draw();
+};
+function ptTocar(i){const p=PT.pages[i];if(!p||PT.tool==='ordenar')return;p.mark=!p.mark;ptGridRefresh();ptEs('pt_cuenta',ptCuenta())}
+function ptTodas(v){PT.pages.forEach(p=>p.mark=v);ptGridRefresh();ptEs('pt_cuenta',ptCuenta())}
+const ptCuenta=()=>{const m=PT.pages.filter(p=>p.mark).length,n=PT.pages.length;return PT.tool==='eliminar'?m+' marcada'+(m===1?'':'s')+' para eliminar de '+n:PT.tool==='extraer'?m+' seleccionada'+(m===1?'':'s')+' de '+n:n+' página'+(n===1?'':'s')};
+function ptGirar(i,d){const p=PT.pages[i];if(!p)return;p.rot=((p.rot+d)%360+360)%360;ptGridRefresh()}
+function ptQuitarPag(i){PT.pages.splice(i,1);ptGridRefresh();ptEs('pt_cuenta',ptCuenta())}
+function ptInvertir(){PT.pages.reverse();ptGridRefresh()}
+function ptGirarTodas(d){PT.pages.forEach(p=>p.rot=((p.rot+d)%360+360)%360);ptGridRefresh()}
+function ptOrdIni(e,i){PT.drag=i;try{e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain','p'+i)}catch(x){}}
+function ptOrdSobre(e){if(PT.drag===null)return;e.preventDefault()}
+function ptOrdSoltar(e,j){if(PT.drag===null)return;e.preventDefault();e.stopPropagation();const i=PT.drag;PT.drag=null;if(i===j)return;const [p]=PT.pages.splice(i,1);PT.pages.splice(j,0,p);ptGridRefresh()}
+function ptMover(i,d){const j=i+d;if(j<0||j>=PT.pages.length)return;const [p]=PT.pages.splice(i,1);PT.pages.splice(j,0,p);ptGridRefresh()}
+
+/* Imágenes → PDF (escaneo y JPG a PDF) */
+async function ptBitmap(file){
+  try{return await createImageBitmap(file,{imageOrientation:'from-image'})}catch(e){}
+  return await new Promise((ok,mal)=>{const u=URL.createObjectURL(file),im=new Image();im.onload=()=>{ok(im);setTimeout(()=>URL.revokeObjectURL(u),2000)};im.onerror=()=>mal(new Error('No se pudo abrir la imagen '+file.name));im.src=u})
+}
+/** Grises + estirado de contraste: deja el papel blanco y el texto oscuro. */
+function ptMejorar(c){
+  const x=c.getContext('2d',{willReadFrequently:true}),im=x.getImageData(0,0,c.width,c.height),d=im.data,h=new Uint32Array(256);
+  for(let i=0;i<d.length;i+=4){const v=Math.round(.299*d[i]+.587*d[i+1]+.114*d[i+2]);d[i]=d[i+1]=d[i+2]=v;h[v]++}
+  const tot=c.width*c.height;let a=0,lo=0,hi=255;for(let v=0;v<256;v++){a+=h[v];if(a>=tot*.02){lo=v;break}}a=0;for(let v=255;v>=0;v--){a+=h[v];if(a>=tot*.25){hi=v;break}}
+  hi=Math.max(hi,lo+40);const k=255/(hi-lo);
+  for(let i=0;i<d.length;i+=4){let v=(d[i]-lo)*k;v=v<0?0:v>255?255:v;d[i]=d[i+1]=d[i+2]=v}
+  x.putImageData(im,0,0);
+}
+async function ptImagenesAPdf(){
+  if(!PT.files.length)throw new Error('Agregá al menos una imagen.');
+  await suePdfLib();const o=PT.o,scan=PT.tool==='scan',pdf=await PDFLib.PDFDocument.create(),MAXPX=scan?2400:3200;
+  const T={A4:[595.28,841.89],Carta:[612,792]}[o.tam],mg=(+o.margen||0)*2.835;let k=0;
+  for(const it of PT.files){k++;ptProg('Procesando la imagen '+k+' de '+PT.files.length+'…');
+    const bm=await ptBitmap(it.file);let c=null;
+    if(scan&&o.recortar&&it.rot===0&&typeof tk2Preparar==='function'){try{const r=await tk2Preparar(bm,1.3);if(r&&r.canvas&&r.canvas.width>200){c=r.canvas}}catch(e){c=null}}
+    if(c){const m=Math.max(c.width,c.height),f=Math.min(1,MAXPX/m);if(f<1){const c2=document.createElement('canvas');c2.width=Math.round(c.width*f);c2.height=Math.round(c.height*f);c2.getContext('2d').drawImage(c,0,0,c2.width,c2.height);c=c2}}
+    else{
+      const sw=bm.width,sh=bm.height,f=Math.min(1,MAXPX/Math.max(sw,sh)),r=it.rot%180!==0;
+      c=document.createElement('canvas');c.width=Math.round((r?sh:sw)*f);c.height=Math.round((r?sw:sh)*f);
+      const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,c.width,c.height);x.translate(c.width/2,c.height/2);x.rotate(it.rot*Math.PI/180);x.drawImage(bm,-sw*f/2,-sh*f/2,sw*f,sh*f);
+      if(scan&&o.mejorar)ptMejorar(c)}
+    if(c&&it.rot!==0&&scan&&o.recortar&&typeof tk2Preparar==='function'&&false){}
+    const jb=await new Promise(ok=>c.toBlob(ok,'image/jpeg',scan?.82:.9)),im=await pdf.embedJpg(new Uint8Array(await jb.arrayBuffer()));
+    let pw,ph;
+    if(o.tam==='img'){pw=im.width*.75+2*mg;ph=im.height*.75+2*mg}
+    else{[pw,ph]=T;if(im.width>im.height)[pw,ph]=[ph,pw]}
+    const pg=pdf.addPage([pw,ph]),aw=pw-2*mg,ah=ph-2*mg,s=Math.min(aw/im.width,ah/im.height),w=im.width*s,h=im.height*s;
+    pg.drawImage(im,{x:(pw-w)/2,y:(ph-h)/2,width:w,height:h});
+    await new Promise(r=>setTimeout(r,0));
+  }
+  ptSalida((scan?'escaneo':'imagenes')+'.pdf',new Blob([await pdf.save()],{type:'application/pdf'}));
+}
+function ptImgGirar(i,d){const it=PT.files[i];if(it){it.rot=((it.rot+d)%360+360)%360;draw()}}
+function ptImgMover(i,d){const j=i+d;if(j<0||j>=PT.files.length)return;const [a]=PT.files.splice(i,1);PT.files.splice(j,0,a);draw()}
+function ptImgQuitar(i){const [a]=PT.files.splice(i,1);if(a&&a.url)try{URL.revokeObjectURL(a.url)}catch(e){}draw()}
+
+/* Documentos → PDF */
+async function ptWordAPdf(){
+  const it=PT.files[0];if(!it)throw new Error('Elegí un archivo .docx.');await suePdfLib();ptProg('Leyendo el documento…');
+  const bl=await ptDocxBloques(await ptBuf(it.file));if(!bl.length)throw new Error('El documento no tiene contenido para convertir.');
+  const d=await new PtPdf({m:56}).init();await d.blocks(bl);ptSalida(ptBase(it.name)+'.pdf',await d.guardar());
+}
+async function ptHtmlAPdf(){
+  await suePdfLib();let html=PT.html;const it=PT.files[0];
+  if(it)html=await it.file.text();
+  if(!String(html).trim())throw new Error('Pegá el código HTML o elegí un archivo .html.');
+  const bl=await ptHtmlBloques(html);if(!bl.length)throw new Error('No encontré texto ni tablas para convertir en ese HTML.');
+  const d=await new PtPdf({m:50}).init();await d.blocks(bl);ptSalida((it?ptBase(it.name):'pagina')+'.pdf',await d.guardar());
+}
+async function ptXlsAPdf(){
+  const it=PT.files[0];if(!it)throw new Error('Elegí una planilla.');if(typeof XLSX==='undefined')throw new Error('No se pudo cargar el lector de Excel (¿sin conexión a internet?).');
+  await suePdfLib();ptProg('Leyendo la planilla…');
+  const e=ptExt(it.name);let wb;
+  if(e==='csv'){wb=XLSX.read(await it.file.text(),{type:'string'})}else wb=XLSX.read(await ptBuf(it.file),{type:'array',cellDates:true});
+  const {bl,anch}=ptXlsBloques(wb);if(!bl.length)throw new Error('La planilla no tiene datos.');
+  const ap=anch>7,d=await new PtPdf(ap?{w:841.89,h:595.28,m:30}:{m:36}).init();await d.blocks(bl);ptSalida(ptBase(it.name)+'.pdf',await d.guardar());
+}
+async function ptPptAPdf(){
+  const it=PT.files[0];if(!it)throw new Error('Elegí un archivo .pptx.');await suePdfLib();ptProg('Leyendo las diapositivas…');
+  const r=await ptPptxAPdf(await ptBuf(it.file));ptSalida(ptBase(it.name)+'.pdf',r.blob);
+  PT.msg={k:'warn',t:'Versión simplificada: '+r.n+' diapositiva'+(r.n===1?'':'s')+' con sus textos'+(r.imgs?' y '+r.imgs+' imagen'+(r.imgs===1?'':'es'):'')+'. No se copian fondos, formas, gráficos ni tablas: revisá el resultado.'};
+}
+
+/* PDF → otros formatos */
+async function ptAbrirPdf(it){await suePdfjs();return await pdfjsLib.getDocument({data:new Uint8Array(await ptBuf(it.file))}).promise}
+async function ptPaginaCanvas(page,escala){const v=page.getViewport({scale:escala}),c=document.createElement('canvas');c.width=Math.round(v.width);c.height=Math.round(v.height);const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,c.width,c.height);await page.render({canvasContext:x,viewport:v}).promise;return c}
+async function ptPdfAJpg(){
+  const it=PT.files[0];if(!it)throw new Error('Elegí un PDF.');const pdf=await ptAbrirPdf(it),n=pdf.numPages,base=ptBase(it.name),esc=(+PT.o.dpi||150)/72;
+  for(let i=1;i<=n;i++){ptProg('Convirtiendo la página '+i+' de '+n+'…');
+    const c=await ptPaginaCanvas(await pdf.getPage(i),esc),b=await new Promise(ok=>c.toBlob(ok,'image/jpeg',+PT.o.calidad||.88));
+    ptSalida(n===1?base+'.jpg':base+'_pag_'+ptPad(i,n)+'.jpg',b);c.width=c.height=0;await new Promise(r=>setTimeout(r,0))}
+}
+async function ptPdfAWord(){
+  const it=PT.files[0];if(!it)throw new Error('Elegí un PDF.');await ptLib('docx');const D=docx,pdf=await ptAbrirPdf(it),n=pdf.numPages;
+  const kids=[];let conOcr=0,sinTexto=0;
+  for(let i=1;i<=n;i++){
+    ptProg('Leyendo la página '+i+' de '+n+'…');const pg=await pdf.getPage(i);let ls=await ptLineas(pg);
+    const chars=ls.reduce((a,l)=>a+l.texto.length,0);
+    if(chars<8){
+      if(PT.o.ocr){
+        try{ptProg('Página '+i+' de '+n+': es una imagen, leyendo el texto (puede tardar)…');const c=await ptPaginaCanvas(pg,2.2),w=await tkMotor(),r=await w.recognize(c);
+          const t=String(r&&r.data&&r.data.text||'').split(/\n/).map(s=>s.trim());let par=[];
+          t.forEach(s=>{if(!s){if(par.length){kids.push(new D.Paragraph({children:[new D.TextRun(par.join(' '))],spacing:{after:120}}));par=[]}}else par.push(s)});
+          if(par.length)kids.push(new D.Paragraph({children:[new D.TextRun(par.join(' '))],spacing:{after:120}}));conOcr++}
+        catch(e){kids.push(new D.Paragraph({children:[new D.TextRun({text:'[Página '+i+': no se pudo leer el texto]',italics:true})]}))}
+      }else{sinTexto++;kids.push(new D.Paragraph({children:[new D.TextRun({text:'[Página '+i+': sin texto (es una imagen)]',italics:true})]}))}
+    }else{
+      const fsz=ls.map(l=>l.fs).sort((a,b)=>a-b),med=fsz[Math.floor(fsz.length/2)]||10,ancho=Math.max(...ls.map(l=>l.x1))-Math.min(...ls.map(l=>l.x0));
+      for(let j=0;j<ls.length;j++){
+        const l=ls[j],tit=l.fs>med*1.25;
+        const hijos=[];l.cel.forEach((c,k)=>{if(k>0)hijos.push(new D.Tab());hijos.push(new D.TextRun({text:c.s,size:Math.round(Math.min(l.fs,26)*2),bold:tit}))});
+        const sep=j>0?ls[j-1].y-l.y:0;
+        kids.push(new D.Paragraph({children:hijos,spacing:{after:tit?120:30,before:sep>l.fs*2.2?120:0},tabStops:l.cel.length>1?l.cel.slice(1).map(c=>({type:D.TabStopType.LEFT,position:Math.max(0,Math.round((c.x0-ls[0].x0)*20))})).slice(0,12):undefined}))}
+    }
+    if(i<n)kids.push(new D.Paragraph({children:[new D.PageBreak()]}));
+    await new Promise(r=>setTimeout(r,0));
+  }
+  const doc=new D.Document({sections:[{properties:{page:{margin:{top:900,bottom:900,left:900,right:900}}},children:kids}]});
+  ptSalida(ptBase(it.name)+'.docx',await D.Packer.toBlob(doc));
+  const av=[];if(conOcr)av.push(conOcr+' página'+(conOcr===1?'':'s')+' se leyó'+(conOcr===1?'':'eron')+' con reconocimiento de texto: revisá los datos.');if(sinTexto)av.push(sinTexto+' página'+(sinTexto===1?' no tiene':'s no tienen')+' texto.');
+  av.push('El Word conserva el texto, no el diseño exacto del PDF.');PT.msg={k:'warn',t:av.join(' ')};
+}
+async function ptPdfAPpt(){
+  const it=PT.files[0];if(!it)throw new Error('Elegí un PDF.');await ptLib('pptx');const pdf=await ptAbrirPdf(it),n=pdf.numPages;
+  const p1=await pdf.getPage(1),v1=p1.getViewport({scale:1}),W=Math.min(13.333,v1.width/72),H=W*v1.height/v1.width;
+  const pp=new PptxGenJS();pp.defineLayout({name:'PDF',width:W,height:H});pp.layout='PDF';
+  for(let i=1;i<=n;i++){ptProg('Armando la diapositiva '+i+' de '+n+'…');
+    const pg=await pdf.getPage(i),c=await ptPaginaCanvas(pg,Math.min(2.2,2000/Math.max(v1.width,v1.height))),s=pp.addSlide();
+    s.addImage({data:c.toDataURL('image/jpeg',.85),x:0,y:0,w:W,h:H});
+    try{const ls=await ptLineas(pg);if(ls.length)s.addNotes(ls.map(l=>l.texto).join('\n'))}catch(e){}
+    c.width=c.height=0;await new Promise(r=>setTimeout(r,0))}
+  ptSalida(ptBase(it.name)+'.pptx',await pp.write({outputType:'blob'}));
+  PT.msg={k:'warn',t:'Cada diapositiva es la imagen de la página (no se puede editar el texto en PowerPoint). El texto de cada página quedó en las notas.'};
+}
+async function ptPdfAXls(){
+  const it=PT.files[0];if(!it)throw new Error('Elegí un PDF.');if(typeof XLSX==='undefined')throw new Error('No se pudo cargar el generador de Excel (¿sin conexión a internet?).');
+  const pdf=await ptAbrirPdf(it),n=pdf.numPages,wb=XLSX.utils.book_new(),todo=[];let conTexto=0;
+  for(let i=1;i<=n;i++){ptProg('Leyendo la página '+i+' de '+n+'…');
+    const ls=await ptLineas(await pdf.getPage(i));if(!ls.length)continue;conTexto++;
+    const f=ptFilasPlanilla(ls,PT.o.numeros);
+    if(PT.o.unaHoja){if(todo.length)todo.push([]);todo.push(...f)}
+    else XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(f),'Pág '+i);
+    await new Promise(r=>setTimeout(r,0))}
+  if(!conTexto)throw new Error('Este PDF no tiene texto (es una imagen o un escaneo), así que no se puede pasar a Excel. Probá con "PDF a WORD", que lee el texto de las imágenes.');
+  if(PT.o.unaHoja)XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(todo),'PDF');
+  ptSalida(ptBase(it.name)+'.xlsx',new Blob([XLSX.write(wb,{bookType:'xlsx',type:'array'})],{type:'application/octet-stream'}));
+  PT.msg={k:'warn',t:'Las columnas se arman según la posición del texto: revisá que cada dato haya quedado en su columna.'};
+}
+const PT_ACC={
+  unir:ptUnir,dividir:ptDividir,eliminar:()=>ptPaginasAPdf('eliminar'),extraer:()=>ptPaginasAPdf('extraer'),ordenar:()=>ptPaginasAPdf('ordenar'),
+  scan:ptImagenesAPdf,jpg2pdf:ptImagenesAPdf,word2pdf:ptWordAPdf,ppt2pdf:ptPptAPdf,xls2pdf:ptXlsAPdf,html2pdf:ptHtmlAPdf,
+  pdf2jpg:ptPdfAJpg,pdf2word:ptPdfAWord,pdf2ppt:ptPdfAPpt,pdf2xls:ptPdfAXls
+};
+const ptHacer=()=>ptRun(PT_ACC[PT.tool]);
+
+/* ---------- pantalla ---------- */
+(function(){
+  const st=document.createElement('style');
+  st.textContent='.pt-tools{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;margin:6px 0 20px}.pt-tool{display:flex;gap:10px;align-items:center;text-align:left;padding:12px 14px;border-radius:12px;cursor:pointer;width:100%}.pt-tool i{font-style:normal;font-size:20px;width:30px;text-align:center;flex:none}.pt-tool b{display:block;font-size:14px}.pt-tool span{display:block;font-size:11.5px;opacity:.7;font-weight:400;margin-top:2px}.pt-zone{border:2px dashed var(--bd,#8886);border-radius:14px;padding:26px 16px;text-align:center;cursor:pointer;margin:10px 0;transition:background .15s}.pt-zone.hov{background:rgba(120,160,255,.14);border-color:var(--blut,#3b6fd4)}.pt-zone b{display:block;font-size:15px}.pt-zone span{font-size:12.5px;opacity:.7}.pt-list{display:flex;flex-direction:column;gap:6px;margin:8px 0}.pt-it{display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--bd,#8884);border-radius:10px}.pt-it img{width:44px;height:56px;object-fit:cover;border-radius:5px;flex:none;background:#fff}.pt-it .n{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.pt-it button{padding:4px 9px}.pt-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(172px,1fr));gap:12px;margin:12px 0}.pt-pg{position:relative;border:2px solid var(--bd,#8884);border-radius:10px;padding:6px;background:rgba(255,255,255,.04);text-align:center;cursor:pointer;user-select:none}.pt-pg .im{height:150px;display:flex;align-items:center;justify-content:center;overflow:hidden}.pt-pg img{max-width:100%;max-height:100%;background:#fff;transition:transform .2s}.pt-pg .nr{font-size:11.5px;margin-top:4px;opacity:.8}.pt-pg .bd{z-index:2;position:absolute;top:8px;left:8px;background:rgba(0,0,0,.65);color:#fff;border-radius:9px;font-size:11px;padding:1px 7px}.pt-pg.mk{border-color:#d9534f;background:rgba(217,83,79,.18)}.pt-pg.mk.ext{border-color:#2fb36b;background:rgba(47,179,107,.18)}.pt-pg.mk::after{content:"✕";position:absolute;right:8px;top:6px;font-weight:700;color:#fff;background:#d9534f;border-radius:50%;width:22px;height:22px;line-height:22px;font-size:13px}.pt-pg.mk.ext::after{content:"✓";background:#2fb36b}.pt-pg .ac{display:flex;gap:3px;justify-content:center;margin-top:4px;flex-wrap:wrap}.pt-pg .ac button{padding:1px 6px;font-size:12px;min-width:0}.pt-res{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--bd,#8884);border-radius:10px;margin:6px 0}.pt-res .n{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}';
+  (document.head||document.documentElement).appendChild(st);
+})();
+function ptGridHtml(){
+  const ord=PT.tool==='ordenar',ext=PT.tool==='extraer';
+  return PT.pages.map((p,i)=>`<div class="pt-pg ${p.mark?'mk':''} ${ext?'ext':''}" ${ord?`draggable="true" ondragstart="ptOrdIni(event,${i})" ondragover="ptOrdSobre(event)" ondrop="ptOrdSoltar(event,${i})"`:`onclick="ptTocar(${i})"`}>
+    <span class="bd">${i+1}</span><div class="im">${p.thumb?`<img src="${p.thumb}" alt="Página ${p.i+1}" draggable="false" style="transform:rotate(${p.rot}deg)${p.rot%180?`;max-width:150px;max-height:110px`:''}">`:'<span class="s">…</span>'}</div>
+    <div class="nr">Página ${p.i+1}${ord&&p.i!==i?'':''}</div>
+    ${ord?`<div class="ac"><button class="g" title="Mover antes" onclick="ptMover(${i},-1)">◀</button><button class="g" title="Girar a la izquierda" onclick="ptGirar(${i},-90)">↺</button><button class="g" title="Girar a la derecha" onclick="ptGirar(${i},90)">↻</button><button class="g" title="Quitar" onclick="ptQuitarPag(${i})">✕</button><button class="g" title="Mover después" onclick="ptMover(${i},1)">▶</button></div>`:''}</div>`).join('');
+}
+function ptOpcionesHtml(){
+  const k=PT.tool,o=PT.o,rad=(nm,v,t)=>`<label style="display:inline-flex;gap:6px;align-items:center;margin-right:16px"><input type="radio" name="${nm}" ${o[nm]===v?'checked':''} onchange="ptOpt('${nm}','${v}');draw()"> ${t}</label>`;
+  if(k==='dividir')return `<div class="card" style="margin:10px 0"><b>¿Cómo dividir?</b><div style="margin:8px 0">${rad('modo','rangos','Por tramos')}${rad('modo','cada','Una página por archivo')}${rad('modo','n','Cada N páginas')}</div>
+    ${o.modo==='rangos'?`<label>Tramos (cada tramo separado por coma es un archivo)<br><input style="width:100%;max-width:420px" value="${esc(o.rangos)}" placeholder="Ej.: 1-3, 4-6, 7-" oninput="ptOpt('rangos',this.value)"></label><span class="s" style="display:block;margin-top:4px">Ej.: “1-3, 4-6” genera dos PDF. Un número solo es una página. “7-” es desde la 7 hasta el final.</span>`:o.modo==='n'?`<label>Cada cuántas páginas<br><input type="number" min="1" style="width:100px" value="${esc(o.n)}" oninput="ptOpt('n',this.value)"></label>`:`<span class="s">Se genera un PDF por cada página${PT.files[0]&&PT.files[0].pages?' ('+PT.files[0].pages+' archivos)':''}.</span>`}</div>`;
+  if(k==='scan')return `<div class="card" style="margin:10px 0"><b>Opciones</b><div style="margin:8px 0;display:flex;flex-direction:column;gap:6px">
+    <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" ${o.recortar?'checked':''} onchange="ptOpt('recortar',this.checked)"> Buscar el papel, recortarlo y enderezarlo</label>
+    <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" ${o.mejorar?'checked':''} onchange="ptOpt('mejorar',this.checked)"> Mejorar la lectura (grises y fondo blanco, si no se pudo recortar)</label></div>
+    <span class="s">Una página por foto, en tamaño A4. Podés girar las fotos que quedaron de costado y cambiar el orden.</span></div>`;
+  if(k==='jpg2pdf')return `<div class="card row" style="margin:10px 0;align-items:flex-end"><label>Tamaño de página<br><select onchange="ptOpt('tam',this.value)"><option value="A4" ${o.tam==='A4'?'selected':''}>A4</option><option value="Carta" ${o.tam==='Carta'?'selected':''}>Carta</option><option value="img" ${o.tam==='img'?'selected':''}>Igual a la imagen</option></select></label>
+    <label>Margen<br><select onchange="ptOpt('margen',this.value)"><option value="0" ${o.margen==='0'?'selected':''}>Sin margen</option><option value="10" ${o.margen==='10'?'selected':''}>Chico</option><option value="20" ${o.margen==='20'?'selected':''}>Grande</option></select></label><span class="s" style="flex:1">La orientación de cada página se adapta a la imagen.</span></div>`;
+  if(k==='pdf2jpg')return `<div class="card row" style="margin:10px 0;align-items:flex-end"><label>Calidad de imagen<br><select onchange="ptOpt('dpi',+this.value)"><option value="100" ${o.dpi==100?'selected':''}>Liviana (100 ppp)</option><option value="150" ${o.dpi==150?'selected':''}>Normal (150 ppp)</option><option value="220" ${o.dpi==220?'selected':''}>Alta (220 ppp)</option><option value="300" ${o.dpi==300?'selected':''}>Muy alta (300 ppp)</option></select></label></div>`;
+  if(k==='pdf2word')return `<div class="card" style="margin:10px 0"><label style="display:flex;gap:8px;align-items:center"><input type="checkbox" ${o.ocr?'checked':''} onchange="ptOpt('ocr',this.checked)"> Si una página es una imagen o escaneo, leer su texto (OCR; es más lento)</label></div>`;
+  if(k==='pdf2xls')return `<div class="card" style="margin:10px 0;display:flex;flex-direction:column;gap:6px"><label style="display:flex;gap:8px;align-items:center"><input type="checkbox" ${o.numeros?'checked':''} onchange="ptOpt('numeros',this.checked)"> Convertir importes como 1.234,56 en números</label>
+    <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" ${o.unaHoja?'checked':''} onchange="ptOpt('unaHoja',this.checked)"> Todas las páginas en una sola hoja (si no, una hoja por página)</label></div>`;
+  if(k==='html2pdf')return `<div class="card" style="margin:10px 0"><label>Código HTML<br><textarea style="width:100%;min-height:170px;font-family:monospace;font-size:12px" placeholder="Pegá acá el código HTML… o elegí un archivo .html" oninput="PT.html=this.value">${esc(PT.html)}</textarea></label><span class="s">Si elegís un archivo, se usa el archivo.</span></div>`;
+  return '';
+}
+function ptAccion(){
+  const k=PT.tool,T=PT_T[k],n=PT.files.length,pag=T.pag&&PT.pages.length;
+  const lbl={unir:'Unir PDF',dividir:'Dividir PDF',eliminar:'Eliminar las páginas marcadas',extraer:'Extraer las páginas elegidas',ordenar:'Guardar el nuevo orden',scan:'Crear PDF',jpg2pdf:'Crear PDF',word2pdf:'Convertir a PDF',ppt2pdf:'Convertir a PDF',xls2pdf:'Convertir a PDF',html2pdf:'Convertir a PDF',pdf2jpg:'Convertir a JPG',pdf2word:'Convertir a Word',pdf2ppt:'Convertir a PowerPoint',pdf2xls:'Convertir a Excel'}[k];
+  const listo=T.html?(n||String(PT.html).trim()):T.pag?pag:n;
+  return `<div class="row" style="margin:12px 0;align-items:center;gap:12px"><button class="b" ${PT.busy||!listo?'disabled':''} onclick="ptHacer()">${lbl}</button>${PT.busy?`<span class="s" id="pt_busy">${esc(PT.busy)}</span>`:''}</div>`;
+}
+function ptSalidaHtml(){
+  if(!PT.out.length)return '';
+  const k=PT.tool,t=PT.out.length,ver=o=>/\.pdf$/i.test(o.name)||/\.jpg$/i.test(o.name);
+  return `<div class="card" style="margin:14px 0;border-color:var(--grn,#2fb36b)"><b>${t===1?'Listo: tu archivo está preparado':'Listo: '+t+' archivos preparados'}</b>
+    <div style="margin-top:8px">${PT.out.slice(0,12).map((o,i)=>`<div class="pt-res"><span class="n" title="${esc(o.name)}">${esc(o.name)}</span><span class="s">${ptTam(o.size)}</span>${ver(o)?`<a class="g" style="padding:6px 12px;border-radius:8px;text-decoration:none" href="${o.url}" target="_blank" rel="noopener">Ver</a>`:''}<button class="b" onclick="ptDescargar(${i})">Descargar</button></div>`).join('')}${t>12?`<p class="s">…y ${t-12} más (están todos en el ZIP).</p>`:''}</div>
+    ${t>1?`<div style="margin-top:8px"><button class="b" onclick="ptZip()">Descargar todo en un ZIP</button></div>`:''}</div>`;
+}
+function vPdf(){
+  const k=PT.tool;
+  if(!k)return `<h2>Herramientas PDF</h2><p class="s" style="margin-bottom:12px">Unir, dividir, ordenar y convertir PDF y documentos. Todo se hace dentro de tu navegador: los archivos no se suben a ningún servidor ni se guardan.</p>
+    ${PT_G.map((g,gi)=>`<h3 style="margin:14px 0 6px">${g}</h3><div class="pt-tools">${Object.entries(PT_T).filter(([,t])=>t.g===gi).map(([id,t])=>`<button class="g pt-tool" onclick="ptElegir('${id}')"><i>${t.ico}</i><div><b>${t.n}</b><span>${t.c}</span></div></button>`).join('')}</div>`).join('')}
+    <p class="s">Conversiones a Word, Excel y PowerPoint: conservan el contenido, no el diseño exacto del original. Revisá siempre el resultado.</p>`;
+  const T=PT_T[k];
+  return `<div class="row" style="align-items:center;gap:10px;margin-bottom:6px"><button class="g" onclick="ptVolver()">← Todas las herramientas</button></div>
+  <h2 style="margin-top:6px">${T.n}</h2><p class="s" style="margin-bottom:8px;max-width:760px">${T.d}</p>
+  ${PT.msg?`<div class="msg ${PT.msg.k}">${esc(PT.msg.t)}</div>`:''}
+  <div class="pt-zone" ondragover="event.preventDefault();this.classList.add('hov')" ondragleave="this.classList.remove('hov')" ondrop="ptDrop(event)" onclick="document.getElementById('pt_in').click()">
+    <b>${T.multi?'Arrastrá los archivos acá o tocá para elegirlos':'Arrastrá el archivo acá o tocá para elegirlo'}</b><span>${T.n==='Escanear a PDF'?'Fotos o imágenes':T.html?'Archivo .html o .htm':T.acc.replace(/image\/\*/,'imágenes').replace(/\./g,'').replace(/,/g,', ').toUpperCase()}${T.multi?' · podés elegir varios':''} · hasta ${PT_MAX_MB} MB cada uno</span></div>
+  <input type="file" id="pt_in" data-dz="1" hidden ${T.multi?'multiple':''} accept="${T.acc}" onchange="ptElegidos(this)">
+  ${T.cam?`<div class="row" style="margin:0 0 8px"><button class="g" onclick="document.getElementById('pt_cam').click()">📷 Sacar una foto</button><input type="file" id="pt_cam" data-dz="1" hidden accept="image/*" capture="environment" onchange="ptElegidos(this)"><span class="s">En el celular abre la cámara; en la compu elige una imagen.</span></div>`:''}
+  ${T.pag?(PT.pages.length?`<div class="row" style="align-items:center;gap:8px;margin-top:8px"><b id="pt_cuenta">${ptCuenta()}</b>
+      ${k==='ordenar'?`<button class="g" onclick="ptInvertir()">Invertir el orden</button><button class="g" onclick="ptGirarTodas(90)">Girar todas ↻</button><span class="s">Arrastrá las páginas para ordenarlas.</span>`:`<button class="g" onclick="ptTodas(true)">Marcar todas</button><button class="g" onclick="ptTodas(false)">Ninguna</button>
+      <input style="width:150px" placeholder="Ej.: 1-3, 7" value="${esc(PT.o.marcar)}" oninput="ptOpt('marcar',this.value)"><button class="g" onclick="ptMarcarTxt()">${k==='eliminar'?'Marcar esas':'Elegir esas'}</button>`}</div>
+      <div class="pt-grid" id="pt_grid">${ptGridHtml()}</div>`:'' ):
+   PT.files.length?`<div class="pt-list">${PT.files.map((f,i)=>`<div class="pt-it">${f.url?`<img src="${f.url}" alt="" style="transform:rotate(${f.rot}deg)">`:''}<span class="n" title="${esc(f.name)}">${esc(f.name)}</span><span class="s">${f.pages?f.pages+' pág. · ':''}${ptTam(f.size)}</span>
+      ${T.multi?`<button class="g" onclick="ptImgMover(${i},-1)" title="Subir">▲</button><button class="g" onclick="ptImgMover(${i},1)" title="Bajar">▼</button>`:''}${T.img?`<button class="g" onclick="ptImgGirar(${i},-90)" title="Girar">↺</button><button class="g" onclick="ptImgGirar(${i},90)" title="Girar">↻</button>`:''}<button class="g" onclick="ptImgQuitar(${i})" title="Quitar">✕</button></div>`).join('')}</div>`:''}
+  ${ptOpcionesHtml()}${ptAccion()}${ptSalidaHtml()}`;
 }
 /* ===== Carga de sueldos: perfil "liquidador" (recibos, VEP y boletas de sindicatos) ===== */
 const isLiq=()=>prof&&prof.role==='liquidador';
