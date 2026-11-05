@@ -3680,11 +3680,15 @@ async function ptLineas(page){
     if(l){l.it.push(t);l.fs=Math.max(l.fs,t.fs)}else ls.push({y:t.y,fs:t.fs,it:[t]});
   }
   ls.sort((a,b)=>b.y-a.y);
+  /* PDF que viene de una planilla: cada celda es un fragmento propio (con espacios dentro) y entre celdas hay un fragmento de puro espacio. */
+  const sp=it.filter(t=>t.s.length&&!t.s.trim()).length,ns=it.filter(t=>t.s.trim()),mw=ns.filter(t=>/\S\s+\S/.test(t.s.trim())).length;
+  const modoCel=ls.length>=3&&sp>=ls.length*.8&&mw>=ns.length*.12;
   for(const l of ls){
     l.it.sort((a,b)=>a.x-b.x);
     const cel=[];let cur=null;
     for(const t of l.it){
-      if(!t.s.trim()&&cur){cur.s+=t.s;cur.x1=Math.max(cur.x1,t.x+t.w);continue}
+      if(modoCel&&!t.s.trim()){cur=null;continue}
+      if(modoCel){cel.push({x0:t.x,x1:t.x+t.w,s:t.s});cur=null;continue}
       if(!t.s.trim())continue;
       const hueco=cur?t.x-cur.x1:0,lim=Math.max(9,l.fs*1.1);
       if(cur&&hueco<=lim){const sp=hueco>l.fs*.18&&!/\s$/.test(cur.s)&&!/^\s/.test(t.s)?' ':'';cur.s+=sp+t.s;cur.x1=t.x+t.w}
@@ -3699,7 +3703,7 @@ async function ptLineas(page){
 /** Número con coma decimal ("1.234,56") → número; si no se parece a uno, devuelve el texto. */
 function ptNumero(s){
   const t=String(s).trim();
-  if(/^-?\$?\s?\d{1,3}(\.\d{3})*,\d{1,4}$/.test(t)||/^-?\$?\s?\d+,\d{1,4}$/.test(t)){const v=parseFloat(t.replace(/[$\s.]/g,'').replace(',','.'));if(isFinite(v))return v}
+  if(/^-?\$?\s?\d{1,3}(\.\d{3})*,\d{1,4}$/.test(t)||/^-?\$?\s?\d+(,\d{1,4})?$/.test(t)&&!/^\d{9,}$/.test(t)){const v=parseFloat(t.replace(/[$\s.]/g,'').replace(',','.'));if(isFinite(v))return v}
   return s;
 }
 /** Renglones de una página → filas de planilla con columnas alineadas por posición. */
@@ -3720,7 +3724,7 @@ function ptFilasPlanilla(lineas,numeros){
        return numeros?f.map(ptNumero):f})}}
   /* Columnas: se calculan con los renglones de tipo tabla (3+ celdas). Los importes se alinean por su borde derecho y el texto por el izquierdo.
      Una columna solo existe si la usan varios renglones; lo demás (encabezados sueltos) se acomoda en la columna más cercana. */
-  const esNum=s=>/^-?\$?\s?\d{1,3}(\.\d{3})*,\d{1,4}$|^-?\$?\s?\d+,\d{1,4}$/.test(String(s).trim());
+  const esNum=s=>/^-?\$?\s?\d{1,3}(\.\d{3})*,\d{1,4}$|^-?\$?\s?\d+(,\d{1,4})?$/.test(String(s).trim())&&!/^\d{9,}$/.test(String(s).trim());
   let base=lineas.filter(l=>l.cel.length>=3);if(base.length<3)base=lineas;
   const pts=[];base.forEach(l=>l.cel.forEach(c=>pts.push({r:esNum(c.s),a:esNum(c.s)?c.x1:c.x0,cx:(c.x0+c.x1)/2})));
   const grupo=tipo=>{const v=pts.filter(p=>p.r===tipo).sort((a,b)=>a.a-b.a),gs=[];v.forEach(p=>{const g=gs[gs.length-1];if(g&&p.a-g.fin<=7){g.m.push(p);g.fin=p.a}else gs.push({m:[p],fin:p.a})});return gs};
@@ -3729,7 +3733,7 @@ function ptFilasPlanilla(lineas,numeros){
   if(!cols.length)cols=[{r:false,a:0,cx:0}];
   cols.sort((a,b)=>a.cx-b.cx);
   const colDe=c=>{const num=esNum(c.s),a=num?c.x1:c.x0,cx=(c.x0+c.x1)/2;let k=-1,d=1e9;cols.forEach((q,i)=>{if(q.r===num){const dd=Math.abs(q.a-a);if(dd<=8&&dd<d){d=dd;k=i}}});
-    if(k<0)cols.forEach((q,i)=>{const dd=Math.abs(q.cx-cx);if(dd<d){d=dd;k=i}});return k};
+    if(k<0){const hay=cols.some(q=>q.r===num);cols.forEach((q,i)=>{if(hay&&q.r!==num)return;const dd=Math.abs(q.cx-cx);if(dd<d){d=dd;k=i}});if(k<0)cols.forEach((q,i)=>{const dd=Math.abs(q.cx-cx);if(dd<d){d=dd;k=i}})}return k};
   return lineas.map(l=>{const f=Array(cols.length).fill('');l.cel.forEach(c=>{const k=colDe(c);f[k]=f[k]?f[k]+' '+c.s:c.s});while(f.length&&f[f.length-1]==='')f.pop();return numeros?f.map(ptNumero):f});
 }
 
@@ -3789,15 +3793,22 @@ class PtPdf{
   }
   linea(){this.espacio(10);this.y-=4;this.p.drawLine({start:{x:this.m,y:this.y},end:{x:this.W-this.m,y:this.y},thickness:.7,color:PDFLib.rgb(.6,.6,.6)});this.y-=8}
   /** Tabla: filas de celdas {t,b,span}; ancho de columnas según el contenido. */
-  tabla(filas,o){
+  /** Ancho de cada columna: el título se parte por palabras, los datos piden su ancho completo. Devuelve también el ancho total pedido (sin achicar). */
+  anchos(filas,o,ajustar){
     o=o||{};const nc=Math.max(1,...filas.map(f=>f.reduce((a,c)=>a+(c.span||1),0)));
     const sz=o.size||(nc>12?6:nc>9?7:nc>6?8:9.5),pad=3.2,F=this.F;
     const w=Array(nc).fill(0);
-    filas.forEach((f,fi)=>{let k=0;f.forEach(c=>{const sp=c.span||1;if(sp===1){const f2=(c.b||(o.cab&&fi===0))?F.b:F.r;const tw=Math.max(...String(c.t??'').split('\n').map(s=>f2.widthOfTextAtSize(this.san(s),sz)),0);w[k]=Math.max(w[k],Math.min(tw,this.cw))}k+=sp})});
+    filas.forEach((f,fi)=>{let k=0;const cab=o.cab&&fi===0;f.forEach(c=>{const sp=c.span||1;if(sp===1){const f2=(c.b||cab)?F.b:F.r;
+      const tw=Math.max(...String(c.t??'').split('\n').flatMap(x=>cab?this.san(x).split(/\s+/):[this.san(x)]).map(x=>f2.widthOfTextAtSize(x,sz)),0);w[k]=Math.max(w[k],Math.min(tw,this.cw))}k+=sp})});
     w.forEach((v,i)=>w[i]=Math.max(v+2*pad,14));
-    let tot=w.reduce((a,b)=>a+b,0);
+    let tot=w.reduce((a,b)=>a+b,0);const pedido=tot;
+    if(ajustar){
     if(tot>this.cw){const k=this.cw/tot,fijo=w.map(v=>v<=60);const libre=w.reduce((a,v,i)=>a+(fijo[i]?0:v),0),fx=w.reduce((a,v,i)=>a+(fijo[i]?v:0),0);const kk=Math.max(.2,(this.cw-fx)/Math.max(1,libre));w.forEach((v,i)=>{w[i]=fijo[i]?v:v*kk});tot=w.reduce((a,b)=>a+b,0);if(tot>this.cw+1)w.forEach((v,i)=>w[i]=v*k)}
-    else if(o.estirar){const k=this.cw/tot;w.forEach((v,i)=>w[i]=v*k);tot=this.cw}
+    else if(o.estirar){const k=this.cw/tot;w.forEach((v,i)=>w[i]=v*k);tot=this.cw}}
+    return {w,sz,pad,nc,pedido};
+  }
+  tabla(filas,o){
+    o=o||{};const {w,sz,pad,nc}=this.anchos(filas,o,true),F=this.F;
     const lh=sz*1.25;let filaN=0;
     for(const f of filas){
       let k=0;const cel=f.map(c=>{const sp=c.span||1,ww=w.slice(k,k+sp).reduce((a,b)=>a+b,0),fo=(c.b||(o.cab&&filaN===0))?F.b:F.r;k+=sp;
@@ -3975,13 +3986,24 @@ async function ptHtmlBloques(html){
 /* ---------- Excel / CSV → bloques ---------- */
 function ptXlsBloques(wb){
   const bl=[];let anch=0;
+  const esN=t=>/^-?\$?\s?[\d.]+,\d+$|^-?\$?\s?[\d.,]+%?$/.test(t)&&t!=='';
   wb.SheetNames.forEach((n,i)=>{
     const ws=wb.Sheets[n];let f=XLSX.utils.sheet_to_json(ws,{header:1,raw:false,defval:''});
     f=f.filter(r=>r.some(c=>String(c).trim()!==''));if(!f.length)return;
-    const nc=Math.max(...f.map(r=>r.length));anch=Math.max(anch,nc);
+    let nc=Math.max(...f.map(r=>r.length));
+    /* columnas totalmente vacías se quitan */
+    const usa=Array.from({length:nc},(_,k)=>f.some(r=>String(r[k]??'').trim()!==''));
+    const ks=usa.map((u,k)=>u?k:-1).filter(k=>k>=0);f=f.map(r=>ks.map(k=>String(r[k]??'')));nc=ks.length;
+    anch=Math.max(anch,nc);
     if(i>0&&bl.length)bl.push({t:'salto'});
     if(wb.SheetNames.length>1)bl.push({t:'p',runs:[{t:n,b:true,size:13}],size:13,despues:6});
-    bl.push({t:'tabla',cab:true,filas:f.map(r=>Array.from({length:nc},(_,k)=>({t:String(r[k]??''),al:/^-?[\d.]+,\d+$|^-?[\d.,]+%?$/.test(String(r[k]??'').trim())&&String(r[k]).trim()!==''?'right':undefined})))});
+    /* renglones con una sola celda (títulos) van como texto y cortan la tabla */
+    let seg=[],primera=true;
+    const cierra=()=>{if(seg.length){bl.push({t:'tabla',cab:primera,filas:seg});primera=false}seg=[]};
+    f.forEach(r=>{const ne=r.filter(c=>c.trim()!=='');
+      if(nc>1&&ne.length===1){cierra();bl.push({t:'p',runs:[{t:ne[0].trim(),b:true}],size:11,despues:4,antes:2});}
+      else seg.push(r.map(c=>({t:c,al:esN(c.trim())?'right':undefined})))});
+    cierra();
   });
   return {bl,anch};
 }
@@ -4231,7 +4253,14 @@ async function ptXlsAPdf(){
   const e=ptExt(it.name);let wb;
   if(e==='csv'){wb=XLSX.read(await it.file.text(),{type:'string'})}else wb=XLSX.read(await ptBuf(it.file),{type:'array',cellDates:true});
   const {bl,anch}=ptXlsBloques(wb);if(!bl.length)throw new Error('La planilla no tiene datos.');
-  const ap=anch>7,d=await new PtPdf(ap?{w:841.89,h:595.28,m:30}:{m:36}).init();await d.blocks(bl);ptSalida(ptBase(it.name)+'.pdf',await d.guardar());
+  /* tamaño de página según lo que piden las columnas: A4 vertical, A4 apaisado, o más ancho cuando son muchas */
+  const sz=anch>12?7:anch>9?7.5:8,sonda=await new PtPdf({w:5000,h:5000,m:30}).init();
+  const need=Math.max(0,...bl.filter(b=>b.t==='tabla').map(b=>sonda.anchos(b.filas,{size:sz,cab:b.cab}).pedido))+60;
+  let W=595.28,H=841.89,m=36;
+  if(need>595.28-0){W=841.89;H=595.28;m=30}
+  if(need>841.89){W=Math.min(Math.max(need,1190.55),2200);H=W*.7071;m=30}
+  bl.forEach(b=>{if(b.t==='tabla')b.size=anch>6?sz:undefined});
+  const d=await new PtPdf({w:W,h:H,m}).init();await d.blocks(bl);ptSalida(ptBase(it.name)+'.pdf',await d.guardar());
 }
 async function ptPptAPdf(){
   const it=PT.files[0];if(!it)throw new Error('Elegí un archivo .pptx.');await suePdfLib();ptProg('Leyendo las diapositivas…');
