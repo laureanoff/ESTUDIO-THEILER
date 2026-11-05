@@ -312,6 +312,7 @@ function vImportar(){
   <p style="color:var(--mut);font-size:12px">El cliente y el período se eligen solos según el archivo (CUIT del encabezado o del nombre y mes con más comprobantes). El archivo se lee en tu navegador; solo se guardan los comprobantes en la base.</p>
   ${libroCard()}
   ${coopCard()}
+  ${cmpCard()}
   <h3>Historial de importaciones</h3><div class="tw"><table><thead><tr><th>Fecha</th><th>Cliente</th><th>Archivo</th><th>Leídos</th><th>Nuevos</th><th>Repetidos</th><th>Rechazados</th></tr></thead><tbody>
   ${ui.batches.length?ui.batches.map(b=>`<tr><td>${new Date(b.imported_at).toLocaleString('es-AR')}</td><td>${esc(b.clients&&b.clients.razon_social)}</td><td>${esc(b.file_name)}${b.kind==='libro_iva'?' <span class="tag" style="background:var(--blu);color:var(--blut)">Libro IVA</span>':''}</td><td>${b.rows_read}</td><td>${b.rows_new}</td><td>${b.rows_duplicate}</td><td>${b.rows_rejected}</td></tr>`).join(''):'<tr><td colspan="7" style="color:var(--mut)">Todavía no hay importaciones.</td></tr>'}</tbody></table></div>`;
 }
@@ -4403,6 +4404,304 @@ function vPdf(){
    PT.files.length?`<div class="pt-list">${PT.files.map((f,i)=>`<div class="pt-it">${f.url?`<img src="${f.url}" alt="" style="transform:rotate(${f.rot}deg)">`:''}<span class="n" title="${esc(f.name)}">${esc(f.name)}</span><span class="s">${f.pages?f.pages+' pág. · ':''}${ptTam(f.size)}</span>
       ${T.multi?`<button class="g" onclick="ptImgMover(${i},-1)" title="Subir">▲</button><button class="g" onclick="ptImgMover(${i},1)" title="Bajar">▼</button>`:''}${T.img?`<button class="g" onclick="ptImgGirar(${i},-90)" title="Girar">↺</button><button class="g" onclick="ptImgGirar(${i},90)" title="Girar">↻</button>`:''}<button class="g" onclick="ptImgQuitar(${i})" title="Quitar">✕</button></div>`).join('')}</div>`:''}
   ${ptOpcionesHtml()}${ptAccion()}${ptSalidaHtml()}`;
+}
+
+/* ===== Importar compras: comprobantes sueltos (PDF o foto) =====
+   Cada archivo se lee así: 1) QR de ARCA (fecha, CUIT del emisor, tipo, punto de venta, número, importe y CUIT del comprador: es lo más confiable);
+   2) texto del PDF (o de la foto, con OCR) para el neto, el IVA y otros tributos. Los importes se verifican: neto + IVA + otros tiene que dar el total del QR.
+   Si el comprobante ya está cargado (por el Excel de ARCA) se marca como recibido en digital y se le guarda el archivo; si no está, se carga completo. */
+
+/** Número escrito de cualquier forma ("1.234,56", "2,747.50", "849. 178, 80", "1281130,07") → número. */
+function cmpNum(s){
+  let t=String(s).replace(/[$\sA-Za-z]/g,'');if(!t||!/\d/.test(t))return null;
+  const neg=/^-/.test(t)||/-$/.test(t);t=t.replace(/-/g,'');
+  const ult=Math.max(t.lastIndexOf('.'),t.lastIndexOf(','));let dec='';
+  if(ult>=0){const d=t.slice(ult+1);if(d.length<=2){dec=d;t=t.slice(0,ult)}}
+  const ent=t.replace(/[.,]/g,'');if(!/^\d+$/.test(ent))return null;
+  const v=parseFloat(ent+(dec?'.'+dec:''));return isFinite(v)?(neg?-v:v):null;
+}
+const cmpR2=x=>Math.round((x+Number.EPSILON)*100)/100;
+/** Todos los importes que aparecen en el texto. */
+function cmpJuntar(t){return String(t).replace(/(?<![\d.,])(?:[\d.,] ){2,}[\d.,](?![\d.,])/g,m=>m.replace(/ /g,'')).replace(/(\d[.,]) +(?=\d)/g,'$1')}
+function cmpImportes(txt){
+  const t=cmpJuntar(txt).replace(/(\d[.,])\s+(?=\d)/g,'$1').replace(/(\d)\s+([.,]\d)/g,'$1$2'),set=new Map();
+  for(const m of t.matchAll(/-?\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?(?!\d)|-?\d+[.,]\d{1,2}(?!\d)|-?\d{3,}(?!\d)/g)){
+    const v=cmpNum(m[0]);if(v!==null&&v>0&&v<1e11)set.set(Math.round(v*100),v)}
+  return [...set.values()].sort((a,b)=>b-a);
+}
+/** Busca cómo se reparte el total: neto + IVA (una o dos alícuotas) + otros tributos. Devuelve null si no hay una combinación que cierre con importes del propio comprobante. */
+function cmpResolver(T,N,tasasTexto){
+  const cent=new Set(N.map(x=>Math.round(x*100))),has=(x,tol)=>{const c=Math.round(x*100);for(let d=-(tol||2);d<=(tol||2);d++)if(cent.has(c+d))return true;return false};
+  const R=[21,10.5,27,5,2.5],pref=r=>(tasasTexto||[]).filter(x=>Math.abs(x-r)<1e-6).length;
+  const uno=[];
+  for(const n of N){if(n>=T-0.005||n<T/1.5)continue;
+    for(const r of R){const iva=cmpR2(n*r/100);if(iva<=0||!has(iva,6))continue;const o=cmpR2(T-n-iva);if(o<-0.03)continue;
+      const sc=(Math.abs(o)<=0.03?3:has(o,2)?2:0);if(!sc)continue;uno.push({neto:n,iva:Math.abs(o)<=0.03?cmpR2(T-n):iva,otros:Math.abs(o)<=0.03?0:Math.max(0,o),r,sc:sc+(pref(r)?1:0)+(Math.abs(cmpR2(T-n)-iva)<=0.03?0:0)})}}
+  if(uno.length){uno.sort((a,b)=>b.sc-a.sc||b.neto-a.neto);return {neto:uno[0].neto,iva:uno[0].iva,otros:uno[0].otros,tasas:[uno[0].r]}}
+  const dos=[],M=N.filter(n=>n<T);
+  for(let i=0;i<M.length;i++)for(let j=i+1;j<M.length;j++)for(const r1 of R)for(const r2 of R){if(r1===r2)continue;
+    const n1=M[i],n2=M[j],i1=cmpR2(n1*r1/100),i2=cmpR2(n2*r2/100);if(!has(i1,6)||!has(i2,6))continue;
+    const o=cmpR2(T-n1-n2-i1-i2);if(o<-0.03)continue;if(Math.abs(o)<=0.03||has(o,2))dos.push({neto:cmpR2(n1+n2),iva:cmpR2(i1+i2),otros:Math.abs(o)<=0.03?0:o,tasas:[r1,r2],sc:Math.abs(o)<=0.03?2:1})}
+  if(dos.length){dos.sort((a,b)=>b.sc-a.sc||b.neto-a.neto);return dos[0]}
+  return null;
+}
+const CMP_CODIGOS=new Set([1,2,3,4,5,6,7,8,9,10,11,12,13,15,34,35,39,40,41,49,51,52,53,54,60,61,63,64,81,82,83,88,91,201,202,203,206,207,208]);
+/** Código ARCA del comprobante a partir del texto ("FACTURA A", "COD. 006", "Nota Debito Int. A"). */
+function cmpTipoTexto(t){
+  const cab=t.slice(0,1200);let cod=null;
+  const m=cab.match(/c[oó]d(?:igo|\.)?(?:[ \t]*dgi)?\.?[ \t]*(?:n[°º.]*)?[ \t]*:?[ \t]*0*(\d{1,3})(?!\d)/i);if(m&&CMP_CODIGOS.has(+m[1]))cod=+m[1];
+  let porNombre=null;
+  const pal=cab.match(/factura|nota\s+(?:de\s+)?(?:d[eé]bito|cr[eé]dito)|nota\s+(?:d[eé]b|cr[eé]d)\w*/i);
+  if(pal){
+    const i=pal.index,ant=cab.slice(Math.max(0,i-40),i),des=cab.slice(i+pal[0].length,i+pal[0].length+40);
+    const L=x=>x.match(/(?<![\p{L}\d])[ABCM](?![\p{L}\d])/gu),inm=ant.match(/(?<![\p{L}\d])([ABCM])\s{0,3}$/u);
+    const a=L(des.slice(0,25)),b=L(ant),letra=(inm&&inm[1])||(a&&a[0])||(b&&b[b.length-1]);
+    if(letra){const base=/^factura/i.test(pal[0])?[1,6,11,51]:/d[eé]b/i.test(pal[0])?[2,7,12,52]:[3,8,13,53];porNombre=base['ABCM'.indexOf(letra)]}
+  }
+  return cod!==null?cod:porNombre;
+}
+/** Datos de un comprobante: QR primero, texto después. Devuelve {d, avisos, cuits}. */
+function cmpExtraer(txt,qr,clientes){
+  const av=[],d={fecha:null,tipo:null,pv:null,num:null,cuit:null,nombre:'',total:null,neto:null,iva:null,otros:0,nog:0,exe:0,moneda:'PES',ctz:1};
+  txt=cmpJuntar(String(txt||'').replace(/\r/g,''));
+  let cuitCli=null;
+  if(qr){d.fecha=qr.fecha;d.tipo=qr.tipoCmp;d.pv=qr.ptoVta;d.num=qr.nroCmp;d.cuit=qr.cuit;d.total=qr.importe;d.ctz=(qr.ctz&&qr.ctz>0)?qr.ctz:1;d.moneda=qr.raw&&qr.raw.moneda?String(qr.raw.moneda):'PES';cuitCli=String(qr.raw&&qr.raw.nroDocRec||'').replace(/\D/g,'')||null}
+  /* CUIT que aparecen en el texto */
+  const hall=[];
+  for(const m of txt.matchAll(/(?<!\d)(\d{2})\s*-?\s*(\d{8})\s*-?\s*(\d)(?!\d)/g)){const c=m[1]+m[2]+m[3];if(cuitValido(c)&&!hall.includes(c))hall.push(c)}
+  for(const m of txt.matchAll(/C\.?\s?U\.?\s?I\.?\s?T\.?[^\d]{0,12}((?:\d[\s.:\-]*){11,16})/gi)){const c=m[1].replace(/\D/g,'').slice(0,11);if(c.length===11&&cuitValido(c)&&!hall.includes(c))hall.push(c)}
+  const cids=clientes.map(c=>String(c.cuit||'').replace(/\D/g,''));
+  if(!cuitCli){const k=hall.find(c=>cids.includes(c));if(k)cuitCli=k}
+  if(!d.cuit){const e=hall.find(c=>c!==cuitCli&&!cids.includes(c));if(e)d.cuit=e;else if(hall.length)av.push('No se pudo distinguir el CUIT del proveedor.')}
+  /* tipo, punto de venta y número */
+  if(d.tipo===null){const t=cmpTipoTexto(txt);if(t)d.tipo=t}
+  if(d.pv===null||d.num===null){
+    let m=txt.match(/(?<!\d)(\d{4,5})\s*-\s*(\d{8})(?!\d)/);
+    if(m){d.pv=+m[1];d.num=+m[2]}
+    else{const a=txt.match(/Punto\s+de\s+Venta\s*:?\s*(\d{1,5})/i),b=txt.match(/Comp(?:robante)?\.?\s*(?:Nro|N[°º.]|N[úu]mero)\.?\s*:?\s*(\d{1,8})/i);if(a&&b){d.pv=+a[1];d.num=+b[1]}}
+  }
+  if(!d.fecha){const m=txt.match(/fecha(?:\s+de\s+emisi[oó]n)?\s*:?\s*(\d{1,2})\/(\d{1,2})\/(\d{4})/i)||txt.match(/(?<!\d)(\d{1,2})\/(\d{1,2})\/(20\d{2})(?!\d)/);if(m)d.fecha=`${m[3]}-${String(m[2]).padStart(2,'0')}-${String(m[1]).padStart(2,'0')}`}
+  /* importes */
+  const N=cmpImportes(txt),tasas=[...txt.matchAll(/(\d{1,2}(?:[.,]\d{1,2})?)\s*%/g)].map(m=>cmpNum(m[1])).filter(x=>x!==null);
+  let T=d.total;
+  let usd=null;
+  if(!qr&&/U\$S|USD|d[oó]lar/i.test(txt)){
+    const cz=txt.match(/(?:tipo\s+de\s+cambio|cotizaci[oó]n)[^\d]{0,80}?(\d[\d.,]*)\s*pesos/i)||txt.match(/Consignado\s+en\s*\$\s*(\d[\d.,]*)/i),k=cz?cmpNum(cz[1]):null;
+    const us=[...txt.matchAll(/U\$S\s*(\d[\d.,]*)/gi)].map(m=>cmpNum(m[1])).filter(x=>x>0);
+    if(k>1&&us.length){d.moneda='DOL';d.ctz=k;usd=[...new Set(us)].sort((a,b)=>b-a)}
+  }
+  const extranjera=d.moneda!=='PES'&&d.ctz>1;
+  if(T===null){
+    const cand=usd?[...usd]:[];if(!usd)for(const m of txt.matchAll(/(?:importe\s+total|total\s+a\s+pagar|total\s+factura|total)\s*:?\s*\$?\s*((?:\d[\d.,\s]*\d|\d))/gi)){const v=cmpNum(m[1]);if(v&&v>0)cand.push(v)}
+    if(!usd)cand.push(...N.slice(0,3));
+    for(const c of [...new Set(cand)]){const s=cmpResolver(c,N,tasas);if(s){T=c;break}}
+    if(T===null&&cand.length){T=cand[0];av.push('El importe total salió del texto y no pudo verificarse: revisalo.')}
+    d.total=T;
+  }
+  if(T!==null){
+    const tipo=d.tipo,sinIva=[11,12,13,15,6,7,8,82,83,81].includes(tipo)&&![81].includes(tipo);
+    const s=sinIva?null:cmpResolver(T,N,tasas);
+    if(s){d.neto=s.neto;d.iva=s.iva;d.otros=s.otros||0;d.tasas=s.tasas}
+    else if(tipo===11||tipo===12||tipo===13||tipo===15){d.neto=T;d.iva=0}
+    else av.push('No se pudo repartir el neto, el IVA y los otros tributos con seguridad: completalos a mano (el total sí está verificado por el QR).');
+  }
+  if(extranjera&&d.total!==null){
+    d.orig={moneda:d.moneda,tipo_cambio:d.ctz,importe_total:d.total,neto_gravado:d.neto,iva:d.iva,otros_tributos:d.otros};
+    for(const k of ['total','neto','iva','otros'])if(d[k]!==null&&d[k]!==undefined)d[k]=cmpR2(d[k]*d.ctz);
+    av.push(`Moneda extranjera (${d.moneda}, cambio ${d.ctz}): los importes se guardaron en pesos.`);
+  }
+  return {d,av,cuitCli,cuits:hall};
+}
+const CMP={items:null,fase:null,prog:'',busy:false};
+const cmpNombreTipo=c=>`${c} - ${tipoNombre(c)}`;
+/** Texto del PDF (hasta 3 páginas) y, aparte, los QR de ARCA que tenga. */
+async function cmpLeerPdf(f){
+  await suePdfjs();const pdf=await pdfjsLib.getDocument({data:new Uint8Array(await f.arrayBuffer())}).promise;let texto='',qr=null;
+  const np=Math.min(pdf.numPages,3);
+  for(let i=1;i<=np;i++){
+    const pg=await pdf.getPage(i);
+    try{const ls=await ptLineas(pg);if(i===1||ls.length)texto+=ls.map(l=>l.texto).join('\n')+'\n'}catch(e){}
+    if(!qr){
+      try{const vp=pg.getViewport({scale:1}),sc=Math.min(7,Math.max(3,3000/vp.width)),c=await ptPaginaCanvas(pg,sc),bmp=await createImageBitmap(c);
+        const t=await Promise.race([qrDeImagen(bmp,()=>{}),new Promise(r=>setTimeout(()=>r(null),12000))]);c.width=c.height=0;
+        if(t){const r=parseAfipQr(t);if(r.ok)qr=r.data}}catch(e){}
+    }
+    if(qr&&texto.length>200)break;
+  }
+  return {texto,qr};
+}
+/** Foto de una factura: QR + texto por OCR. */
+async function cmpLeerFoto(f){
+  let qr=null,texto='',blob=null;
+  const im=await tkImagenes(f);blob=im.blob;
+  if(im.bmp)qr=await tk2Qr(im.bmp);
+  try{const w=await tkMotor(),r=await w.recognize(im.ocr,{},{blocks:true});texto=tk2Filas(r.data)||r.data.text||''}catch(e){}
+  return {texto,qr,blob};
+}
+function cmpCliPorCuit(c){c=String(c||'').replace(/\D/g,'');return ui.clients.find(x=>String(x.cuit||'').replace(/\D/g,'')===c)||null}
+async function cmpLeer(files){
+  files=[...files].filter(f=>f&&f.name);if(!files.length||CMP.busy)return;
+  CMP.busy=true;CMP.fase='leyendo';CMP.items=[];draw();
+  let n=0;
+  for(const f of files){
+    n++;CMP.prog=`Leyendo ${n} de ${files.length}: ${f.name}`;const el=document.getElementById('cmpprog');if(el)el.textContent=CMP.prog;
+    const it={id:'c'+Date.now()+'_'+n,nombre:f.name,file:f,estado:'err',avisos:[],d:null,cid:null,existe:null,sel:false};
+    try{
+      if(f.size>15*1048576)throw new Error('El archivo supera los 15 MB.');
+      const esImg=/^image\//.test(f.type)||/\.(jpe?g|png|webp|heic|heif)$/i.test(f.name),esP=/\.pdf$/i.test(f.name)||f.type==='application/pdf';
+      if(!esImg&&!esP)throw new Error('Solo se leen PDF y fotos (JPG, PNG).');
+      let L;if(esP)L=await cmpLeerPdf(f);else{L=await cmpLeerFoto(f);it.blob=L.blob}
+      it.texto=L.texto;it.qr=!!L.qr;
+      const X=cmpExtraer(L.texto,L.qr,ui.clients);it.d=X.d;it.avisos=X.av;
+      if(!L.texto.trim()&&!L.qr)throw new Error(esP?'El PDF no tiene texto ni se encontró el QR de ARCA (¿es un escaneo?). Probá con una foto o cargalo a mano.':'No se pudo leer la foto ni se encontró el QR de ARCA. Sacala de nuevo más cerca y con buena luz.');
+      const d=it.d,falta=[!d.fecha&&'la fecha',!d.cuit&&'el CUIT del proveedor',(d.tipo===null)&&'el tipo',(d.pv===null||d.num===null)&&'el número',(d.total===null)&&'el importe'].filter(Boolean);
+      if(falta.length)throw new Error('No se pudo leer '+falta.join(', ')+(L.qr?'':' y no se encontró el QR de ARCA')+'. Cargalo a mano en Comprobantes o con "Ticket sin QR".');
+      const cli=cmpCliPorCuit(X.cuitCli);if(cli){it.cid=cli.id;it.auto=true}
+      else if(ui.cid&&ui.clients.some(c=>c.id===ui.cid)&&false)it.cid=ui.cid;
+      if(!cli)it.avisos.push(X.cuitCli?`El CUIT del comprador (${cuitF(X.cuitCli)}) no es de ningún cliente: elegí el cliente.`:'No se pudo saber a qué cliente pertenece: elegilo.');
+      it.fuente=L.qr?(L.texto.trim()?'QR + texto':'QR'):'texto';
+      if(!d.nombre){const nm=await cmpNombreProv(d.cuit);d.nombre=nm||cmpNombreTexto(L.texto)||''}
+      await cmpClasificar(it);
+    }catch(e){it.estado='err';it.error=e.message||String(e)}
+    CMP.items.push(it);
+    await new Promise(r=>setTimeout(r,0));
+  }
+  CMP.busy=false;CMP.fase='previa';draw();
+}
+async function cmpNombreProv(cuit){
+  try{const q=await sb.from('vouchers').select('emisor_nombre').eq('emisor_cuit',cuit).not('emisor_nombre','is',null).limit(5);return ((q.data||[]).map(x=>x.emisor_nombre).find(Boolean))||null}catch(e){return null}
+}
+function cmpNombreTexto(t){
+  const nc=x=>String(x||'').toLowerCase().replace(/[^a-z0-9]/g,''),cl=ui.clients.map(c=>nc(c.razon_social)).filter(x=>x.length>=8);
+  const limpia=x=>x.replace(/\s+(?:[ABCM]\s+)?(?:factura|comprobante|original|nota\b.*)$/i,'').replace(/^(?:[ABCM]\s+)?(?:factura|comprobante)\s+/i,'').trim();
+  const ls=String(t).split('\n').map(x=>x.trim()).filter(x=>x.length>=4);
+  const ok=x=>/[A-Za-zÁÉÍÓÚáéíóú]{4}/.test(x)&&!/^(original|duplicado|triplicado|factura|comprobante|nota|cod|c[oó]digo|fecha|punto|raz[oó]n|domicilio|tel|cuit|iva|ing|[ABCM]$)/i.test(x)&&!/\d{5,}/.test(x);
+  const suf=/\b(S\.?A\.?|S\.?R\.?L\.?|LTDA|COOPERATIVA|HERMANOS|S\.?H\.?|S\.?A\.?S\.?|CIA|SOCIEDAD)\b/i;
+  const C=ls.map((x,i)=>({x:limpia(x),i})).filter(o=>o.x&&ok(o.x)&&!cl.some(k=>nc(o.x).startsWith(k.slice(0,12))));
+  const m=C.find(o=>suf.test(o.x))||C.find(o=>o.i<=1);if(!m)return '';
+  let n=m.x;const sig=ls[m.i+1];if(sig&&/^(de|del|y)\s/i.test(sig)){const c=limpia(sig);if(c&&c.length<60)n+=' '+c}
+  return n.replace(/\s+/g,' ').slice(0,80);
+}
+/** Estado de un comprobante: ¿se carga?, ¿ya está?, ¿hay diferencias? */
+async function cmpClasificar(it){
+  const d=it.d;it.existe=null;it.dif=[];it.sel=false;
+  if(CMP_B.has(d.tipo)){it.estado='noB';it.motivo='Es un comprobante tipo B: no se carga.';return}
+  if(!it.cid){it.estado='sinCliente';return}
+  const ex=exentoMsg(it.cid);if(ex){it.estado='exento';it.motivo=ex;return}
+  const {data,error}=await sb.from('vouchers').select('id,doc_status,fecha,importe_total,raw,emisor_nombre,client_periods(periodo)').eq('client_id',it.cid).eq('emisor_cuit',d.cuit).eq('tipo_cmp',d.tipo).eq('punto_venta',d.pv).eq('numero',d.num).limit(2);
+  if(error){it.estado='err';it.error=errTxt(error);return}
+  if(data&&data.length){
+    const v=data[0];it.existe=v;
+    if(v.fecha!==d.fecha)it.dif.push(`fecha: archivo ${fAR(d.fecha)} y ARCA ${fAR(v.fecha)}`);
+    if(d.total!==null&&Math.abs(Number(v.importe_total)-d.total)>0.02)it.dif.push(`importe: archivo ${money(d.total)} y ARCA ${money(Number(v.importe_total))}`);
+    if(v.doc_status==='no_recibida'||v.doc_status==='pendiente_revision'){it.estado='marcar';it.sel=!it.dif.length}
+    else{it.estado=(v.raw&&v.raw.archivo_path)?'yaTenia':'adjuntar';it.sel=it.estado==='adjuntar'&&!it.dif.length}
+  }else{
+    it.estado='nuevo';
+    it.sel=cmpCompleto(it).length===0;
+  }
+}
+/** Qué falta o no cierra en un comprobante nuevo. */
+function cmpCompleto(it){
+  const d=it.d,f=[];if(!String(d.nombre||'').trim())f.push('el nombre del proveedor');
+  if(d.total===null||!(d.total>0))f.push('el importe total');
+  if(d.iva===null||d.neto===null)f.push('el neto y el IVA');
+  else{const s=cmpR2(d.neto+d.iva+(d.otros||0)+(d.nog||0)+(d.exe||0));if(Math.abs(s-d.total)>0.06)f.push(`que cierren los importes (suman ${money(s)}, el total es ${money(d.total)})`)}
+  return f;
+}
+const CMP_EST={nuevo:['Nuevo: se carga','grn'],marcar:['Ya cargado: se marca recibido (digital)','blu'],adjuntar:['Ya estaba recibido: se guarda el archivo','blu'],yaTenia:['Ya estaba recibido y con archivo','gry'],noB:['Tipo B: no se carga','amb'],exento:['Cliente exento','amb'],sinCliente:['Falta elegir el cliente','amb'],err:['No se pudo leer','red']};
+function cmpDrop(e){e.preventDefault();const z=e.currentTarget;z.style.background='';z.style.borderColor='';cmpLeer(e.dataTransfer?e.dataTransfer.files:[])}
+function cmpZona(){
+  return `<div ondragover="event.preventDefault();this.style.background='rgba(120,160,255,.14)';this.style.borderColor='var(--blut,#3b6fd4)'" ondragleave="this.style.background='';this.style.borderColor=''" ondrop="cmpDrop(event)" style="border:2px dashed var(--bd,#cbd5e1);border-radius:12px;padding:18px;text-align:center"><div><b>Arrastrá acá facturas en PDF o fotos</b> (todas juntas, de distintos clientes si hace falta)</div><div class="s" style="margin:4px 0 10px">Cada una se lee por su QR de ARCA y por su texto. Si ya está cargada se marca como recibida (digital); si no, se carga con todos sus datos. Los comprobantes tipo B no se cargan.</div>
+  <label class="b" style="cursor:pointer;display:inline-block">Elegir archivos<input type="file" accept=".pdf,application/pdf,image/*" multiple hidden onchange="cmpLeer([...this.files]);this.value=''"></label>
+  <label class="g" style="cursor:pointer;display:inline-block;margin-left:6px">Sacar foto<input type="file" accept="image/*" capture="environment" hidden onchange="cmpLeer([...this.files]);this.value=''"></label></div>`;
+}
+function cmpCard(){
+  let c;
+  if(CMP.fase==='leyendo')c=`<p><b id="cmpprog">${esc(CMP.prog||'Leyendo…')}</b></p><div class="s">El primero tarda un poco más porque se prepara el lector.</div>`;
+  else if(CMP.fase==='previa'||CMP.fase==='listo')c=cmpZona()+cmpHtml();
+  else c=cmpZona();
+  return `<div class="card" style="margin-top:16px"><b>Facturas sueltas (PDF o foto)</b><p class="s" style="margin:4px 0 10px">No usa el cliente ni el período de arriba: los toma de cada comprobante. Cada uno queda en el mes de su fecha.</p>${c}</div>`;
+}
+function cmpHtml(){
+  const L=CMP.items||[],cnt=k=>L.filter(x=>x.estado===k).length,sel=L.filter(x=>x.sel).length;
+  const res=CMP.res?`<div class="msg ${CMP.res.k}" style="margin:10px 0">${CMP.res.t.map(esc).join('<br>')}</div>`:'';
+  const cab=`<div class="grid" style="margin:12px 0">${[['Para cargar',cnt('nuevo')],['Ya cargadas',cnt('marcar')+cnt('adjuntar')+cnt('yaTenia')],['A revisar',cnt('sinCliente')+L.filter(x=>x.estado==='nuevo'&&cmpCompleto(x).length).length],['No se cargan',cnt('noB')+cnt('exento')+cnt('err')]].map(([t,n])=>`<div class="card kpi"><b>${n}</b><span>${t}</span></div>`).join('')}</div>`;
+  if(!L.length)return res;
+  return res+cab+`<div class="tw"><table><thead><tr><th></th><th>Archivo</th><th>Cliente</th><th>Comprobante</th><th>Proveedor</th><th>Neto</th><th>IVA</th><th>Otros</th><th>Total</th><th>Estado</th></tr></thead><tbody>`+L.map(cmpFila).join('')+`</tbody></table></div>
+  <div class="row" style="margin-top:10px"><button class="b" id="cmpbtn" ${sel&&!ui.busy?'':'disabled'} onclick="cmpConfirmar()">Confirmar ${sel} comprobante${sel===1?'':'s'}</button><button class="g" onclick="cmpCancelar()">Limpiar</button></div>`;
+}
+function cmpFila(it){
+  const e=CMP_EST[it.estado]||['',''],d=it.d;
+  const base=`<td><input type="checkbox" ${it.sel?'checked':''} ${['nuevo','marcar','adjuntar'].includes(it.estado)?'':'disabled'} onchange="cmpSel('${it.id}',this.checked)"></td><td style="max-width:170px;overflow-wrap:anywhere">${esc(it.nombre)}${it.fuente?`<div class="s">${esc(it.fuente)}</div>`:''}</td>`;
+  if(it.estado==='err')return `<tr>${base}<td colspan="8"><div class="msg err" style="margin:0">${esc(it.error||'No se pudo leer.')}</div></td><td><span class="tag">${e[0]}</span></td></tr>`;
+  const cli=`<select onchange="cmpCliente('${it.id}',this.value)" style="max-width:170px"><option value="">Elegir cliente…</option>${ui.clients.filter(c=>c.active!==false).map(c=>`<option value="${c.id}" ${c.id===it.cid?'selected':''}>${esc(c.razon_social)}</option>`).join('')}</select>`;
+  const ed=it.estado==='nuevo'||it.estado==='sinCliente';
+  const inp=(k,ph)=>ed?`<input value="${d[k]===null||d[k]===undefined?'':String(d[k]).replace('.',',')}" placeholder="${ph}" inputmode="decimal" style="width:92px;text-align:right${d[k]===null?';border-color:#d9a400':''}" onchange="cmpCampo('${it.id}','${k}',this.value)">`:(d[k]===null||d[k]===undefined?'-':money(d[k]));
+  const nombre=ed?`<input value="${esc(d.nombre||'')}" placeholder="Proveedor" style="width:160px${d.nombre?'':';border-color:#d9a400'}" onchange="cmpCampo('${it.id}','nombre',this.value)">`:esc((it.existe&&it.existe.emisor_nombre)||d.nombre||'');
+  const notas=[...(it.dif.length?['Diferencias con lo cargado: '+it.dif.join('; ')+'. No se marcó solo: tildalo si es el mismo.']:[]),...(it.estado==='nuevo'?cmpCompleto(it).map(x=>'Falta revisar '+x+'.'):[]),...(it.motivo?[it.motivo]:[]),...it.avisos.filter(a=>!/cliente/i.test(a)||!it.cid)].filter(Boolean);
+  return `<tr>${base}<td>${cli}</td><td style="min-width:120px">${esc(tipoNombre(d.tipo))}<div class="s" style="white-space:nowrap">${nroF(d.pv,d.num)} · ${fAR(d.fecha)}</div></td><td style="min-width:170px">${nombre}<div class="s" style="white-space:nowrap">${cuitF(d.cuit)}</div></td><td>${inp('neto','Neto')}</td><td>${inp('iva','IVA')}</td><td>${inp('otros','0,00')}</td><td>${inp('total','Total')}</td><td><span class="tag" style="background:var(--${e[1]==='grn'?'grn':e[1]==='red'?'redb':'blu'},#eee)">${e[0]}</span>${notas.length?`<div class="s" style="margin-top:4px;max-width:260px">${notas.map(esc).join('<br>')}</div>`:''}</td></tr>`;
+}
+function cmpSel(id,v){const it=CMP.items.find(x=>x.id===id);if(it){it.sel=!!v;draw()}}
+function cmpCampo(id,k,v){
+  const it=CMP.items.find(x=>x.id===id);if(!it)return;const d=it.d;
+  if(k==='nombre'){d.nombre=String(v).trim()}
+  else{const s=String(v).trim();d[k]=s===''?(k==='otros'?0:null):cmpNum(s)}
+  if(it.estado==='nuevo')it.sel=cmpCompleto(it).length===0;
+  draw();
+}
+async function cmpCliente(id,cid){
+  const it=CMP.items.find(x=>x.id===id);if(!it)return;it.cid=cid||null;it.auto=false;
+  it.avisos=it.avisos.filter(a=>!/cliente/i.test(a));
+  await cmpClasificar(it);draw();
+}
+function cmpCancelar(){CMP.items=null;CMP.fase=null;CMP.res=null;draw()}
+/** Sube el archivo del comprobante al almacenamiento del cliente. */
+async function cmpSubir(it){
+  const f=it.file,ext=(f.name.match(/\.(\w{2,5})$/)||[0,'bin'])[1].toLowerCase(),path=`${it.cid}/compras/${crypto.randomUUID()}.${ext}`;
+  const blob=it.blob||f,tipo=it.blob?'image/jpeg':(f.type||(ext==='pdf'?'application/pdf':'application/octet-stream'));
+  const up=await sb.storage.from('clientes').upload(path,blob,{contentType:tipo,upsert:false});if(up.error)throw up.error;return path;
+}
+async function cmpHash(it){try{return [...new Uint8Array(await crypto.subtle.digest('SHA-256',await (it.blob||it.file).arrayBuffer()))].map(x=>x.toString(16).padStart(2,'0')).join('')}catch(e){return null}}
+async function cmpConfirmar(){
+  if(ui.busy)return;const L=CMP.items.filter(x=>x.sel&&['nuevo','marcar','adjuntar'].includes(x.estado));if(!L.length)return;
+  ui.busy=true;draw();const ok=[],mal=[];
+  for(const it of L){
+    const d=it.d,cli=ui.clients.find(c=>c.id===it.cid),rotulo=`${d.nombre||d.cuit} ${nroF(d.pv,d.num)}`;let path=null,batchId=null,vid=null;
+    try{
+      const ex=exentoMsg(it.cid);if(ex)throw new Error(ex);
+      if(it.estado==='nuevo'){
+        const f=cmpCompleto(it);if(f.length)throw new Error('falta revisar '+f.join(', '));
+        const {data:ya}=await sb.from('vouchers').select('id').eq('client_id',it.cid).eq('emisor_cuit',d.cuit).eq('tipo_cmp',d.tipo).eq('punto_venta',d.pv).eq('numero',d.num).limit(1);
+        if(ya&&ya.length)throw new Error('ya estaba cargado');
+        const {data:per,error:e1}=await sb.from('client_periods').upsert({client_id:it.cid,periodo:d.fecha.slice(0,7)+'-01'},{onConflict:'client_id,periodo'}).select('id').single();if(e1)throw e1;
+        path=await cmpSubir(it);const hash=await cmpHash(it);
+        const {data:b,error:e2}=await sb.from('import_batches').insert({client_id:it.cid,period_id:per.id,file_name:'Comprobante suelto: '+it.nombre,file_sha256:hash,imported_by:me.id,kind:'libro_iva',rows_read:1,rows_new:1,rows_duplicate:0,rows_rejected:0,errors:[]}).select('id').single();if(e2)throw e2;batchId=b.id;
+        const ahora=new Date().toISOString(),raw={Tipo:cmpNombreTipo(d.tipo),fuente:'comprobante_suelto',lectura:it.fuente,archivo_path:path,archivo_nombre:it.nombre,qr_arca:!!it.qr};
+        if(d.orig)raw._moneda_original={...d.orig,convertido_a_pesos:true};
+        const {data:v,error:e3}=await sb.from('vouchers').insert({client_id:it.cid,period_id:per.id,batch_id:batchId,fecha:d.fecha,tipo_cmp:d.tipo,punto_venta:d.pv,numero:d.num,emisor_cuit:d.cuit,emisor_nombre:d.nombre.trim(),moneda:d.moneda||'PES',tipo_cambio:d.ctz||1,importe_total:d.total,neto_gravado:d.neto,no_gravado:d.nog||0,exento:d.exe||0,otros_tributos:d.otros||0,iva:d.iva,raw,origen:'libro_iva',doc_status:'recibida_digital',proc_status:'pendiente',received_at:ahora,updated_by:me.id}).select('id').single();if(e3)throw e3;vid=v.id;
+        const {error:e4}=await sb.from('document_receipts').insert({voucher_id:vid,method:'archivo',received_by:me.id,match_result:'comprobante_suelto_nuevo'});if(e4)throw e4;
+        ok.push(`${cli?cli.razon_social+': ':''}${rotulo}, cargado (${money(d.total)})`);
+      }else{
+        const v=it.existe;let cambios={},hizo=[];
+        if(!(v.raw&&v.raw.archivo_path)){path=await cmpSubir(it);cambios.raw={...(v.raw||{}),archivo_path:path,archivo_nombre:it.nombre,fuente_archivo:'comprobante_suelto'};hizo.push('archivo guardado')}
+        if(it.estado==='marcar'){cambios.doc_status='recibida_digital';cambios.received_at=new Date().toISOString();cambios.updated_by=me.id;hizo.push('marcado como recibido (digital)')}
+        if(!Object.keys(cambios).length)throw new Error('no había nada para cambiar');
+        let q=sb.from('vouchers').update(cambios).eq('id',v.id);if(it.estado==='marcar')q=q.in('doc_status',['no_recibida','pendiente_revision']);
+        const {data,error}=await q.select('id');if(error)throw error;
+        if(!data.length)throw new Error('otra persona ya lo cambió');
+        if(it.estado==='marcar'){const {error:e2}=await sb.from('document_receipts').insert({voucher_id:v.id,method:'archivo',received_by:me.id,match_result:'comprobante_suelto'});if(e2)throw e2}
+        ok.push(`${cli?cli.razon_social+': ':''}${rotulo}, ${hizo.join(' y ')}`);
+      }
+      QRS.list.unshift(`${new Date().toLocaleTimeString('es-AR')}, ${cli?cli.razon_social+', ':''}${d.nombre||''}, ${nroF(d.pv,d.num)} (archivo)`);
+      it.hecho=true;
+    }catch(e){
+      if(vid)await sb.from('vouchers').delete().eq('id',vid);if(batchId)await sb.from('import_batches').delete().eq('id',batchId);if(path)try{await sb.storage.from('clientes').remove([path])}catch(x){}
+      mal.push(`${rotulo}: ${/duplicate/i.test(e.message||'')?'ya estaba cargado':errTxt(e)}`);
+    }
+  }
+  CMP.items=CMP.items.filter(x=>!x.hecho);CMP.res={k:mal.length?(ok.length?'warn':'err'):'ok',t:[...(ok.length?['Listo: '+ok.length+' comprobante'+(ok.length===1?'':'s')+'.',...ok]:[]),...(mal.length?['No se pudieron cargar:',...mal]:[])]};
+  ui.busy=false;draw();
 }
 /* ===== Carga de sueldos: perfil "liquidador" (recibos, VEP y boletas de sindicatos) ===== */
 const isLiq=()=>prof&&prof.role==='liquidador';
