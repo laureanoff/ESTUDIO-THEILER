@@ -327,7 +327,7 @@ async function previsualizar(){
   let buf,rows;try{buf=await f.arrayBuffer();const wb=XLSX.read(buf,{type:'array'});rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,raw:true,defval:null})}catch(e){return bad('No se pudo abrir el archivo: ¿está dañado?')}
   const r=parseArca(rows);if(!r.ok)return bad(r.error);
   if(r.meta.kind==='emitidos')return bad('Este Excel es de comprobantes EMITIDOS (ventas). Subilo en la sección Ventas.');
-  {const fb=r.vs.filter(v=>CMP_B.has(Number(v.tipo_cmp)));r.omitB=fb.length;if(fb.length)r.vs=r.vs.filter(v=>!CMP_B.has(Number(v.tipo_cmp)))}
+  {const fb=r.vs.filter(cmpEsClaseB);r.omitB=fb.length;r.noB=fb;if(fb.length)r.vs=r.vs.filter(v=>!cmpEsClaseB(v))}
   const D=impDetectar({cuit:r.meta.cuit,nombre:f.name,fechas:r.vs.map(v=>v.fecha)});if(D.err)return bad(D.err);
   if(D.cid)cid=D.cid;if(D.periodo)periodo=D.periodo;ui.cid=cid;ui.periodo=periodo;
   {const ex=exentoMsg(cid);if(ex)return bad(ex)}
@@ -349,6 +349,8 @@ function vPreview(){
   ${r.errors.length?`<div class="msg warn">Filas rechazadas: ${r.errors.map(e=>`fila ${e.row}: ${esc(e.message)}`).join(' · ')}</div>`:''}
   ${p.difs.length?`<div class="msg warn">Existen con datos distintos (no se modifican, revisalos): ${p.difs.map(d=>`N° ${d.v.numero} (${esc(d.motivo)})`).join(' · ')}</div>`:''}
   ${p.fuera.length?`<div class="msg warn">${p.fuera.length} comprobante(s) con fecha de otro mes no se importan.</div>`:''}
+  ${impListas(p,r.noB)}
+  <h3 style="margin:14px 0 6px">Se van a cargar (${p.nuevos.length})</h3>
   <div class="tw" style="margin-bottom:12px"><table><thead><tr><th>Fecha</th><th>Tipo</th><th>Pto. vta.</th><th>Número</th><th>CUIT emisor</th><th>Emisor</th><th>IVA</th><th>Total</th></tr></thead><tbody>
   ${p.nuevos.map(v=>`<tr><td>${fAR(v.fecha)}</td><td>${esc(v.tipo_txt)}</td><td>${v.punto_venta}</td><td>${v.numero}</td><td>${cuitF(v.emisor_cuit)}</td><td>${esc(v.emisor_nombre)}</td><td>${v.iva===null?'-':money(v.iva)}</td><td>${money(v.importe_total)}</td></tr>`).join('')||'<tr><td colspan="8" style="color:var(--mut)">No hay comprobantes nuevos.</td></tr>'}</tbody></table></div>
   <div class="row"><button class="b" id="bconf" ${p.bloqueos.length||!p.nuevos.length?'disabled':''} onclick="confirmar()">Confirmar importación de ${p.nuevos.length}</button><button class="g" onclick="ui.pend=null;draw()">Cancelar</button></div>`;
@@ -366,7 +368,7 @@ async function confirmar(){
       if(error)throw error;inserted+=data.length;
     }
     if(inserted!==plan.nuevos.length)await sb.from('import_batches').update({rows_new:inserted,rows_duplicate:plan.repetidos.length+r.dupFile+(plan.nuevos.length-inserted)}).eq('id',batchId);
-    ui.pend=null;ui.busy=false;ui.periodo=periodo;ui.cid=cid;flash(`Se importaron ${inserted} comprobantes.`);await show('comprobantes');
+    ui.pend=null;ui.busy=false;ui.periodo=periodo;ui.cid=cid;flash(`Se importaron ${inserted} comprobantes.${plan.repetidos.length?` Ya estaban cargados: ${plan.repetidos.length}.`:''}${(r.noB||[]).length?` Tipo B no cargados: ${r.noB.length}.`:''}`);await show('comprobantes');
   }catch(e){
     if(batchId)await sb.from('import_batches').update({rows_new:inserted,errors:[...r.errors,{row:0,message:'Importación interrumpida: '+errTxt(e)}]}).eq('id',batchId);
     ui.busy=false;flash(`La importación falló${inserted?` después de guardar ${inserted} comprobantes`:''}: ${errTxt(e)}. Podés volver a importar el mismo archivo: no se duplica nada.`,'err');draw();
@@ -5133,6 +5135,24 @@ async function liqDupCheck(){
     if(error)return;
     if(data&&data.length){const x=data[0];L.dup={fecha:x.fecha,total:Number(x.importe_total),nombre:x.archivo_nombre}}
   }catch(e){}
+}
+
+/* ===== Importar compras (Excel de ARCA): no se cargan los comprobantes tipo B y se pueden ver todas las listas ===== */
+/** ¿El comprobante es de clase B? (Factura B, Nota de Débito/Crédito B, Liquidación de servicios públicos B, Tique B, etc.) */
+function cmpEsClaseB(v){
+  const t=String(v.tipo_txt||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().replace(/^\s*\d+\s*-\s*/,'');
+  return CMP_B.has(Number(v.tipo_cmp))||/(^|[^a-z0-9])b($|[^a-z0-9])/.test(t);
+}
+function impTabla(arr,conMotivo){
+  const f=x=>conMotivo?x.v:x;
+  return `<div class="tw" style="margin:8px 0 4px;max-height:420px;overflow:auto"><table><thead><tr><th>Fecha</th><th>Tipo</th><th>Pto. vta.</th><th>Número</th><th>CUIT emisor</th><th>Emisor</th><th>Total</th>${conMotivo?'<th>Diferencia</th>':''}</tr></thead><tbody>${arr.map(x=>{const v=f(x);return `<tr><td>${fAR(v.fecha)}</td><td>${esc(v.tipo_txt)}</td><td>${v.punto_venta}</td><td>${v.numero}</td><td>${cuitF(v.emisor_cuit)}</td><td>${esc(v.emisor_nombre||'')}</td><td>${money(v.importe_total)}</td>${conMotivo?`<td>${esc(x.motivo)}</td>`:''}</tr>`}).join('')}</tbody></table></div>`;
+}
+function impListas(p,noB){
+  const bloque=(tit,nota,arr,mot)=>arr&&arr.length?`<details style="margin-bottom:10px" ${arr.length<=15?'open':''}><summary style="cursor:pointer"><b>${esc(tit)}: ${arr.length}</b> <span class="s">${esc(nota)}</span></summary>${impTabla(arr,mot)}</details>`:'';
+  return bloque('Ya estaban cargados (no se vuelven a cargar)','Verificá que sean correctos',p.repetidos)
+    +bloque('Ya estaban, con otra fecha o importe (no se modifican)','Revisalos',p.difs,true)
+    +bloque('Comprobantes tipo B (no se cargan)','Facturas, notas y liquidaciones clase B',noB)
+    +bloque('Fuera del período elegido (no se cargan)','Tienen fecha de otro mes',p.fuera);
 }
 /* ===== Carga de sueldos: perfil "liquidador" (recibos, VEP y boletas de sindicatos) ===== */
 const isLiq=()=>prof&&prof.role==='liquidador';
