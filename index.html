@@ -3616,7 +3616,7 @@ async function liqPdf(inp){const f=inp.files[0];inp.value='';if(f)await liqLeerA
 async function liqLeerArchivo(f){
   const L=LQ(),v=ui.vta,s=x=>x===null||x===undefined?'':String(x);
   const e=await esPdf(f);if(e){flash(e,'err');return draw()}
-  L.abierta=true;L.file=f;L.erp=null;L.cod=null;L.leyendo=true;L.avisos=[];L.info=[];L.ret=[];L.cand=[];L.perfil=null;L.confianza=null;
+  L.abierta=true;L.file=f;L.erp=null;L.cod=null;L.leyendo=true;L.avisos=[];L.info=[];L.ret=[];L.cand=[];L.perfil=null;L.confianza=null;L.ajuste=false;L.desglose=null;L.coeOrig=null;
   L.datos={fecha:'',pv:'',num:'',neto:'',iva:'',alic:'10.5',total:'',cuit:'',nombre:''};draw();
   try{
     const lineas=await pdfTexto(f),cs=liqClientesEn(lineas);
@@ -3626,6 +3626,7 @@ async function liqLeerArchivo(f){
     L.datos={fecha:r.fecha||'',pv:s(r.pv),num:s(r.num),neto:s(r.neto),iva:s(r.iva),alic:String(r.alic||L.datos.alic),total:s(r.total),cuit:r.cuit||'',nombre:r.nombre||''};
     L.erp=r.erp||null;L.cod=r.cod||null;L.cand=r.candidatos||[];L.avisos=r.avisos;L.info=r.info||[];L.confianza=r.confianza;L.perfil=r.perfil;
     L.ret=(r.retenciones||[]).map(x=>({...x,sel:true}));if(r.perfil)L.tipo=r.perfil;
+    L.ajuste=!!r.ajuste;L.desglose=r.desglose||null;L.coeOrig=r.coeOrig||null;
     const per=r.fecha?String(r.fecha).slice(0,7):null,cam=(cl&&cl.id!==v.cid)||(per&&per!==v.periodo);
     if(cl){ui.cid=cl.id;v.cid=cl.id}if(per)v.periodo=per;
     if(cl&&exentoMsg(cl.id)){const m=exentoMsg(cl.id);L.datos=null;L.file=null;L.leyendo=false;flash(m,'err');return draw()}
@@ -4922,6 +4923,120 @@ async function lvConfirmar(){
     flash(`Se cargaron ${n} venta${n===1?'':'s'} de ${cli?cli.razon_social:'el cliente'}.`);await show('ventas');
   }catch(e){ui.busy=false;flash(`La importación falló${n?` después de guardar ${n} ventas`:''}: ${errTxt(e)}. Podés volver a cargar el mismo archivo: no se duplica nada.`,'err');draw()}
 }
+
+/* ===== Liquidación de granos: "Ajuste unificado" (débito + crédito + resumen) =====
+   Un mismo PDF trae uno o más ajustes de DÉBITO (suman a la venta) y de CRÉDITO (restan), cada uno con filas "Concepto / Importe / % Alícuota IVA / Importe IVA",
+   y una hoja final "AJUSTE UNIFICADO" con el resultado. El comprobante que se carga es el resultado neto: puede dar IVA y neto negativos. */
+const liqEsAjuste=L=>L.some(l=>/tipo de operacion:\s*ajuste/.test(liqNorm(l)))||L.some(l=>/^ajuste unificado$/.test(liqNorm(l).trim()))||L.some(l=>/condiciones de la operacion\s*-\s*ajuste/.test(liqNorm(l)));
+/** Importe de una línea tal como sale en estos PDF: "$44052.62", "-$ 4,625.53", "$ 434,257.12" (siempre con punto decimal). */
+function liqImpAj(s){
+  const t=String(s).replace(/\s+/g,'').replace(/\$/g,'');const neg=/^-/.test(t)||/^\(/.test(t);const k=t.replace(/[-()]/g,'');
+  if(/^\d{1,3}(,\d{3})*\.\d{1,2}$/.test(k)||/^\d+\.\d{1,2}$/.test(k))return (neg?-1:1)*Number(k.replace(/,/g,''));
+  if(/^\d{1,3}(\.\d{3})*,\d{1,2}$/.test(k))return (neg?-1:1)*Number(k.replace(/\./g,'').replace(',','.'));
+  return null;
+}
+function liqAjuste(L,cuitCli,razonCli){
+  const g=liqGranos(L,cuitCli,razonCli),d={...g.datos},info=[],avisos=[],ctl=[];
+  delete d.neto;delete d.iva;delete d.total;delete d.alic;
+  const ok=(a,b,t)=>a!==null&&b!==null&&Math.abs(a-b)<=(t||0.02);
+  // secciones de ajuste
+  const sec=[];
+  L.forEach((l,i)=>{const m=liqNorm(l).match(/condiciones de la operacion\s*-\s*ajuste\s+(debito|credito)/);if(m)sec.push({i,signo:m[1]==='debito'?1:-1,tipo:m[1]==='debito'?'débito':'crédito'})});
+  const filas=[];let totOpNeto=0,totOpN=0;
+  sec.forEach((s,k)=>{
+    const fin=k+1<sec.length?sec[k+1].i:L.length,fi=liqBuscar(L.slice(0,fin),/^concepto\s+importe/,s.i),op=liqBuscar(L.slice(0,fin),/^operacion$/,s.i);
+    if(fi>=0)for(let i=fi+1;i<(op>=0?op:fin);i++){
+      const m=L[i].match(/^(.*?)\s*(-?\s*\$\s*-?\s*[\d.,]+)\s+(-?\d{1,2}(?:[.,]\d{1,2})?)\s+(-?\s*\$\s*-?\s*[\d.,]+)\s*$/);
+      if(!m)continue;const imp=liqImpAj(m[2]),al=Number(m[3].replace(',','.')),iv=liqImpAj(m[4]);
+      if(imp===null||iv===null||!isFinite(al))continue;
+      filas.push({concepto:m[1].trim().replace(/\s+/g,' '),signo:s.signo,tipo:s.tipo,imp,alic:al,iva:iv,coherente:Math.abs(imp*al/100-iv)<=Math.max(0.05,Math.abs(imp)*0.0005)});
+    }
+    const t=liqBuscar(L.slice(0,fin),/total operacion\s*:/,s.i);
+    if(t>=0){const m=L[t].match(/total operacion:\s*(-?\s*\$\s*-?\s*[\d.,]+)/i);const v=m?liqImpAj(m[1]):null;if(v!==null){totOpNeto+=s.signo*v;totOpN++}}
+  });
+  if(!filas.length){avisos.push('Es una liquidación de ajuste, pero no se pudieron leer las filas de "Ajustes por importe": cargá los importes a mano.');return {datos:d,retenciones:[],info,avisos,conf:'baja',cruce:()=>false}}
+  // grupos por alícuota (débito suma, crédito resta)
+  const grp=new Map();for(const f of filas){const k=f.alic;const x=grp.get(k)||{alic:k,base:0,iva:0};x.base=liqPlata(x.base+f.signo*f.imp);x.iva=liqPlata(x.iva+f.signo*f.iva);grp.set(k,x)}
+  const desglose=[...grp.values()].sort((a,b)=>Math.abs(b.base)-Math.abs(a.base));
+  const neto=liqPlata(desglose.reduce((s,x)=>s+x.base,0)),iva=liqPlata(desglose.reduce((s,x)=>s+x.iva,0)),total=liqPlata(neto+iva);
+  // hoja resumen
+  const rs=liqBuscar(L,/^ajuste unificado$/),R={};
+  if(rs>=0){const val=re=>{const i=liqBuscar(L,re,rs);return i>=0?liqImpAj(L[i].replace(/^[^$-]*(?=-?\s*\$)/,'').trim()):null};
+    R.sub=val(/^subtotal general/);R.i105=val(/^iva 10[.,]5\s*%/);R.i21=val(/^iva 21\s*%/);R.i27=val(/^iva 27\s*%/);R.net=val(/^importe neto/);
+    R.pago=val(/^pago segun condiciones/);R.i2300=val(/^iva 2300/);R.rgan=val(/^ret\.?\s*ganancias/);R.riva=val(/^ret\.?\s*iva/);R.rotr=val(/^otras retenciones/);R.perc=val(/^percepciones/);R.ivaDed=val(/^iva de las deducciones/);R.ded=val(/^deducciones/)}
+  const ret=[];
+  if(R.rgan>0)ret.push({tipo:'retencion',impuesto:'GANANCIAS',importe:R.rgan,etq:'Retención de Ganancias'});
+  if(R.riva>0)ret.push({tipo:'retencion',impuesto:'IVA',importe:R.riva,etq:'Retención de IVA'});
+  if(R.rotr>0)ret.push({tipo:'retencion',impuesto:'OTRO',importe:R.rotr,etq:'Otras retenciones'});
+  if(R.perc>0)ret.push({tipo:'percepcion',impuesto:'IVA',importe:R.perc,etq:'Percepciones'});
+  const rt=ret.reduce((s,x)=>s+x.importe,0);
+  // controles cruzados
+  const fallas=[];
+  if(filas.some(f=>!f.coherente))fallas.push('en alguna fila el IVA no coincide con el importe por la alícuota');
+  if(R.sub!==null&&R.sub!==undefined){if(ok(R.sub,neto,0.05))ctl.push('subtotal general');else fallas.push(`el subtotal general del PDF (${money(R.sub)}) no coincide con la suma de las filas (${money(neto)})`)}
+  const ivaR=(R.i105||0)+(R.i21||0)+(R.i27||0);
+  if(rs>=0&&R.i105!==null&&R.i105!==undefined){if(ok(ivaR,iva,0.05))ctl.push('IVA por alícuota');else fallas.push(`el IVA del resumen (${money(ivaR)}) no coincide con la suma de las filas (${money(iva)})`)}
+  if(R.net!==null&&R.net!==undefined){if(ok(R.net,total-rt,1.5)||ok(R.net,total,1.5))ctl.push('importe neto');else fallas.push(`el importe neto del resumen (${money(R.net)}) no coincide con neto + IVA (${money(total)})`)}
+  if(totOpN===sec.length&&totOpN>0){if(ok(totOpNeto,total,0.05))ctl.push('total de cada operación');else fallas.push(`la suma de los "Total Operación" (${money(totOpNeto)}) no coincide con neto + IVA (${money(total)})`)}
+  // información para quien revisa
+  const f2=n=>(n<0?'-':'')+money(Math.abs(n));
+  ['débito','crédito'].forEach(t=>{const fs=filas.filter(f=>f.tipo===t);if(fs.length)info.push(`Ajuste de ${t}: `+fs.map(f=>`${f.concepto||'sin concepto'} ${money(f.imp)} (IVA ${String(f.alic).replace('.',',')}%: ${money(f.iva)})`).join('; ')+'.')});
+  info.push('Cómo se cargó: el débito suma y el crédito resta. '+desglose.map(x=>`Alícuota ${String(x.alic).replace('.',',')}%: neto ${f2(x.base)}, IVA ${f2(x.iva)}`).join(' · ')+`. Total del ajuste: ${f2(total)}.`);
+  if(total<0||neto<0)info.push('El resultado es negativo: baja la venta y el IVA débito del período, como una nota de crédito.');else if(iva<0)info.push('El IVA del ajuste es negativo: baja el IVA débito del período.');
+  const co=L.map(l=>l.match(/coe original:\s*(\d{12})/i)).find(Boolean);if(co)info.push('Ajusta la liquidación original con COE '+co[1]+'.');
+  if(rt>0)info.push('El PDF trae retenciones o percepciones: están tildadas abajo para cargarlas al IVA aproximado.');
+  if(rs>=0&&R.ivaDed>0)info.push(`El IVA de las deducciones (${money(R.ivaDed)}) es crédito fiscal: entra por el Libro IVA de compras.`);
+  let conf='alta';
+  if(fallas.length){conf='baja';fallas.forEach(x=>avisos.push('No cierra: '+x+'. Revisá el PDF.'))}
+  else if(!ctl.length){conf='media';avisos.push('No se encontró la hoja resumen ni los totales para confirmar los importes: revisá contra el PDF.')}
+  if(d.num===undefined)conf=conf==='alta'?'media':conf;
+  if(!d.fecha)conf=conf==='alta'?'media':conf;
+  const erp=liqErpAjuste(L,{filas,R,ret,d,deb:filas.filter(f=>f.signo>0),cre:filas.filter(f=>f.signo<0),coe:co?co[1]:''});
+  return {datos:{...d,neto,iva,total,alic:desglose[0].alic},retenciones:ret,info,avisos,conf,desglose,erp,coeOrig:co?co[1]:null,controles:ctl,cruce:()=>true};
+}
+
+/** Datos para el ERP de un ajuste: lo que es débito entra como "Otros ingresos" (y arma el cuadro Libro IVA Ventas: alícuota 0 = Neto No Gravado);
+    lo que es crédito entra como "Otros descuentos" con su IVA en "Descuentos gravadas". Importe neto = lo que dice el PDF. */
+function liqErpAjuste(L,x){
+  const e={},{deb,cre,R,ret,filas}=x,sm=(a,k)=>liqPlata(a.reduce((s,f)=>s+f[k],0)),unir=a=>[...new Set(a.map(f=>f.concepto).filter(Boolean))].join(' + ');
+  e.tipo_liq='LIQUIDACIÓN - AJUSTE';e.numero=x.d.num?String(x.d.num):'';e.comprador=x.d.nombre||'';
+  const co=liqM1(L,/(?:Actu[oó]|Emiti[oó])\s+Corredor:\s*(\w+)/i);if(co)e.corredor=/^s/i.test(co[1])?'Sí':'No';
+  const fo=liqM1(L,/CONDICIONES DE LA OPERACI[OÓ]N\s*-\s*AJUSTE\s+\S+\s+Fecha:\s*(\S+)/i);e.f_comp=liqDmy(fo?fo[1]:'')||liqDmy(L[0]);e.f_carga=e.f_comp;
+  const dv=L.join(' ').match(/Fecha\s*Vto\.?:?\s*(\d{1,2}\/\d{1,2}\/\d{4})/i);if(dv)e.f_venc=liqDmy(dv[1]);
+  const ad=liqM1(L,/Datos Adicionales:\s*(.+?)\s*(?:Fecha\s*Vto|$)/i);if(ad&&ad[1].trim())e.concepto=ad[1].trim();
+  e.coe_original=x.coe||'';e.tipo_ajuste=deb.length&&cre.length?'Ajuste unificado (débito y crédito)':deb.length?'Ajuste débito':'Ajuste crédito';
+  const iP=liqBuscar(L,/precio\/tn.*grado.*grano/);
+  if(iP>=0&&L[iP+1]){const m=L[iP+1].match(/\$\s*[\d.,]+\s+(\S+)\s+(\d+(?:[.,]\d+)?)\s+\d+\s*-\s*(.+?)\s+\$/);if(m){e.grado=m[1];e.factor=Number(m[2].replace(',','.'));e.cereal=m[3].trim()}}
+  const iK=liqBuscar(L,/^\d+\s*kg\b/);if(iK>=0)e.kg=Number(L[iK].match(/^(\d+)/)[1]);
+  // Libro IVA Ventas (solo lo que es débito)
+  const g=deb.filter(f=>f.alic>0),ng=deb.filter(f=>!(f.alic>0)),ivaD=sm(deb,'iva');
+  e.lib_neto_grav=sm(g,'imp');e.lib_neto_no_grav=sm(ng,'imp');e.lib_perc_ret=0;
+  const al=[...new Set(g.map(f=>f.alic))];e.lib_alicuota=al.length===1?al[0]:(al.length?al.join(' / '):0);e.lib_monto_iva=ivaD;e.lib_total=liqPlata(e.lib_neto_grav+e.lib_neto_no_grav+ivaD);
+  // Otros ingresos
+  if(deb.length){e.oi_concepto=unir(deb);e.oi_alicuota=deb[0].alic;e.oi_monto=sm(deb,'imp');e.oi_total=e.oi_monto}
+  e.subtotal=e.oi_monto||0;e.iva=ivaD;e.total=liqPlata((e.oi_monto||0)+ivaD);
+  // Otros descuentos (crédito)
+  if(cre.length){e.od_concepto=unir(cre);e.od_alicuota=cre[0].alic;e.od_monto=sm(cre,'imp');e.d_iva=sm(cre,'iva')}
+  for(const r of ret){if(r.impuesto==='GANANCIAS')e.ret_gcias=r.importe;if(r.impuesto==='IVA')e.ret_iva=r.importe;if(r.impuesto==='OTRO')e.ret_otras=r.importe}
+  const rt=ret.reduce((s,r)=>s+r.importe,0);
+  e.total_desc=liqPlata((e.od_monto||0)+(e.d_iva||0)+rt);
+  e.neto_pagar=R.net!==null&&R.net!==undefined?R.net:liqPlata(e.total-e.total_desc);
+  if(R.i2300!==null&&R.i2300!==undefined)e.iva_2003=R.i2300;
+  if(R.pago!==null&&R.pago!==undefined)e.pago=R.pago;
+  e.ajuste_filas=filas.map(f=>({tipo:f.tipo,concepto:f.concepto,importe:f.imp,alicuota:f.alic,iva:f.iva}));
+  return e;
+}
+const erpEsAjuste=x=>!!(x.datos_extraidos&&x.datos_extraidos.ajuste);
+const ERP_AJUSTE=[['Cabecera','tipo_liq','Tipo de Liquidación'],['Cabecera','comprador','Comprador'],['Cabecera','numero','Número de Liquidación'],['Cabecera','corredor','Actuó Corredor'],['Cabecera','f_comp','Fecha del Comprobante'],['Cabecera','f_carga','Fecha de Carga'],['Cabecera','f_venc','Fecha de Vencimiento'],['Cabecera','concepto','Concepto'],
+ ['COE original','coe_original','COE ORIGINAL'],['COE original','tipo_ajuste','Ajuste débito / Ajuste crédito'],
+ ['Detalle de la venta','cereal','Cereal'],['Detalle de la venta','kg','Peso en Kg'],['Detalle de la venta','grado','Grado'],['Detalle de la venta','factor','Factor %'],
+ ['Libro IVA Ventas','lib_neto_grav','Neto Gravado'],['Libro IVA Ventas','lib_neto_no_grav','Neto No Gravado'],['Libro IVA Ventas','lib_perc_ret','Perc/Ret'],['Libro IVA Ventas','lib_alicuota','% Alícuota'],['Libro IVA Ventas','lib_monto_iva','Monto Iva'],['Libro IVA Ventas','lib_total','Total'],
+ ['Otros ingresos','oi_concepto','Concepto'],['Otros ingresos','oi_alicuota','Alícuota'],['Otros ingresos','oi_monto','Importe'],['Otros ingresos','oi_total','TOTAL OTROS INGRESOS'],
+ ['Totales','subtotal','SUB TOTAL'],['Totales','iva','I.V.A.'],['Totales','total','TOTAL'],
+ ['Descuentos y deducciones gravadas','d_iva','IVA'],
+ ['Retenciones y deducciones no gravadas','ret_gcias','Ret. 2% Gcias.'],['Retenciones y deducciones no gravadas','ret_iva','Ret. IVA'],['Retenciones y deducciones no gravadas','ret_otras','Otras retenciones'],
+ ['Otros descuentos','od_concepto','Concepto'],['Otros descuentos','od_alicuota','Alícuota'],['Otros descuentos','od_monto','Monto'],
+ ['Cierre','total_desc','TOTAL DESCUENTOS'],['Cierre','neto_pagar','IMPORTE NETO'],['Cierre','iva_2003','IVA Res. Gral. AFIP Nº 2003/07'],['Cierre','pago','PAGO SEGÚN CONDICIONES']];
 /* ===== Carga de sueldos: perfil "liquidador" (recibos, VEP y boletas de sindicatos) ===== */
 const isLiq=()=>prof&&prof.role==='liquidador';
 const CG_SIND=['UATRE','OSECAC','FAECYS','IERIC','AMMA','ACTF','UOCRA','OSPRERA','SEC','UTEDYC'];
@@ -5316,7 +5431,7 @@ const ERP_VENTA=[['Cabecera','tipo_cbte','Tipo de Comprobante'],['Cabecera','num
  ['Totales','subtotal','SUB TOTAL'],['Totales','iva','IVA'],['Totales','total','TOTAL'],
  ['Descuentos','d_no_grav','No Gravados'],['Descuentos','d_grav','Gravados'],['Descuentos','d_iva_cf','IVA Crédito Fiscal'],['Descuentos','ret_gcias','Retención Gcias.'],['Descuentos','ret_iva','Retención IVA'],
  ['Cierre','total_desc','TOTAL DESCUENTOS'],['Cierre','neto_pagar','IMPORTE NETO']];
-const erpEsGranos=x=>Number(x.tipo_cmp)===9001,erpCampos=x=>erpEsGranos(x)?ERP_GRANOS:ERP_VENTA;
+const erpEsGranos=x=>Number(x.tipo_cmp)===9001,erpCampos=x=>erpEsAjuste(x)?ERP_AJUSTE:erpEsGranos(x)?ERP_GRANOS:ERP_VENTA;
 const erpDmy=f=>{const m=String(f||'').match(/^(\d{4})-(\d{2})-(\d{2})/);return m?`${m[3]}/${m[2]}/${m[1]}`:''};
 /** Valores de la liquidación: lo que la app ya sabe + lo que se completó a mano (datos_extraidos.erp). */
 function erpValores(x){
@@ -5326,7 +5441,7 @@ function erpValores(x){
   const rI=sum('IVA'),rG=sum('GANANCIAS');if(rI)b.ret_iva=rI;if(rG)b.ret_gcias=rG;
   const o={...b};for(const [k,v] of Object.entries(e))if(v!==''&&v!==null&&v!==undefined)o[k]=v;
   const n=k=>{const t=pNum(String(o[k]??''));return t===null?0:t};
-  const dc=erpEsGranos(x)?['d_comision','d_gtos_cupos','d_flete','d_iva','consorcio','gastos_gestion','gastos_form','sellados','otros_ng','ret_iibb','ret_gcias','ret_iva','od_monto']:['d_no_grav','d_grav','d_iva_cf','ret_gcias','ret_iva'];
+  const dc=erpEsAjuste(x)?['od_monto','d_iva','ret_gcias','ret_iva','ret_otras']:erpEsGranos(x)?['d_comision','d_gtos_cupos','d_flete','d_iva','consorcio','gastos_gestion','gastos_form','sellados','otros_ng','ret_iibb','ret_gcias','ret_iva','od_monto']:['d_no_grav','d_grav','d_iva_cf','ret_gcias','ret_iva'];
   if(o.total_desc===undefined||e.total_desc===undefined||e.total_desc==='')o.total_desc=Math.round(dc.reduce((s,k)=>s+n(k),0)*100)/100;
   if(e.neto_pagar===undefined||e.neto_pagar==='')o.neto_pagar=Math.round((n('total')-n('total_desc'))*100)/100;
   return o;
@@ -5339,6 +5454,7 @@ function erpForm(){
     h+=`<label>${esc(c[2])}<input name="${c[1]}" value="${esc(o[c[1]]===undefined?'':String(o[c[1]]))}"></label>`}
   return `<form class="card" id="erpform" style="margin-bottom:14px;border:2px solid var(--blut)" onsubmit="return erpGuardar(event)"><b>Datos para el ERP: ${esc(tipoNombre(x.tipo_cmp))} ${esc(nroF(x.punto_venta,x.numero))}</b>
   <p class="s" style="margin:4px 0 8px">Estos datos se leen solos del PDF al cargar la liquidación. Revisalos contra el documento y corregí lo que haga falta: tienen los mismos nombres y el mismo orden que las pantallas de tu ERP. Esto no cambia el IVA ni el Libro IVA Digital.</p>
+  ${(o.ajuste_filas&&o.ajuste_filas.length)?`<div class="tw" style="margin-bottom:10px"><table><thead><tr><th>Ajuste</th><th>Concepto</th><th>Importe</th><th>Alícuota</th><th>IVA</th></tr></thead><tbody>${o.ajuste_filas.map(i=>`<tr><td>${esc(i.tipo)}</td><td>${esc(i.concepto)}</td><td>${money(i.importe)}</td><td>${String(i.alicuota).replace('.',',')}%</td><td>${money(i.iva)}</td></tr>`).join('')}</tbody></table></div><p class="s" style="margin:0 0 8px">El débito va a Otros ingresos y al cuadro Libro IVA Ventas (alícuota 0% = Neto No Gravado); el crédito va a Otros descuentos.</p>`:''}
   ${(o.items&&o.items.length)?`<div class="tw" style="margin-bottom:10px"><table><thead><tr><th>Renglón</th><th>Unidad</th><th>Cantidad</th><th>Precio</th><th>Total</th></tr></thead><tbody>${o.items.map(i=>`<tr><td>${esc(i.desc)}</td><td>${esc(i.unidad||'')}</td><td>${i.cantidad}</td><td>${money(i.precio)}</td><td>${money(i.total)}</td></tr>`).join('')}</tbody></table></div>`:''}
   <div class="fgrid">${h}<div class="full row"><button class="b">Guardar datos</button>${x.archivo_path?`<button type="button" class="g" onclick="erpReleer('${x.id}')">Volver a leer el PDF</button>`:''}<button type="button" class="g" onclick="erpAbrir('${x.id}')">Cerrar</button></div></div></form>`;
 }
@@ -8849,18 +8965,18 @@ function liqErp(L,perfil,r){try{return perfil==='liq_granos'?liqErpGranos(L,r):p
 
 /** Lectura completa: reconoce el tipo, lee por tipo y valida (IVA = neto x alícuota; el total cierra; el PDF menciona al cliente). */
 function liqExtraer(lineas,cuitCliente,razonCliente){
-  const perfil=liqPerfil(lineas),gen=liqGenerico(lineas,cuitCliente),fn={liq_granos:liqGranos,liq_venta:liqHacienda,liq_leche:liqLeche}[perfil];
+  const perfil=liqPerfil(lineas),aj=perfil==='liq_granos'&&liqEsAjuste(lineas),gen=liqGenerico(lineas,cuitCliente),fn=aj?liqAjuste:{liq_granos:liqGranos,liq_venta:liqHacienda,liq_leche:liqLeche}[perfil];
   const r={...gen,perfil,retenciones:[],info:[],avisos:[...gen.avisos]};let cruce=null;
-  if(fn){const e=fn(lineas,cuitCliente,razonCliente);for(const [k,v] of Object.entries(e.datos))if(v!==null&&v!==undefined)r[k]=v;r.retenciones=e.retenciones||[];r.info=e.info||[];cruce=e.cruce?e.cruce():null;r.avisos=[]}
-  const okIva=r.neto>0&&r.iva>=0&&r.alic!==null&&r.alic!==undefined&&Math.abs(r.neto*r.alic/100-r.iva)<=Math.max(1,r.neto*0.0005);
+  if(fn){const e=fn(lineas,cuitCliente,razonCliente);for(const [k,v] of Object.entries(e.datos))if(v!==null&&v!==undefined)r[k]=v;r.retenciones=e.retenciones||[];r.info=e.info||[];cruce=e.cruce?e.cruce():null;r.avisos=e.avisos||[];if(aj){r.ajuste=true;r.erp=e.erp||null;r.desglose=e.desglose||null;r.coeOrig=e.coeOrig||null;r.confAj=e.conf}}
+  const okIva=aj?r.confAj==='alta':r.neto>0&&r.iva>=0&&r.alic!==null&&r.alic!==undefined&&Math.abs(r.neto*r.alic/100-r.iva)<=Math.max(1,r.neto*0.0005);
   const okTot=r.total!==null&&r.total!==undefined&&Math.abs(r.neto+r.iva-r.total)<=1.5;
-  r.confianza=okIva&&okTot&&cruce!==false?'alta':okIva?'media':'baja';
+  r.confianza=aj?r.confAj:okIva&&okTot&&cruce!==false?'alta':okIva?'media':'baja';
   if(!fn&&r.confianza==='alta'&&gen.avisos.some(x=>/No se encontró el total/.test(x)))r.confianza='media';
   if(fn&&cruce===false)r.avisos.push('El PDF tiene importes que no cierran entre sí: revisá el documento.');
-  if(!okIva)r.avisos.push('No se pudo confirmar que el IVA coincida con el neto por la alícuota: revisá los importes con mucho cuidado.');
+  if(!okIva&&!aj)r.avisos.push('No se pudo confirmar que el IVA coincida con el neto por la alícuota: revisá los importes con mucho cuidado.');
   if(!fn&&r.total!==null&&!okTot&&okIva)r.avisos.push('El total del PDF no coincide con neto más IVA.');
   if(cuitCliente&&!lineas.join(' ').replace(/[-. ]/g,'').includes(cuitCliente))r.avisos.push('El PDF no menciona el CUIT del cliente elegido ('+cuitF(cuitCliente)+'): verificá que sea el cliente correcto.');
-  {const er=liqErp(lineas,perfil,r);if(er){r.erp=er.erp;r.cod=er.cod}}
+  if(!aj){const er=liqErp(lineas,perfil,r);if(er){r.erp=er.erp;r.cod=er.cod}}
   if(!lineas.length)r.avisos.unshift('El PDF no tiene texto que se pueda leer (parece una imagen escaneada). Cargá los importes a mano.');
   return r;
 }
@@ -8881,7 +8997,7 @@ function liqForm(){
   <div class="fgrid"><label>Tipo de liquidación<select onchange="liqTipo(this.value)">${Object.entries(LIQ).map(([k,v])=>`<option value="${k}" ${L.tipo===k?'selected':''}>${v.nombre}</option>`).join('')}</select></label>
   <label>Archivo PDF: arrastralo a este recuadro o elegilo<input type="file" id="liqfile" accept="application/pdf,.pdf" onchange="liqPdf(this)"></label></div>
   ${L.leyendo?'<div class="msg info" style="margin-top:10px">Leyendo el PDF…</div>':''}
-  ${d&&!L.leyendo?`${L.perfil?`<div class="msg info" style="margin-top:10px">Se reconoció: <b>${LIQ[L.perfil].nombre}</b>.</div>`:''}${L.confianza?`<div class="msg ${col[L.confianza]}" style="margin-top:10px">Lectura del PDF: confianza <b>${L.confianza}</b>. ${L.confianza==='alta'?'El IVA coincide con el neto por la alícuota y el total cierra.':L.confianza==='media'?'El IVA coincide con el neto por la alícuota, pero el total no cierra del todo.':'No se pudieron confirmar los importes.'}</div>`:''}
+  ${d&&!L.leyendo?`${L.perfil?`<div class="msg info" style="margin-top:10px">Se reconoció: <b>${LIQ[L.perfil].nombre}</b>.</div>`:''}${L.confianza?`<div class="msg ${col[L.confianza]}" style="margin-top:10px">Lectura del PDF: confianza <b>${L.confianza}</b>. ${L.confianza==='alta'?(L.ajuste?'Las filas del ajuste cierran con el resumen del PDF (subtotal, IVA, importe neto y totales de cada operación).':'El IVA coincide con el neto por la alícuota y el total cierra.'):L.confianza==='media'?'El IVA coincide con el neto por la alícuota, pero el total no cierra del todo.':'No se pudieron confirmar los importes.'}</div>`:''}
     ${L.avisos.map(a=>`<div class="msg warn">${esc(a)}</div>`).join('')}${L.info.map(a=>`<div class="msg info">${esc(a)}</div>`).join('')}
     <div class="fgrid" style="margin-top:10px">${inp('fecha','Fecha (AAAA-MM-DD)','2026-09-15')}${inp('pv','Punto de venta (0 si solo tiene COE)','0')}${inp('num','Número de liquidación o COE','')}
       ${inp('neto','Neto gravado','0,00')}<label>Alícuota de IVA<select onchange="liqCampo('alic',this.value)">${ALIC.map(a=>`<option value="${a}" ${Number(d.alic)===a?'selected':''}>${String(a).replace('.',',')}%</option>`).join('')}</select></label>${inp('iva','IVA','0,00')}${inp('total','Total con IVA (opcional)','')}${inp('cuit','CUIT de la contraparte (opcional)','')}${inp('nombre','Nombre de la contraparte (opcional)','')}</div>
@@ -8895,17 +9011,21 @@ async function liqGuardar(){
   const fecha=d.fecha,pv=pNum(d.pv||'0'),num=pNum(d.num),neto=pNum(d.neto),iva=pNum(d.iva),alic=Number(d.alic);let total=pNum(d.total);
   if(!pDate(fecha))return bad('La fecha no es válida (formato AAAA-MM-DD).');
   if(pv===null||!Number.isInteger(pv)||pv<0||num===null||!Number.isInteger(num)||num<=0)return bad('El punto de venta y el número tienen que ser enteros (el punto de venta puede ser 0).');
-  if(neto===null||!(neto>0)||iva===null||iva<0)return bad('Cargá el neto gravado (mayor a cero) y el IVA.');
-  if(total===null||!(total>0))total=liqPlata(neto+iva);
-  if(Math.abs(neto*alic/100-iva)>Math.max(1,neto*0.0005)&&!confirm(`El IVA (${money(iva)}) no coincide con el neto por ${String(alic).replace('.',',')}% (${money(neto*alic/100)}).\n¿Guardar igual?`))return;
+  const aj=!!(L.ajuste&&L.desglose);
+  if(aj){if(neto===null||iva===null||(neto===0&&iva===0))return bad('Cargá el neto y el IVA del ajuste (pueden ser negativos).')}
+  else if(neto===null||!(neto>0)||iva===null||iva<0)return bad('Cargá el neto gravado (mayor a cero) y el IVA.');
+  if(total===null||(!aj&&!(total>0))||(aj&&total===0))total=liqPlata(neto+iva);
+  if(aj){const sN=liqPlata(L.desglose.reduce((s,x)=>s+x.base,0)),sI=liqPlata(L.desglose.reduce((s,x)=>s+x.iva,0));if((Math.abs(sN-neto)>0.02||Math.abs(sI-iva)>0.02)&&!confirm(`Los importes que dejaste (neto ${money(neto)}, IVA ${money(iva)}) difieren de lo leído del PDF (neto ${money(sN)}, IVA ${money(sI)}).\n¿Guardar igual con lo que dejaste?`))return}
+  if(!aj&&Math.abs(neto*alic/100-iva)>Math.max(1,neto*0.0005)&&!confirm(`El IVA (${money(iva)}) no coincide con el neto por ${String(alic).replace('.',',')}% (${money(neto*alic/100)}).\n¿Guardar igual?`))return;
   const tipo=LIQ[L.tipo],safe=L.file.name.normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^A-Za-z0-9._-]+/g,'_').slice(-80),path=`${v.cid}/ventas/${crypto.randomUUID()}-${safe}`;
   const up=await sb.storage.from('clientes').upload(path,L.file,{contentType:'application/pdf',upsert:false});
   if(up.error)return bad('No se pudo subir el PDF: '+errTxt(up.error));
   const a=String(alic).replace('.',','),raw={['Neto Grav. IVA '+a+'%']:neto};if(alic>0)raw['IVA '+a+'%']=iva;
+  if(aj&&Math.abs(L.desglose.reduce((s,x)=>s+x.base,0)-neto)<=0.02&&Math.abs(L.desglose.reduce((s,x)=>s+x.iva,0)-iva)<=0.02){for(const k of Object.keys(raw))delete raw[k];for(const x of L.desglose){const t=String(x.alic).replace('.',',');raw['Neto Grav. IVA '+t+'%']=x.base;if(x.alic>0)raw['IVA '+t+'%']=x.iva}}
   let msgRet='';
   try{
     const {data:p,error:e1}=await sb.from('client_periods').upsert({client_id:v.cid,periodo:fecha.slice(0,7)+'-01'},{onConflict:'client_id,periodo'}).select('id').single();if(e1)throw e1;
-    const {error}=await sb.from('sales_invoices').insert({client_id:v.cid,period_id:p.id,fecha,tipo_cmp:tipo.cod,punto_venta:pv,numero:num,receptor_cuit:String(d.cuit||'').replace(/\D/g,'')||null,receptor_nombre:d.nombre||null,neto_gravado:neto,no_gravado:0,exento:0,otros_tributos:0,iva,importe_total:total,origen:'manual',raw,clase:L.tipo,archivo_path:path,archivo_nombre:L.file.name,datos_extraidos:{...(L.erp?{erp:L.erp}:{}),...(L.cod?{cod_arca:L.cod}:{}),confianza:L.confianza,perfil:L.perfil,avisos:L.avisos,retenciones:(L.ret||[]).filter(x=>x.sel).map(x=>({tipo:x.tipo,impuesto:x.impuesto,importe:x.importe}))},created_by:me.id});
+    const {error}=await sb.from('sales_invoices').insert({client_id:v.cid,period_id:p.id,fecha,tipo_cmp:tipo.cod,punto_venta:pv,numero:num,receptor_cuit:String(d.cuit||'').replace(/\D/g,'')||null,receptor_nombre:d.nombre||null,neto_gravado:neto,no_gravado:0,exento:0,otros_tributos:0,iva,importe_total:total,origen:'manual',raw,clase:L.tipo,archivo_path:path,archivo_nombre:L.file.name,datos_extraidos:{...(aj?{ajuste:true,desglose:L.desglose,coe_original:L.coeOrig||null}:{}),...(L.erp?{erp:L.erp}:{}),...(L.cod?{cod_arca:L.cod}:{}),confianza:L.confianza,perfil:L.perfil,avisos:L.avisos,retenciones:(L.ret||[]).filter(x=>x.sel).map(x=>({tipo:x.tipo,impuesto:x.impuesto,importe:x.importe}))},created_by:me.id});
     if(error)throw error;
     // retenciones y percepciones tildadas: se cargan para el IVA aproximado (sin repetir las que ya estén)
     const sel=(L.ret||[]).filter(x=>x.sel&&x.importe>0);
