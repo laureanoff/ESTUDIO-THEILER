@@ -3633,6 +3633,7 @@ async function liqLeerArchivo(f){
     if(cam){try{await loadVentas()}catch(x){flash(errTxt(x),'err')}}
     if(cl&&cs.length)L.info=[`Se eligió solo el cliente ${cl.razon_social}${per?' y el período '+MESES[+per.slice(5)-1]+' '+per.slice(0,4):''}, según el PDF.`,...nota,...L.info];
     else if(per)L.info=[`Se eligió solo el período ${MESES[+per.slice(5)-1]+' '+per.slice(0,4)}, según el PDF. No se encontró el CUIT de ningún cliente: se usa el cliente elegido arriba (${cl?cl.razon_social:''}).`,...L.info];
+    await liqDupCheck();
   }catch(x){L.avisos=['No se pudo leer el PDF: '+(x.message||x)+' Cargá los importes a mano.'];L.confianza='baja'}
   L.leyendo=false;draw();
 }
@@ -5120,6 +5121,18 @@ function liqErpHaciendaV2(L0,r){
   if(T.rows.length&&Math.abs(T.tot-(trib||0))<=0.02){e.d_no_grav=liqPlata(T.otros+T.pi);e.ret_iva=T.ri;e.ret_gcias=T.rg}else{e.d_no_grav=trib||0;e.ret_iva=0;e.ret_gcias=0}
   e.total_desc=liqPlata((gastos||0)+(ivaG||0)+(trib||0));if(neto!==null)e.neto_pagar=neto;
   return {erp:e,cod:cod?Number(cod[1]):null};
+}
+
+/** ¿Ya está cargada esta liquidación? Mismo cliente, tipo, punto de venta y número (COE). Si está, no se deja guardar de nuevo. */
+async function liqDupCheck(){
+  const L=LQ(),v=ui.vta;L.dup=null;
+  try{
+    const d=L.datos,t=LIQ[L.tipo];if(!d||!t||!v.cid)return;
+    const pv=pNum(d.pv||'0'),num=pNum(d.num);if(pv===null||num===null||!(num>0))return;
+    const {data,error}=await sb.from('sales_invoices').select('id,fecha,importe_total,archivo_nombre').eq('client_id',v.cid).eq('tipo_cmp',t.cod).eq('punto_venta',pv).eq('numero',num).limit(1);
+    if(error)return;
+    if(data&&data.length){const x=data[0];L.dup={fecha:x.fecha,total:Number(x.importe_total),nombre:x.archivo_nombre}}
+  }catch(e){}
 }
 /* ===== Carga de sueldos: perfil "liquidador" (recibos, VEP y boletas de sindicatos) ===== */
 const isLiq=()=>prof&&prof.role==='liquidador';
@@ -9068,8 +9081,8 @@ function liqExtraer(lineas,cuitCliente,razonCliente){
 /* ---- Interfaz: se usa dentro de la sección Ventas ---- */
 const LQ=()=>ui.vta.liq||(ui.vta.liq={abierta:false,tipo:'liq_granos',datos:null,file:null,cand:[],avisos:[],info:[],ret:[],perfil:null,confianza:null,leyendo:false});
 function liqAbrir(){const L=LQ();L.abierta=false;L.datos=null;L.file=null;L.cand=[];L.avisos=[];L.info=[];L.ret=[];L.leyendo=false;draw()}
-function liqCampo(k,v){const L=LQ();if(L.datos)L.datos[k]=String(v).trim()}
-function liqTipo(v){LQ().tipo=v;draw()}
+function liqCampo(k,v){const L=LQ();if(L.datos)L.datos[k]=String(v).trim();if(k==='pv'||k==='num')liqDupCheck().then(()=>draw())}
+async function liqTipo(v){LQ().tipo=v;await liqDupCheck();draw()}
 function liqRetSel(i,v){LQ().ret[i].sel=v;draw()}
 function liqUsar(k,v){const L=LQ();L.datos[k]=String(v);draw()}
 function liqCalcIva(){const L=LQ(),n=pNum(L.datos.neto),a=Number(L.datos.alic);if(n===null){flash('Cargá primero el neto gravado.','err');return draw()}L.datos.iva=String(liqPlata(n*a/100));L.datos.total=String(liqPlata(n+n*a/100));draw()}
@@ -9082,11 +9095,12 @@ function liqForm(){
   <label>Archivo PDF: arrastralo a este recuadro o elegilo<input type="file" id="liqfile" accept="application/pdf,.pdf" onchange="liqPdf(this)"></label></div>
   ${L.leyendo?'<div class="msg info" style="margin-top:10px">Leyendo el PDF…</div>':''}
   ${d&&!L.leyendo?`${L.perfil?`<div class="msg info" style="margin-top:10px">Se reconoció: <b>${LIQ[L.perfil].nombre}</b>.</div>`:''}${L.confianza?`<div class="msg ${col[L.confianza]}" style="margin-top:10px">Lectura del PDF: confianza <b>${L.confianza}</b>. ${L.confianza==='alta'?(L.ajuste?'Las filas del ajuste cierran con el resumen del PDF (subtotal, IVA, importe neto y totales de cada operación).':'El IVA coincide con el neto por la alícuota y el total cierra.'):L.confianza==='media'?'El IVA coincide con el neto por la alícuota, pero el total no cierra del todo.':'No se pudieron confirmar los importes.'}</div>`:''}
+    ${L.dup?`<div class="msg err" style="margin-top:10px"><b>Esta liquidación ya está cargada.</b> Hay una igual en este cliente (número ${esc(d.pv&&Number(d.pv)?nroF(Number(d.pv),Number(d.num)):String(d.num))}, fecha ${esc(fAR(L.dup.fecha))}, total ${money(L.dup.total)}). No se puede cargar dos veces: si hay que corregirla, editá la que ya existe en el listado o eliminala primero.</div>`:''}
     ${L.avisos.map(a=>`<div class="msg warn">${esc(a)}</div>`).join('')}${L.info.map(a=>`<div class="msg info">${esc(a)}</div>`).join('')}
     <div class="fgrid" style="margin-top:10px">${inp('fecha','Fecha (AAAA-MM-DD)','2026-09-15')}${inp('pv','Punto de venta (0 si solo tiene COE)','0')}${inp('num','Número de liquidación o COE','')}
       ${inp('neto','Neto gravado','0,00')}<label>Alícuota de IVA<select onchange="liqCampo('alic',this.value)">${ALIC.map(a=>`<option value="${a}" ${Number(d.alic)===a?'selected':''}>${String(a).replace('.',',')}%</option>`).join('')}</select></label>${inp('iva','IVA','0,00')}${inp('total','Total con IVA (opcional)','')}${inp('cuit','CUIT de la contraparte (opcional)','')}${inp('nombre','Nombre de la contraparte (opcional)','')}</div>
     ${L.ret.length?`<div class="card" style="margin-top:10px"><b>Retenciones y percepciones que figuran en el PDF</b><p class="s" style="margin:4px 0 8px">Las de IVA bajan el IVA a pagar en el IVA aproximado. Si ya las cargaste desde "Mis Retenciones", destildalas.</p>${L.ret.map((x,i)=>`<label style="display:flex;gap:8px;align-items:center;margin:4px 0"><input type="checkbox" style="margin:0" ${x.sel?'checked':''} onchange="liqRetSel(${i},this.checked)"> ${esc(x.etq)} (${({IVA:'IVA',GANANCIAS:'Ganancias',OTRO:'otros impuestos; no afecta el IVA'})[x.impuesto]||x.impuesto}): <b>${money(x.importe)}</b></label>`).join('')}</div>`:''}
-    <div class="row" style="margin-top:10px"><button class="g" onclick="liqCalcIva()">Calcular IVA y total desde el neto</button><button class="b" onclick="liqGuardar()">Guardar liquidación</button><button class="g" onclick="liqAbrir()">Cancelar</button></div>
+    <div class="row" style="margin-top:10px"><button class="g" onclick="liqCalcIva()">Calcular IVA y total desde el neto</button><button class="b" ${L.dup?'disabled title="Ya está cargada"':''} onclick="liqGuardar()">Guardar liquidación</button><button class="g" onclick="liqAbrir()">Cancelar</button></div>
     ${L.cand.length?`<details style="margin-top:12px"><summary class="s" style="cursor:pointer">Importes encontrados en el PDF (tocá para usar uno)</summary><div class="tw" style="margin-top:8px"><table><tbody>${L.cand.map(c=>`<tr><td class="s" style="min-width:240px">${esc(c.linea)}</td><td>${c.montos.map(m=>`<div style="white-space:nowrap">${money(m)} <button class="g sm" onclick="liqUsar('neto','${m}')">Neto</button> <button class="g sm" onclick="liqUsar('iva','${m}')">IVA</button> <button class="g sm" onclick="liqUsar('total','${m}')">Total</button></div>`).join('')}</td></tr>`).join('')}</tbody></table></div></details>`:''}`:''}</div>`;
 }
 async function liqGuardar(){
@@ -9101,6 +9115,7 @@ async function liqGuardar(){
   if(total===null||(!aj&&!(total>0))||(aj&&total===0))total=liqPlata(neto+iva);
   if(aj){const sN=liqPlata(L.desglose.reduce((s,x)=>s+x.base,0)),sI=liqPlata(L.desglose.reduce((s,x)=>s+x.iva,0));if((Math.abs(sN-neto)>0.02||Math.abs(sI-iva)>0.02)&&!confirm(`Los importes que dejaste (neto ${money(neto)}, IVA ${money(iva)}) difieren de lo leído del PDF (neto ${money(sN)}, IVA ${money(sI)}).\n¿Guardar igual con lo que dejaste?`))return}
   if(!aj&&Math.abs(neto*alic/100-iva)>Math.max(1,neto*0.0005)&&!confirm(`El IVA (${money(iva)}) no coincide con el neto por ${String(alic).replace('.',',')}% (${money(neto*alic/100)}).\n¿Guardar igual?`))return;
+  await liqDupCheck();if(L.dup)return bad('Esta liquidación ya está cargada para este cliente: no se puede cargar dos veces.');
   const tipo=LIQ[L.tipo],safe=L.file.name.normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^A-Za-z0-9._-]+/g,'_').slice(-80),path=`${v.cid}/ventas/${crypto.randomUUID()}-${safe}`;
   const up=await sb.storage.from('clientes').upload(path,L.file,{contentType:'application/pdf',upsert:false});
   if(up.error)return bad('No se pudo subir el PDF: '+errTxt(up.error));
