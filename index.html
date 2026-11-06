@@ -5037,6 +5037,90 @@ const ERP_AJUSTE=[['Cabecera','tipo_liq','Tipo de Liquidación'],['Cabecera','co
  ['Retenciones y deducciones no gravadas','ret_gcias','Ret. 2% Gcias.'],['Retenciones y deducciones no gravadas','ret_iva','Ret. IVA'],['Retenciones y deducciones no gravadas','ret_otras','Otras retenciones'],
  ['Otros descuentos','od_concepto','Concepto'],['Otros descuentos','od_alicuota','Alícuota'],['Otros descuentos','od_monto','Monto'],
  ['Cierre','total_desc','TOTAL DESCUENTOS'],['Cierre','neto_pagar','IMPORTE NETO'],['Cierre','iva_2003','IVA Res. Gral. AFIP Nº 2003/07'],['Cierre','pago','PAGO SEGÚN CONDICIONES']];
+
+/* ===== Hacienda: "Cuenta de Venta y Líquido Producto" con EMISOR (frigorífico/consignatario) y RECEPTOR (el cliente productor) =====
+   La contraparte que se carga es el EMISOR del PDF (no el "cliente" de cada renglón, que es a quien se le vendieron los animales). */
+const liqHacEsEmiRec=L=>L.some(l=>/^receptor$/i.test(l.trim()))&&L.some(l=>/^cliente categoria/.test(liqNorm(l)));
+function liqHacPartes(L){
+  const eCod=L.findIndex(l=>/^c[oó]d\.\s*\d+\s+n[°º]/i.test(l.trim()));
+  const eC=L.findIndex((l,i)=>i>=Math.max(0,eCod)&&/^cuit:\s*\d{11}/i.test(l.trim()));
+  const emisor={cuit:eC>=0?L[eC].match(/(\d{11})/)[1]:null,nombre:null};
+  if(eCod>=0&&eCod+1<L.length&&!/^fecha|^cuit/i.test(L[eCod+1].trim()))emisor.nombre=L[eCod+1].trim();
+  const iR=L.findIndex(l=>/^receptor$/i.test(l.trim())),rec={cuit:null,nombre:null};
+  if(iR>=0)for(let i=iR+1;i<Math.min(L.length,iR+4);i++){const m=L[i].match(/cuit:\s*(\d{11})\s+(?:nombre y apellido|raz[oó]n social|nombre):\s*(.+)$/i);if(m){rec.cuit=m[1];rec.nombre=m[2].trim();break}}
+  return {emisor,receptor:rec};
+}
+/** Tributos del PDF: devuelve las filas (texto + importe) y los totales por clase. */
+function liqHacTributos(L){
+  const a=liqBuscar(L,/^tributos \$ base/),b=a>=0?liqBuscar(L,/^datos adicionales/,a):-1,rows=[];
+  if(a>=0)for(let i=a+1;i<(b>=0?b:L.length);i++){const v=liqMontos(L[i]);if(!v.length)continue;rows.push({txt:L[i].replace(/\s*-?[\d.,]+\s*$/,'').trim(),n:liqNorm(L[i]),imp:liqUlt(v)})}
+  const sum=re=>liqPlata(rows.filter(r=>re.test(r.n)).reduce((s,r)=>s+r.imp,0));
+  const ri=sum(/retencion\s+iva/),rg=sum(/retencion\s+gananc/),pi=sum(/percepcion\s+iva/),tot=liqPlata(rows.reduce((s,r)=>s+r.imp,0));
+  return {rows,ri,rg,pi,tot,otros:liqPlata(tot-ri-rg-pi)};
+}
+function liqHaciendaV2(L0,cuitCli,razonCli){
+  if(!liqHacEsEmiRec(L0))return liqHacienda(L0,cuitCli,razonCli);
+  const L=liqPrimeraCopia(L0),d={},info=[];
+  const iN=liqBuscar(L,/c[oó]d\.\s*\d+\s+n/);const mN=iN>=0?L[iN].match(/(\d{4,5})\s*-\s*(\d{8})/):null;if(mN){d.pv=Number(mN[1]);d.num=Number(mN[2])}
+  const iF=L.findIndex(l=>/^fecha\s+\d{1,2}\/\d{1,2}\/\d{4}/i.test(l));d.fecha=iF>=0?pDate(L[iF].match(/\d{1,2}\/\d{1,2}\/\d{4}/)[0]):liqFecha(L,/fecha/);
+  const g=re=>{const l=L.find(x=>re.test(x));if(!l)return null;const m=l.replace(/^.*?(importe bruto|iva s\/bruto|total gastos|iva s\/gastos|total tributos|importe neto)/i,'$1').match(/\$\s*([\d.,]+)/);return m?liqN(m[1]):null};
+  const bruto=g(/importe bruto/i),ivaB=g(/iva s\/bruto/i),gastos=g(/total gastos/i),ivaG=g(/iva s\/gastos/i),trib=g(/total tributos/i),netoF=g(/importe neto/i);
+  if(bruto!==null&&ivaB!==null){d.neto=bruto;d.iva=ivaB;d.total=liqPlata(bruto+ivaB);d.alic=liqTasa(bruto,ivaB)}
+  // IVA por renglón: si hay varias alícuotas, se informa
+  const alics=[...new Set(L.map(l=>{const m=l.match(/Kg\.?(?:\s*Vivo)?\s+\d+(?:\.\d+)?\s+[\d,]+\.\d{2}\s+[\d,]+\.\d{2}\s+(\d+\.\d{2})\s+[\d,]+\.\d{2}/i)||l.match(/Cab\w*\s+\d+(?:\.\d+)?\s+[\d,]+\.\d{2}\s+[\d,]+\.\d{2}\s+(\d+\.\d{2})\s+[\d,]+\.\d{2}/i);return m?Number(m[1]):null}).filter(x=>x!==null))];
+  if(alics.length>1)info.push('El PDF tiene renglones con distintas alícuotas de IVA ('+alics.map(a=>String(a).replace('.',',')+'%').join(' y ')+'): revisá el neto y el IVA.');
+  // contraparte = el otro lado del PDF (el cliente es el productor, que figura como RECEPTOR)
+  const P=liqHacPartes(L);let cp=P.emisor;
+  if(cuitCli&&P.emisor.cuit===cuitCli&&P.receptor.cuit&&P.receptor.cuit!==cuitCli){cp=P.receptor;info.push('En este PDF el cliente elegido figura como EMISOR: se cargó como contraparte al receptor.')}
+  if(cp.cuit)d.cuit=cp.cuit;if(cp.nombre)d.nombre=cp.nombre;
+  const T=liqHacTributos(L),ret=[];
+  if(T.ri>0)ret.push({tipo:'retencion',impuesto:'IVA',importe:T.ri,etq:'Retención de IVA'});
+  if(T.rg>0)ret.push({tipo:'retencion',impuesto:'GANANCIAS',importe:T.rg,etq:'Retención de Ganancias'});
+  if(T.pi>0)ret.push({tipo:'percepcion',impuesto:'IVA',importe:T.pi,etq:'Percepción de IVA'});
+  if(gastos!==null&&ivaG!==null)info.push(`La comisión y los gastos suman ${money(gastos)} con IVA de ${money(ivaG)}: es crédito fiscal y entra por el Libro IVA de compras.`);
+  if(T.tot>0)info.push(`Tributos: ${money(T.tot)}${T.ri>0?` (incluye retención de IVA ${money(T.ri)})`:''}.`);
+  if(trib!==null&&T.rows.length&&Math.abs(T.tot-trib)>0.02)info.push(`La suma de los tributos leídos (${money(T.tot)}) no coincide con "Total Tributos" (${money(trib)}).`);
+  const cr=(bruto!==null&&netoF!==null)?Math.abs(bruto+(ivaB||0)-(gastos||0)-(ivaG||0)-(trib||0)-netoF)<=1.5&&alics.length<=1:null;
+  return {datos:d,retenciones:ret,info,cruce:()=>cr};
+}
+const LIQ_ANIM_COD={'NOVILLOS':'000013','VACA ADULTA':'000044','BOVINOS':'000034'};
+function liqHacCategoria(t){const n=liqNorm(t);return /novillito/.test(n)?'NOVILLITOS':/novillo/.test(n)?'NOVILLOS':/vaquillona/.test(n)?'VAQUILLONAS':/\bvaca/.test(n)?'VACA ADULTA':/ternero|ternera/.test(n)?'TERNEROS':/\btoro/.test(n)?'TOROS':/\bmej\b|mejor/.test(n)?'MEJ':'BOVINOS'}
+function liqErpHaciendaV2(L0,r){
+  if(!liqHacEsEmiRec(L0))return liqErpHacienda(L0,r);
+  const L=liqPrimeraCopia(L0),e={},cod=liqM1(L,/C[oó]d\.\s*(\d+)/i);
+  e.tipo_cbte='CUENTA DE VENTA Y LÍQUIDO PRODUCTO - HACIENDA';if(r.pv!==undefined)e.numero=nroF(r.pv,r.num);
+  e.comprador_cod='';e.comprador=r.nombre||'';
+  const f=liqM1(L,/^Fecha\s+(\d{1,2}\/\d{1,2}\/\d{4})/i);e.f_comp=f?liqDmy(f[1]):'';
+  const ff=liqM1(L,/Fecha Faena:\s*(\d{1,2}\/\d{1,2}\/\d{4})/i);e.f_pase=ff?liqDmy(ff[1]):e.f_comp;
+  const pz=L.join(' ').match(/PLAZO:[^()]*\((\d{1,2}\/\d{1,2}\/\d{4})\)/i);if(pz)e.f_venc=liqDmy(pz[1]);
+  const dte=liqM1(L,/^DTE\s+(\S+)/i);if(dte)e.romaneo=dte[1];
+  const dc=liqM1(L,/Datos Adicionales:\s*(.+?)\s+Importe Bruto/i);if(dc&&dc[1].trim())e.concepto=dc[1].trim();
+  // renglones: cada categoría arranca en una línea "Bovino ..." y contiene una línea con cliente, cabezas, UM, cantidad, precio, bruto, % IVA, IVA
+  const iH=liqBuscar(L,/^cliente categoria/),iG=iH>=0?L.findIndex((l,k)=>k>iH&&/^(datos adicionales|gastos \$ base)/i.test(liqNorm(l).trim())):-1;
+  const items=[];
+  if(iH>=0&&iG>iH){
+    const rowRe=/(?:\d{11}\s*-\s*)?.*?\s(\d+)\s+(Kg\.?(?:\s*Vivo)?|Cab\w*)\s+(\d+(?:\.\d+)?)\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+(\d+\.\d{2})\s+([\d,]+\.\d{2})\s*$/i;
+    let grupo=[];const cierra=()=>{};
+    const blk=L.slice(iH+1,iG),grupos=[];
+    for(const l of blk){if(/^(bovino|ovino|porcino|equino|caprino)\b/i.test(l.trim())||!grupos.length)grupos.push([]);grupos[grupos.length-1].push(l)}
+    for(const gr of grupos){
+      const li=gr.findIndex(l=>rowRe.test(l));if(li<0)continue;const m=gr[li].match(rowRe);
+      const desc=gr.filter((_,k)=>k!==li).join(' ').replace(/\s+/g,' ').trim(),cat=liqHacCategoria(desc);
+      items.push({codigo:LIQ_ANIM_COD[cat]||'',desc:cat,detalle:desc,unidad:Number(m[1]),um:m[2].replace(/\s+/g,' '),cantidad:Number(m[3]),precio:liqN(m[4]),comision:0,total:liqN(m[5])});
+    }
+  }
+  e.items=items.map(({detalle,um,...x})=>x);
+  if(items.length){const a=items[0];e.articulo=a.desc;e.it_codigo=a.codigo;e.it_desc=a.desc;e.it_unidad=a.unidad;e.unidades=a.unidad;e.cantidad=a.cantidad;e.it_cantidad=a.cantidad;e.precio=a.precio;e.it_precio=a.precio;e.it_comision=0;e.it_total=a.total;}
+  e.pct_comision=0;e.imp_comision=0;
+  const gv=re=>{const l=L.find(x=>re.test(x));if(!l)return null;const m=l.replace(/^.*?(importe bruto|iva s\/bruto|total gastos|iva s\/gastos|total tributos|importe neto)/i,'$1').match(/\$\s*([\d.,]+)/);return m?liqN(m[1]):null};
+  const bruto=gv(/importe bruto/i),ivaB=gv(/iva s\/bruto/i),gastos=gv(/total gastos/i),ivaG=gv(/iva s\/gastos/i),trib=gv(/total tributos/i),neto=gv(/importe neto/i);
+  const T=liqHacTributos(L);
+  e.subtotal=bruto;e.iva=ivaB;if(bruto!==null&&ivaB!==null)e.total=liqPlata(bruto+ivaB);
+  e.d_grav=gastos||0;e.d_iva_cf=ivaG||0;
+  if(T.rows.length&&Math.abs(T.tot-(trib||0))<=0.02){e.d_no_grav=liqPlata(T.otros+T.pi);e.ret_iva=T.ri;e.ret_gcias=T.rg}else{e.d_no_grav=trib||0;e.ret_iva=0;e.ret_gcias=0}
+  e.total_desc=liqPlata((gastos||0)+(ivaG||0)+(trib||0));if(neto!==null)e.neto_pagar=neto;
+  return {erp:e,cod:cod?Number(cod[1]):null};
+}
 /* ===== Carga de sueldos: perfil "liquidador" (recibos, VEP y boletas de sindicatos) ===== */
 const isLiq=()=>prof&&prof.role==='liquidador';
 const CG_SIND=['UATRE','OSECAC','FAECYS','IERIC','AMMA','ACTF','UOCRA','OSPRERA','SEC','UTEDYC'];
@@ -8866,7 +8950,7 @@ const liqDmy=s=>{const m=String(s||'').match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{
 const liqM1=(L,re)=>{for(const l of L){const m=l.match(re);if(m)return m}return null};
 const liqN=s=>{const t=String(s).trim(),v=liqMontos(t);if(v.length)return v[0];return /^\d+$/.test(t)?Number(t):null};
 /** Corta las copias (duplicado / triplicado) para no leer lo mismo dos veces. */
-function liqPrimeraCopia(L){const i=L.findIndex((l,k)=>k>3&&/^(duplicado|triplicado)$/i.test(l.trim()));return i>0?L.slice(0,i):L}
+function liqPrimeraCopia(L){const i=L.findIndex((l,k)=>k>3&&/^(duplicado|triplicado)(\s|$)/i.test(l.trim()));return i>0?L.slice(0,i):L}
 function liqErpGranos(L,r){
   const e={},items=[];e.tipo_liq='Liquidación primaria de granos';
   const to=liqM1(L,/Tipo de operaci[oó]n:\s*\d+\s*-\s*(.+)$/i);if(to)e.tipo_liq+=' - '+to[1].trim();
@@ -8961,11 +9045,11 @@ function liqErpLeche(L0,r){
   e.total_desc=liqPlata(pe);const nl=tot(/^NETO LIQUIDACI[OÓ]N/i);if(nl!==null)e.neto_pagar=nl;
   return {erp:e,cod:cod?Number(cod[1]):null};
 }
-function liqErp(L,perfil,r){try{return perfil==='liq_granos'?liqErpGranos(L,r):perfil==='liq_venta'?liqErpHacienda(L,r):perfil==='liq_leche'?liqErpLeche(L,r):null}catch(x){return null}}
+function liqErp(L,perfil,r){try{return perfil==='liq_granos'?liqErpGranos(L,r):perfil==='liq_venta'?liqErpHaciendaV2(L,r):perfil==='liq_leche'?liqErpLeche(L,r):null}catch(x){return null}}
 
 /** Lectura completa: reconoce el tipo, lee por tipo y valida (IVA = neto x alícuota; el total cierra; el PDF menciona al cliente). */
 function liqExtraer(lineas,cuitCliente,razonCliente){
-  const perfil=liqPerfil(lineas),aj=perfil==='liq_granos'&&liqEsAjuste(lineas),gen=liqGenerico(lineas,cuitCliente),fn=aj?liqAjuste:{liq_granos:liqGranos,liq_venta:liqHacienda,liq_leche:liqLeche}[perfil];
+  const perfil=liqPerfil(lineas),aj=perfil==='liq_granos'&&liqEsAjuste(lineas),gen=liqGenerico(lineas,cuitCliente),fn=aj?liqAjuste:{liq_granos:liqGranos,liq_venta:liqHaciendaV2,liq_leche:liqLeche}[perfil];
   const r={...gen,perfil,retenciones:[],info:[],avisos:[...gen.avisos]};let cruce=null;
   if(fn){const e=fn(lineas,cuitCliente,razonCliente);for(const [k,v] of Object.entries(e.datos))if(v!==null&&v!==undefined)r[k]=v;r.retenciones=e.retenciones||[];r.info=e.info||[];cruce=e.cruce?e.cruce():null;r.avisos=e.avisos||[];if(aj){r.ajuste=true;r.erp=e.erp||null;r.desglose=e.desglose||null;r.coeOrig=e.coeOrig||null;r.confAj=e.conf}}
   const okIva=aj?r.confAj==='alta':r.neto>0&&r.iva>=0&&r.alic!==null&&r.alic!==undefined&&Math.abs(r.neto*r.alic/100-r.iva)<=Math.max(1,r.neto*0.0005);
