@@ -4718,6 +4718,210 @@ async function cmpConfirmar(){
   CMP.items=CMP.items.filter(x=>!x.hecho);CMP.res={k:mal.length?(ok.length?'warn':'err'):'ok',t:[...(ok.length?['Listo: '+ok.length+' comprobante'+(ok.length===1?'':'s')+'.',...ok]:[]),...(mal.length?['No se pudieron cargar:',...mal]:[])]};
   ui.busy=false;draw();
 }
+
+/* ===== Ventas: Excel del "Libro IVA Ventas" (recuadro propio) =====
+   El Libro IVA Ventas lista las ventas con el CUIT de los COMPRADORES pero no dice de quién es el libro. El dueño se deduce así:
+   1) un CUIT de cliente del estudio escrito en el archivo; 2) las facturas que ya están cargadas (mismo tipo, punto de venta y número);
+   3) si no alcanza, se elige a mano (se sugieren los clientes que ya le vendieron a esos compradores). */
+const LV={fase:null,d:null,msg:null,busy:false};
+const lvR2=x=>Math.round((x+Number.EPSILON)*100)/100;
+/** Lee el archivo: tabla HTML con extensión .xls (lo más común en este listado), XML de Excel o Excel verdadero. */
+async function lvFilas(f){
+  const buf=await f.arrayBuffer(),u8=new Uint8Array(buf),ini=new TextDecoder('latin1').decode(u8.slice(0,400));
+  if(/^\s*</.test(ini)&&!/<Workbook/i.test(ini)||/<table/i.test(ini)){
+    const txt=new TextDecoder('windows-1252').decode(u8),doc=new DOMParser().parseFromString(txt,'text/html');
+    const rows=[...doc.querySelectorAll('tr')].map(tr=>[...tr.children].filter(c=>/^t[dh]$/i.test(c.tagName)).map(c=>c.textContent.replace(/ /g,' ').replace(/\s+/g,' ').trim()));
+    if(rows.length)return {rows,texto:doc.body?doc.body.textContent:txt};
+  }
+  if(/<Workbook/i.test(ini)){const txt=new TextDecoder('utf-8').decode(u8);return {rows:coopXmlFilas(txt),texto:txt.replace(/<[^>]+>/g,' ')}}
+  if(typeof XLSX==='undefined')throw new Error('No se pudo cargar el lector de Excel (¿sin conexión a internet?).');
+  const wb=XLSX.read(buf,{type:'array'}),rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,raw:false,defval:''}).map(r=>r.map(c=>String(c??'').trim()));
+  return {rows,texto:rows.map(r=>r.join(' ')).join('\n')};
+}
+function lvNum(s){
+  let t=String(s??'').replace(/[$\s]/g,'');if(t===''||t==='-')return 0;
+  const neg=/^-|-$|^\(.*\)$/.test(t);t=t.replace(/[-()]/g,'');
+  if(/,/.test(t)&&/\./.test(t)){t=t.lastIndexOf(',')>t.lastIndexOf('.')?t.replace(/\./g,'').replace(',','.'):t.replace(/,/g,'')}
+  else if(/,/.test(t))t=t.replace(',','.');
+  const v=parseFloat(t);return isFinite(v)?(neg?-v:v):null;
+}
+function lvTipo(txt){
+  const n=norm(txt);
+  if(/liquidacion/.test(n)){
+    if(/leche/.test(n))return {cmp:9003,nota:false};
+    if(/hacienda|ganado|venta/.test(n))return {cmp:9002,nota:false};
+    return {cmp:9001,nota:false};
+  }
+  const t=coopTipo(txt);if(t)return t;
+  const m=n.match(/(factura|nota de credito|nota de debito)(?: electronica)?(?: de credito)?(?: mipymes?)?\s*([abcm])\b/);
+  if(m){const k=m[1],L=m[2],cod=k==='factura'?{a:1,b:6,c:11,m:51}[L]:k==='nota de credito'?{a:3,b:8,c:13,m:53}[L]:{a:2,b:7,c:12,m:52}[L];return {cmp:cod,nota:k==='nota de credito'}}
+  return null;
+}
+/** Convierte las filas del listado en comprobantes. */
+function lvParse(rows,texto){
+  if(/libro\s*i\.?\s*v\.?\s*a\.?\s*compras/i.test(texto)&&!/libro\s*i\.?\s*v\.?\s*a\.?\s*ventas/i.test(texto))return {ok:false,error:'Este es el Libro IVA de COMPRAS. Subilo en "Importar compras".'};
+  let h=-1;for(let i=0;i<Math.min(rows.length,25);i++){const s=rows[i].map(c=>norm(c));if(s.includes('fecha')&&s.some(x=>x.startsWith('comprobante'))&&s.some(x=>x.startsWith('numero'))&&s.some(x=>x==='total')){h=i;break}}
+  if(h<0)return {ok:false,error:'No se reconoció el formato del Libro IVA Ventas. Se esperan las columnas FECHA, COMPROBANTE, NUMERO, CLIENTE, CUIT, NETO GRAVADO, IVA MONTO y TOTAL.'};
+  const H=rows[h].map(c=>norm(c)),col=f=>H.findIndex(f);
+  const ix={fecha:col(x=>x==='fecha'),cmp:col(x=>x.startsWith('comprobante')),num:col(x=>x.startsWith('numero')),cli:col(x=>x==='cliente'||x.startsWith('razon')),cuit:col(x=>x.startsWith('cuit')),
+    neto:col(x=>/neto\s*gravado/.test(x)),nog:col(x=>/no\s*gravado/.test(x)),per:col(x=>x.startsWith('percep')),iva:col(x=>/iva\s*monto|^iva$/.test(x)),alic:col(x=>/iva\s*%/.test(x)||x==='%'||x.startsWith('alic')),tot:col(x=>x==='total'),nat:col(x=>x.startsWith('naturaleza'))};
+  if(ix.fecha<0||ix.cmp<0||ix.num<0||ix.tot<0)return {ok:false,error:'Faltan columnas en el Libro IVA Ventas (FECHA, COMPROBANTE, NUMERO y TOTAL son obligatorias).'};
+  const g=(r,k)=>ix[k]>=0?String(r[ix[k]]??'').trim():'';
+  const per=(texto.match(/Per[ií]odo\s+Desde:\s*(\d{1,2})\/(\d{4})\s*-\s*Per[ií]odo\s+Hasta:\s*(\d{1,2})\/(\d{4})/i)||[]);
+  const out={ok:true,vs:[],errores:[],leidas:0,pie:null,periodo:per.length?{d:per[2]+'-'+String(per[1]).padStart(2,'0'),h:per[4]+'-'+String(per[3]).padStart(2,'0')}:null};
+  for(let i=h+1;i<rows.length;i++){
+    const r=rows[i];if(!r||r.every(c=>String(c).trim()===''))continue;
+    const j=r.join(' ');
+    if(/cantidad\s+de\s+comprobantes/i.test(j)){
+      const cnt=(j.match(/comprobantes\s*:?\s*(\d+)/i)||[])[1],k=r.findIndex(c=>/^totales/i.test(String(c).trim())),z=k>=0?r.slice(k+1):[];
+      out.pie={cant:cnt?+cnt:null,neto:k>=0?lvNum(z[0]):null,iva:k>=0?lvNum(z[3]):null,total:k>=0?lvNum(z[5]):null};break}
+    if(/^total/i.test(String(r[0]||''))||!String(r[ix.cmp]||'').trim()&&!String(r[ix.num]||'').trim())continue;
+    out.leidas++;
+    const fm=g(r,'fecha').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)||g(r,'fecha').match(/^(\d{4})-(\d{2})-(\d{2})/);
+    let fecha=null;if(fm)fecha=fm[1].length===4?`${fm[1]}-${fm[2]}-${fm[3]}`:`${fm[3]}-${String(fm[2]).padStart(2,'0')}-${String(fm[1]).padStart(2,'0')}`;
+    const t=lvTipo(g(r,'cmp')),dig=g(r,'num').replace(/\D/g,''),neto=lvNum(g(r,'neto')),nog=lvNum(g(r,'nog')),perc=lvNum(g(r,'per')),iva=lvNum(g(r,'iva')),tot=lvNum(g(r,'tot')),alic=lvNum(g(r,'alic'));
+    const p=[];if(!fecha)p.push('fecha inválida');if(!t)p.push('tipo de comprobante no reconocido ("'+g(r,'cmp')+'")');if(!dig)p.push('sin número');if(tot===null||!tot)p.push('sin importe total');
+    [neto,nog,perc,iva].forEach(x=>{if(x===null)p.push('importe ilegible')});
+    if(p.length){out.errores.push({fila:i+1,msg:[...new Set(p)].join(', ')});continue}
+    let pv=0,numero=+dig;if(t.cmp<9000&&dig.length>=9){numero=+dig.slice(-8);pv=+dig.slice(0,-8)}
+    const ab=Math.abs,cuit=g(r,'cuit').replace(/\D/g,'');
+    const x={fila:i+1,fecha,tipo_cmp:t.cmp,punto_venta:pv,numero,receptor_cuit:cuit.length===11||cuit.length===8?cuit:(cuit||null),receptor_nombre:g(r,'cli'),
+      neto_gravado:lvR2(ab(neto)),no_gravado:lvR2(ab(nog)),otros_tributos:lvR2(ab(perc)),iva:lvR2(ab(iva)),importe_total:lvR2(ab(tot)),alic:alic?ab(alic):null,nat:g(r,'nat'),cmpTxt:g(r,'cmp'),nota:!!t.nota};
+    const suma=lvR2(x.neto_gravado+x.no_gravado+x.otros_tributos+x.iva);
+    if(Math.abs(suma-x.importe_total)>0.06)x.aviso=`No cierra: neto + no gravado + percepciones + IVA = ${money(suma)} y el total es ${money(x.importe_total)}.`;
+    if(x.alic===null&&x.neto_gravado>0&&x.iva>0){const a=lvR2(x.iva/x.neto_gravado*100);x.alic=[21,10.5,27,5,2.5,0].find(v=>Math.abs(v-a)<0.15)||a}
+    out.vs.push(x);
+  }
+  /* repetidas dentro del archivo */
+  const vis=new Map();out.vs.forEach(x=>{const k=[x.tipo_cmp,x.punto_venta,x.numero].join('|'),a=vis.get(k);
+    if(!a)vis.set(k,x);else{x.repArch=true;x.repDist=Math.abs(a.importe_total-x.importe_total)>0.005||a.fecha!==x.fecha;x.repDe=a.fila}});
+  return out;
+}
+const LV_EST={nuevo:['Nueva','grn'],igual:['Ya estaba cargada','gry'],dif:['Ya existe con otros datos','amb'],rep:['Repetida en el archivo','amb'],err:['No se pudo leer','red']};
+/** Dueño del libro: CUIT escrito en el archivo, facturas ya cargadas o, si no, hay que elegirlo. */
+async function lvDuenio(d){
+  const cids=ui.clients.filter(c=>c.active!==false),res={cid:null,via:null,cands:[],aviso:null};
+  const set=new Set((d.texto.replace(/(\d{2})-(\d{8})-(\d)/g,'$1$2$3').match(/(?<!\d)\d{11}(?!\d)/g)||[]));
+  const buy=new Set(d.r.vs.map(x=>String(x.receptor_cuit||'')));
+  const enTexto=cids.filter(c=>set.has(String(c.cuit))&&!buy.has(String(c.cuit)));
+  if(enTexto.length===1){res.cid=enTexto[0].id;res.via='cuit';return res}
+  const nums=[...new Set(d.r.vs.map(x=>x.numero))].slice(0,400);
+  if(nums.length){
+    const {data}=await sb.from('sales_invoices').select('client_id,tipo_cmp,punto_venta,numero').in('numero',nums).limit(2000);
+    const claves=new Set(d.r.vs.map(x=>[x.tipo_cmp,x.punto_venta,x.numero].join('|'))),cnt={};
+    (data||[]).forEach(e=>{if(claves.has([e.tipo_cmp,e.punto_venta,e.numero].join('|')))cnt[e.client_id]=(cnt[e.client_id]||0)+1});
+    const ord=Object.entries(cnt).sort((a,b)=>b[1]-a[1]);
+    if(ord.length){const tot=ord.reduce((a,[,n])=>a+n,0);
+      if(ord[0][1]/tot>=0.7){res.cid=ord[0][0];res.via='cargadas';res.n=ord[0][1];return res}
+      res.cands=ord.map(([id])=>id)}
+  }
+  const cu=[...buy].filter(Boolean).slice(0,50);
+  if(cu.length){
+    const {data}=await sb.from('sales_invoices').select('client_id').in('receptor_cuit',cu).limit(3000);
+    const ids=[...new Set((data||[]).map(e=>e.client_id))].filter(id=>cids.some(c=>c.id===id));
+    if(ids.length===1&&!res.cands.length){res.cid=ids[0];res.via='compradores'}
+    else if(!res.cands.length)res.cands=ids;
+  }
+  return res;
+}
+async function lvPlan(d){
+  d.plan=null;if(!d.cid)return;
+  const ex=await fetchAll((a,b)=>sb.from('sales_invoices').select('tipo_cmp,punto_venta,numero,fecha,importe_total').eq('client_id',d.cid).range(a,b));
+  const have=new Map(ex.map(e=>[[e.tipo_cmp,e.punto_venta,e.numero].join('|'),e]));
+  d.r.vs.forEach(x=>{
+    x.est='nuevo';x.dif=null;
+    if(x.repArch){x.est='rep';return}
+    const e=have.get([x.tipo_cmp,x.punto_venta,x.numero].join('|'));if(!e)return;
+    const dif=[];if(Math.abs(Number(e.importe_total)-x.importe_total)>0.005)dif.push(`importe: archivo ${money(x.importe_total)} y cargada ${money(Number(e.importe_total))}`);
+    if(e.fecha!==x.fecha)dif.push(`fecha: archivo ${fAR(x.fecha)} y cargada ${fAR(e.fecha)}`);
+    if(dif.length){x.est='dif';x.dif=dif}else x.est='igual';
+  });
+  d.plan=true;
+}
+async function lvLeer(files){
+  const f=[...files][0];if(!f||LV.busy)return;
+  LV.busy=true;LV.fase='leyendo';LV.msg=null;LV.d=null;draw();
+  try{
+    if(!/\.(xls|xlsx|html?)$/i.test(f.name))throw new Error('El archivo debe ser el Excel (.xls o .xlsx) del Libro IVA Ventas.');
+    if(f.size>10*1048576)throw new Error('El archivo supera los 10 MB.');
+    const L=await lvFilas(f),r=lvParse(L.rows,L.texto);if(!r.ok)throw new Error(r.error);
+    if(!r.vs.length&&!r.errores.length)throw new Error('Este archivo no tiene ninguna venta para cargar.');
+    const buf=await f.arrayBuffer(),hash=[...new Uint8Array(await crypto.subtle.digest('SHA-256',buf))].map(x=>x.toString(16).padStart(2,'0')).join('');
+    const d={file:f.name,hash,r,texto:L.texto,cid:null,via:null,cands:[]};
+    const o=await lvDuenio(d);d.cid=o.cid;d.via=o.via;d.cands=o.cands;d.nExist=o.n||0;
+    if(d.cid){const m=exentoMsg(d.cid);if(m){d.cid=null;d.via=null;d.exento=m}}
+    await lvPlan(d);LV.d=d;LV.fase='previa';
+  }catch(e){LV.fase='error';LV.msg=e.message||String(e);LV.d=null}
+  LV.busy=false;draw();
+}
+async function lvCliente(cid){
+  const d=LV.d;if(!d)return;d.cid=cid||null;d.via=cid?'manual':null;d.exento=null;
+  if(cid){const m=exentoMsg(cid);if(m){d.cid=null;d.via=null;d.exento=m}}
+  try{await lvPlan(d)}catch(e){flash(errTxt(e),'err')}
+  draw();
+}
+function lvCancelar(){LV.d=null;LV.fase=null;LV.msg=null;draw()}
+function lvDrop(e){e.preventDefault();const z=e.currentTarget;z.style.background='';z.style.borderColor='';lvLeer(e.dataTransfer?e.dataTransfer.files:[])}
+function lvCard(){
+  const zona=`<div ondragover="event.preventDefault();this.style.background='rgba(120,160,255,.14)';this.style.borderColor='var(--blut,#3b6fd4)'" ondragleave="this.style.background='';this.style.borderColor=''" ondrop="lvDrop(event)" style="border:2px dashed var(--bd,#cbd5e1);border-radius:12px;padding:16px;text-align:center"><div><b>Arrastrá acá el Excel del "Libro IVA Ventas"</b> o</div>
+  <label class="b" style="cursor:pointer;display:inline-block;margin-top:8px">Elegir archivo<input type="file" id="lvfile" accept=".xls,.xlsx,.html,.htm" hidden onchange="lvLeer([...this.files]);this.value=''"></label></div>`;
+  let c;
+  if(LV.fase==='leyendo')c='<p><b>Leyendo el Libro IVA Ventas…</b></p>';
+  else if(LV.fase==='error')c=zona+`<div class="msg err" style="margin-top:10px">${esc(LV.msg||'No se pudo leer el archivo.')}</div>`;
+  else if(LV.fase==='previa'&&LV.d)c=zona+lvPrevia();
+  else c=zona;
+  return `<div class="card" style="margin-bottom:12px"><h3 style="margin-top:0">Libro IVA Ventas (Excel)</h3><p class="s" style="margin:0 0 10px">Carga las ventas del listado "Libro I.V.A. Ventas": reconoce de quién es, avisa cuáles ya estaban cargadas y cuáles se repiten, y deja cada venta en el mes de su fecha.</p>${c}</div>`;
+}
+function lvPrevia(){
+  const d=LV.d,r=d.r,V=r.vs,cnt=k=>V.filter(x=>x.est===k).length,cli=ui.clients.find(c=>c.id===d.cid);
+  const nuevas=V.filter(x=>x.est==='nuevo'),meses=[...new Set(nuevas.map(x=>x.fecha.slice(0,7)))].sort();
+  /* control contra el pie del listado */
+  const sum=k=>lvR2(V.reduce((a,x)=>a+(x.nota?-1:1)*0+x[k],0)),pie=r.pie;let control='';
+  if(pie){
+    const okC=pie.cant===null||pie.cant===r.leidas,okT=pie.total===null||Math.abs(pie.total-sum('importe_total'))<0.06,okI=pie.iva===null||Math.abs(pie.iva-sum('iva'))<0.06;
+    control=`<div class="msg ${okC&&okT&&okI?'ok':'warn'}" style="margin:10px 0">${okC&&okT&&okI?'Control: el listado dice':'Control con diferencias: el listado dice'} ${pie.cant!==null?pie.cant+' comprobantes, ':''}${pie.total!==null?'total '+money(pie.total)+', ':''}${pie.iva!==null?'IVA '+money(pie.iva):''}. Leí ${r.leidas} comprobantes${r.errores.length?' ('+r.errores.length+' no se pudieron leer)':''}, total ${money(sum('importe_total'))}, IVA ${money(sum('iva'))}.</div>`}
+  let dueño;
+  if(d.exento)dueño=`<div class="msg err" style="margin:10px 0">${esc(d.exento)}</div>`;
+  const opts=ui.clients.filter(c=>c.active!==false).sort((a,b)=>(d.cands.includes(b.id)-d.cands.includes(a.id))||String(a.razon_social).localeCompare(b.razon_social));
+  const sel=`<select onchange="lvCliente(this.value)" style="min-width:260px"><option value="">Elegir cliente…</option>${opts.map(c=>`<option value="${c.id}" ${c.id===d.cid?'selected':''}>${d.cands.includes(c.id)?'★ ':''}${esc(c.razon_social)}</option>`).join('')}</select>`;
+  const via={cuit:'por su CUIT escrito en el archivo',cargadas:`porque ${d.nExist} de sus facturas ya estaban cargadas a su nombre`,compradores:'porque es el único cliente que ya le vendió a estos compradores (verificalo)',manual:'elegido por vos'}[d.via];
+  dueño=(dueño||'')+`<div class="card" style="margin:10px 0;border:1px solid var(--blut)"><b>De quién es el libro:</b> ${cli?`<b>${esc(cli.razon_social)}</b> <span class="s">(${cuitF(cli.cuit)}), ${via}</span>`:`<span style="color:var(--ambt)">no se pudo saber: el listado no trae el CUIT de quien emite${d.cands.length?'. Los clientes con ★ ya tienen ventas cargadas parecidas':''}. Elegilo.</span>`}<div style="margin-top:8px">${sel}</div></div>`;
+  const kpi=`<div class="grid" style="margin:10px 0">${[['Leídas',r.leidas],['Nuevas',cnt('nuevo')],['Ya cargadas',cnt('igual')],['Con diferencias',cnt('dif')],['Repetidas en el archivo',cnt('rep')],['No se leyeron',r.errores.length]].map(([t,n])=>`<div class="card kpi"><b>${d.cid||t==='Leídas'||t==='Repetidas en el archivo'||t==='No se leyeron'?n:'-'}</b><span>${t}</span></div>`).join('')}</div>`;
+  const ivaN=nuevas.reduce((a,x)=>a+(x.nota?-1:1)*x.iva,0);
+  const avisos=[
+    d.cid&&cnt('dif')?`<div class="msg warn">${cnt('dif')} venta(s) ya existen con otro importe o fecha: no se modifican, revisalas en Ventas.</div>`:'',
+    cnt('rep')?`<div class="msg warn">${cnt('rep')} fila(s) están repetidas dentro del archivo (mismo tipo y número): solo se toma la primera${V.some(x=>x.repDist)?'. Ojo: alguna repetida trae importes distintos':''}.</div>`:'',
+    r.errores.length?`<div class="msg err">No se pudieron leer: ${r.errores.map(e=>`fila ${e.fila} (${esc(e.msg)})`).join(' · ')}</div>`:'',
+    d.cid&&meses.length>1?`<div class="msg info">Las ventas nuevas se reparten en ${meses.length} meses, cada una en el mes de su fecha: ${meses.map(m=>MESES[+m.slice(5)-1]+' '+m.slice(0,4)).join(', ')}.</div>`:'',
+    r.periodo&&V.some(x=>x.fecha.slice(0,7)<r.periodo.d||x.fecha.slice(0,7)>r.periodo.h)?`<div class="msg warn">Hay ventas con fecha fuera del período que dice el listado (${r.periodo.d.slice(5)}/${r.periodo.d.slice(0,4)} a ${r.periodo.h.slice(5)}/${r.periodo.h.slice(0,4)}).</div>`:''
+  ].join('');
+  const fila=x=>{const e=LV_EST[x.est||'err'],nt=[x.dif&&x.dif.join('; '),x.aviso,x.repArch&&`igual que la fila ${x.repDe}${x.repDist?', con otros importes':''}`].filter(Boolean);
+    return `<tr><td>${fAR(x.fecha)}</td><td>${esc(tipoNombre(x.tipo_cmp))}</td><td style="white-space:nowrap">${x.tipo_cmp>9000?x.numero:nroF(x.punto_venta,x.numero)}</td><td>${esc(x.receptor_nombre||'')}<div class="s">${cuitF(x.receptor_cuit)}</div></td><td>${money(x.neto_gravado)}</td><td>${money(x.iva)}</td><td>${money(x.importe_total)}</td><td>${d.cid?`<span class="tag">${e[0]}</span>`:''}${nt.length?`<div class="s" style="max-width:240px">${nt.map(esc).join('<br>')}</div>`:''}</td></tr>`};
+  const nOk=d.cid?cnt('nuevo'):0;
+  return dueño+kpi+control+avisos+(d.cid?`<div class="msg info">IVA débito de las ventas nuevas: <b>${money(ivaN)}</b> (las notas de crédito restan).</div>`:'')+
+  `<div class="tw" style="margin:10px 0"><table><thead><tr><th>Fecha</th><th>Tipo</th><th>Número</th><th>Cliente de la venta</th><th>Neto</th><th>IVA</th><th>Total</th><th>Estado</th></tr></thead><tbody>${V.map(fila).join('')}</tbody></table></div>
+  <div class="row"><button class="b" ${nOk&&!ui.busy?'':'disabled'} onclick="lvConfirmar()">Confirmar ${nOk} venta${nOk===1?'':'s'} nueva${nOk===1?'':'s'}</button><button class="g" onclick="lvCancelar()">Cancelar</button></div>`;
+}
+async function lvHash(base,mes){return [...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(base+':'+mes)))].map(x=>x.toString(16).padStart(2,'0')).join('')}
+async function lvConfirmar(){
+  const d=LV.d;if(!d||!d.cid||ui.busy)return;const m=exentoMsg(d.cid);if(m){flash(m,'err');return draw()}
+  const nuevas=d.r.vs.filter(x=>x.est==='nuevo');if(!nuevas.length)return;
+  ui.busy=true;draw();let n=0,primero=null;const cid=d.cid;
+  try{
+    const por={};nuevas.forEach(x=>{(por[x.fecha.slice(0,7)]=por[x.fecha.slice(0,7)]||[]).push(x)});
+    for(const mes of Object.keys(por).sort()){
+      const L=por[mes],{data:per,error:e1}=await sb.from('client_periods').upsert({client_id:cid,periodo:mes+'-01'},{onConflict:'client_id,periodo'}).select('id').single();if(e1)throw e1;
+      const {data:b,error:e2}=await sb.from('import_batches').insert({client_id:cid,period_id:per.id,file_name:d.file,file_sha256:await lvHash(d.hash,mes),imported_by:me.id,kind:'ventas',rows_read:L.length,rows_new:L.length,rows_duplicate:0,rows_rejected:0,errors:[]}).select('id').single();if(e2)throw e2;
+      const rows=L.map(x=>{const a=x.alic!==null&&x.alic!==undefined?String(x.alic).replace('.',','):null,raw={'Libro IVA Ventas':true,Comprobante:x.cmpTxt,Numero:String(x.numero),...(x.nat?{Naturaleza:x.nat}:{}),...(a!==null?{['Neto Grav. IVA '+a+'%']:x.neto_gravado,...(x.alic>0?{['IVA '+a+'%']:x.iva}:{})}:{})};
+        return {client_id:cid,period_id:per.id,batch_id:b.id,fecha:x.fecha,tipo_cmp:x.tipo_cmp,punto_venta:x.punto_venta,numero:x.numero,receptor_cuit:x.receptor_cuit,receptor_nombre:x.receptor_nombre||null,moneda:'PES',tipo_cambio:1,neto_gravado:x.neto_gravado,no_gravado:x.no_gravado,exento:0,otros_tributos:x.otros_tributos,iva:x.iva,importe_total:x.importe_total,origen:'importado',raw,...(x.tipo_cmp>9000&&CLASE_DE_TIPO[x.tipo_cmp]?{clase:CLASE_DE_TIPO[x.tipo_cmp]}:{}),created_by:me.id}});
+      for(let i=0;i<rows.length;i+=300){const {data,error}=await sb.from('sales_invoices').upsert(rows.slice(i,i+300),{onConflict:'client_id,tipo_cmp,punto_venta,numero',ignoreDuplicates:true}).select('id');if(error)throw error;n+=data.length}
+      if(!primero)primero=mes;
+    }
+    const cli=ui.clients.find(c=>c.id===cid);
+    LV.d=null;LV.fase=null;ui.busy=false;ui.cid=cid;ui.vta.cid=cid;if(primero)ui.vta.periodo=primero;
+    flash(`Se cargaron ${n} venta${n===1?'':'s'} de ${cli?cli.razon_social:'el cliente'}.`);await show('ventas');
+  }catch(e){ui.busy=false;flash(`La importación falló${n?` después de guardar ${n} ventas`:''}: ${errTxt(e)}. Podés volver a cargar el mismo archivo: no se duplica nada.`,'err');draw()}
+}
 /* ===== Carga de sueldos: perfil "liquidador" (recibos, VEP y boletas de sindicatos) ===== */
 const isLiq=()=>prof&&prof.role==='liquidador';
 const CG_SIND=['UATRE','OSECAC','FAECYS','IERIC','AMMA','ACTF','UOCRA','OSPRERA','SEC','UTEDYC'];
@@ -5038,6 +5242,7 @@ function vVentas(){
   <button class="b" onclick="ventasPrevisualizar()">Ver vista previa</button><button class="g" onclick="ui.vta.form=!ui.vta.form;draw()">Agregar factura a mano</button></div>
   ${fvCard()}
   ${liqForm()}
+  ${lvCard()}
   <div class="card row" style="margin-bottom:12px;align-items:center"><b>Exportar</b><button class="b" onclick="ventasExportarIva()">Libro IVA Digital Ventas (2 TXT para ARCA)</button><span class="s"><b>${R.filter(r=>!ui.vtaOut.has(r.id)).length} de ${R.length}</b> comprobantes marcados (tildá o destildá en la primera columna de la tabla).</span></div>
   ${(v.ivdAvisos||[]).length?`<div class="card" style="margin-bottom:12px"><b>Avisos de la última exportación</b>${v.ivdAvisos.map(a=>`<div class="msg warn">${esc(a)}</div>`).join('')}</div>`:''}
   ${v.form?ventaForm():''}${v.edit?ventaEditForm():''}${v.erp?erpForm():''}
